@@ -45,6 +45,24 @@ pub trait Runner {
     fn run(&self, request: &RunnerRequest<'_>) -> Result<()>;
 }
 
+/// Whether the host has an enabled qemu-user binfmt handler for `target`.
+pub fn emulation_available(target: Arch) -> bool {
+    let qemu = match target {
+        Arch::I686 => "i386",
+        other => other.as_str(),
+    };
+    let path = format!("/proc/sys/fs/binfmt_misc/qemu-{qemu}");
+    let Ok(contents) = std::fs::read_to_string(path) else {
+        return false;
+    };
+    let enabled = contents.lines().any(|line| line.trim() == "enabled");
+    let interpreter = contents
+        .lines()
+        .find_map(|line| line.strip_prefix("interpreter "))
+        .map(Path::new);
+    enabled && interpreter.is_some_and(Path::exists)
+}
+
 pub struct BwrapRunner<'a> {
     pub root: Option<&'a Path>,
 }
@@ -59,50 +77,70 @@ impl Runner for BwrapRunner<'_> {
     }
 
     fn run(&self, request: &RunnerRequest<'_>) -> Result<()> {
-        let mut args = vec![
-            "--unshare-all".to_string(),
-            "--unshare-user".to_string(),
-            "--disable-userns".to_string(),
-            "--die-with-parent".to_string(),
-            "--new-session".to_string(),
-            "--clearenv".to_string(),
-            "--ro-bind".to_string(),
-            self.root
-                .unwrap_or_else(|| Path::new("/"))
-                .display()
-                .to_string(),
-            "/".to_string(),
-            "--dev".to_string(),
-            "/dev".to_string(),
-            "--proc".to_string(),
-            "/proc".to_string(),
-            "--tmpfs".to_string(),
-            "/sys".to_string(),
-            "--tmpfs".to_string(),
-            "/tmp".to_string(),
-            "--bind".to_string(),
-            request.workspace.display().to_string(),
-            "/tmp/build".to_string(),
-            "--bind".to_string(),
-            request.stage.display().to_string(),
-            "/tmp/stage".to_string(),
-            "--chdir".to_string(),
-            request.cwd.to_string(),
-        ];
-
-        for (key, value) in request.env {
-            args.push("--setenv".to_string());
-            args.push(key.clone());
-            args.push(value.clone());
-        }
-
-        args.push("--".to_string());
-        args.push(request.command.to_string());
-        args.extend(request.args.iter().cloned());
-
-        let completion = spawn("bwrap", &args, request.timeout, request.label)?;
-        finish(completion, request.timeout, request.label, "")
+        run_bwrap(self.root.unwrap_or_else(|| Path::new("/")), request)
     }
+}
+
+/// Run a target-architecture root through the host's qemu-user binfmt handler.
+pub struct EmulatedRunner<'a> {
+    pub root: &'a Path,
+}
+
+impl Runner for EmulatedRunner<'_> {
+    fn name(&self) -> &'static str {
+        "emulated"
+    }
+
+    fn supports(&self, host: Arch, target: Arch) -> bool {
+        host != target && emulation_available(target)
+    }
+
+    fn run(&self, request: &RunnerRequest<'_>) -> Result<()> {
+        run_bwrap(self.root, request)
+    }
+}
+
+fn run_bwrap(root: &Path, request: &RunnerRequest<'_>) -> Result<()> {
+    let mut args = vec![
+        "--unshare-all".to_string(),
+        "--unshare-user".to_string(),
+        "--disable-userns".to_string(),
+        "--die-with-parent".to_string(),
+        "--new-session".to_string(),
+        "--clearenv".to_string(),
+        "--ro-bind".to_string(),
+        root.display().to_string(),
+        "/".to_string(),
+        "--dev".to_string(),
+        "/dev".to_string(),
+        "--proc".to_string(),
+        "/proc".to_string(),
+        "--tmpfs".to_string(),
+        "/sys".to_string(),
+        "--tmpfs".to_string(),
+        "/tmp".to_string(),
+        "--bind".to_string(),
+        request.workspace.display().to_string(),
+        "/tmp/build".to_string(),
+        "--bind".to_string(),
+        request.stage.display().to_string(),
+        "/tmp/stage".to_string(),
+        "--chdir".to_string(),
+        request.cwd.to_string(),
+    ];
+
+    for (key, value) in request.env {
+        args.push("--setenv".to_string());
+        args.push(key.clone());
+        args.push(value.clone());
+    }
+
+    args.push("--".to_string());
+    args.push(request.command.to_string());
+    args.extend(request.args.iter().cloned());
+
+    let completion = spawn("bwrap", &args, request.timeout, request.label)?;
+    finish(completion, request.timeout, request.label, "")
 }
 
 pub struct ContainerRunner<'a> {
@@ -115,14 +153,17 @@ impl Runner for ContainerRunner<'_> {
     }
 
     fn supports(&self, host: Arch, target: Arch) -> bool {
-        host == target
+        host == target || emulation_available(target)
     }
 
     fn run(&self, request: &RunnerRequest<'_>) -> Result<()> {
         let cidfile = request.timeout.map(|_| cidfile_path());
-        let mut args = vec![
-            "run".to_string(),
-            "--rm".to_string(),
+        let mut args = vec!["run".to_string(), "--rm".to_string()];
+        if request.host != request.target {
+            args.push("--arch".to_string());
+            args.push(request.target.to_string());
+        }
+        args.extend(vec![
             "--network=none".to_string(),
             "--read-only".to_string(),
             "--cap-drop=all".to_string(),
@@ -137,7 +178,7 @@ impl Runner for ContainerRunner<'_> {
             format!("{}:/tmp/stage:Z", request.stage.display()),
             "-w".to_string(),
             request.cwd.to_string(),
-        ];
+        ]);
         if let Some(cidfile) = &cidfile {
             args.push("--cidfile".to_string());
             args.push(cidfile.display().to_string());
@@ -171,9 +212,11 @@ pub enum SandboxBackend<'a> {
     Bwrap,
     /// Use an assembled root directory read-only.
     Root(&'a Path),
+    /// Use an assembled target root through qemu-user binfmt.
+    Emulated(&'a Path),
     /// Use a builder image.
     Container(&'a str),
-    /// Use a caller-provided runner, such as a future emulated target runner.
+    /// Use a caller-provided runner.
     Custom(&'a dyn Runner),
 }
 
@@ -254,6 +297,7 @@ impl Sandbox<'_> {
             SandboxBackend::Root(root) => {
                 self.dispatch(&BwrapRunner { root: Some(root) }, &request)
             }
+            SandboxBackend::Emulated(root) => self.dispatch(&EmulatedRunner { root }, &request),
             SandboxBackend::Container(image) => self.dispatch(&ContainerRunner { image }, &request),
             SandboxBackend::Custom(runner) => self.dispatch(runner, &request),
         }

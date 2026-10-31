@@ -58,16 +58,19 @@ pub fn assemble(options: SourceOptions<'_>) -> Result<PathBuf> {
         )?;
     }
 
+    let host_arch = crate::arch::Arch::current()?;
+    let target_arch = crate::arch::Arch::parse(&options.plan.arch)?;
     let backend = match options.root {
-        Some(root) => crate::sandbox::SandboxBackend::Root(root),
+        Some(root) if host_arch == target_arch => crate::sandbox::SandboxBackend::Root(root),
+        Some(root) => crate::sandbox::SandboxBackend::Emulated(root),
         None => crate::sandbox::SandboxBackend::Bwrap,
     };
     let sandbox = Sandbox {
         backend,
         workspace: options.workspace,
         stage: options.stage,
-        host_arch: crate::arch::Arch::current()?,
-        target_arch: crate::arch::Arch::parse(&options.plan.arch)?,
+        host_arch,
+        target_arch,
         source_date_epoch: options.source_date_epoch,
         jobs: options.jobs,
         timeout: Some(options.step_timeout).filter(|seconds| *seconds > 0),

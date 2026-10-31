@@ -13,6 +13,7 @@ does not promise a stable schema or CLI yet.
 - File directories, per-path owner/group/mode and file capabilities.
 - `rpmx repo` repository metadata and signed `repomd.xml`.
 - One-command `rpmx build` from recipe to SRPM to binary RPMs.
-- Host/target architecture separation, native-architecture defaults, and a
-  `Runner` interface that rejects foreign targets until an emulated runner is
-  available.
+- Host/target architecture separation and native-architecture defaults.
+- A `Runner` interface with native bubblewrap/container runners and a
+  qemu-user binfmt emulated runner for foreign targets. Root assembly, SRPM
+  embedding and installed tests follow the same host/target contract.

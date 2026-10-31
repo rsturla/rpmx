@@ -35,9 +35,9 @@ prototype, not production software.
 ## Status
 
 Early prototype. The build, test, signing and repository paths are exercised
-end to end on x86_64. Multi-arch runners and cross-compilation are not
-implemented yet. The supported RPM feature set is intentionally small; see
-[Known limitations](#known-limitations).
+end to end on x86_64, and aarch64 builds run through qemu-user binfmt. Cross
+compilation is not implemented. The supported RPM feature set is intentionally
+small; see [Known limitations](#known-limitations).
 
 ## Requirements
 
@@ -47,6 +47,7 @@ implemented yet. The supported RPM feature set is intentionally small; see
   container-backed builds
 - `dnf5` in the builder image used for root resolution
 - `glibc` targets for now
+- `qemu-user-static` with binfmt registered for foreign-architecture builds
 
 You do **not** need `rpmbuild`, `rpm-sign`, or a spec file.
 
@@ -215,11 +216,12 @@ the **target architecture** (the packages it produces). `--arch` defaults to
 the native architecture and drives templates, SRPM metadata, outputs and the
 repository.
 
-The runner is an explicit interface. The native bubblewrap and container
-runners currently accept only `host == target`; a different target fails with
-`RPMX-RUNNER-002` rather than silently executing the wrong architecture. The
-same interface is where an emulated target runner will plug in, without
-changing recipes or the sandbox callers:
+The runner is an explicit interface. Bubblewrap runs only `host == target`.
+The container runner selects a target-arch image when needed, and the emulated
+runner uses qemu-user binfmt with the assembled target root. A different target
+fails with `RPMX-RUNNER-002` when no emulation path is available. The emulated runner
+uses binfmt with the assembled target root, so the whole pipeline — compilers,
+build scripts and tests — executes target binaries transparently:
 
 ```rust
 pub trait Runner {
@@ -230,8 +232,9 @@ pub trait Runner {
 ```
 
 The sandbox passes `RPMX_HOST_ARCH`, `RPMX_TARGET_ARCH` and `RPMX_CROSS` to
-steps. Root assembly and installed tests refuse a foreign target until an
-emulated runner exists.
+steps. Root assembly, SRPM embedding and installed tests use the same
+architectural checks. Root assembly runs the target-arch builder image and
+uses binfmt for dnf/rpm.
 
 ## Sandbox
 
@@ -247,7 +250,8 @@ explicit escape hatch.
   implemented. File capabilities are.
 - `-debugsource`, build-id debug links and per-subpackage debuginfo are not
   implemented.
-- Cross-compilation and multi-arch runners are not implemented yet.
+- Cross-compilation is not implemented. Native and qemu-user-emulated runners
+  are; a foreign target requires `qemu-user-static` and binfmt on the host.
 - Repository snapshots, module streams and seccomp/cgroup enforcement are not
   implemented.
 - CPE is emitted in SBOMs, not in the RPM header.

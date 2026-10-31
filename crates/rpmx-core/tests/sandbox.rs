@@ -1,9 +1,12 @@
 use std::collections::BTreeMap;
+use std::path::Path;
 use std::process::Command;
 
 use rpmx_core::arch::Arch;
 use rpmx_core::plan::PlannedStep;
-use rpmx_core::sandbox::{Runner, RunnerRequest, Sandbox, SandboxBackend};
+use rpmx_core::sandbox::{
+    emulation_available, EmulatedRunner, Runner, RunnerRequest, Sandbox, SandboxBackend,
+};
 
 fn bwrap_available() -> bool {
     Command::new("bwrap")
@@ -44,6 +47,25 @@ fn run(step: &PlannedStep) -> Result<(), rpmx_core::Error> {
         debuginfo: false,
     }
     .run(step)
+}
+
+#[test]
+fn emulated_runner_follows_the_host_binfmt_handler() {
+    let host = Arch::current().expect("host arch");
+    let target = if host == Arch::X86_64 {
+        Arch::Aarch64
+    } else {
+        Arch::X86_64
+    };
+    let runner = EmulatedRunner {
+        root: Path::new("/"),
+    };
+    assert_eq!(
+        runner.supports(host, target),
+        emulation_available(target),
+        "emulated support must track the host binfmt registration"
+    );
+    assert!(!runner.supports(host, host));
 }
 
 #[test]

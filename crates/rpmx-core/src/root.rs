@@ -49,6 +49,8 @@ pub struct RootLock {
 #[serde(deny_unknown_fields)]
 pub struct LockedBuilder {
     pub image: String,
+    /// Manifest digest for the lock's target architecture, not the multi-arch
+    /// index digest.
     pub image_digest: String,
 }
 
@@ -124,7 +126,7 @@ pub fn resolve_profile(
 ) -> Result<RootLock> {
     let arch = profile.arch();
     let image = profile.builder_image();
-    let image_digest = ensure_image(&image)?;
+    let image_digest = image_digest_for_arch(&image, profile.arch())?;
 
     prepare_work(work)?;
     write_repositories(work, &profile.repositories)?;
@@ -350,6 +352,62 @@ fn podman_run(image: &str, work: &Path, args: &[String]) -> Result<std::process:
             format!("cannot run the resolver container: {error}"),
         )
     })
+}
+
+fn image_digest_for_arch(image: &str, arch: &str) -> Result<String> {
+    let target = crate::arch::Arch::parse(arch)?;
+    let oci_arch = match target {
+        crate::arch::Arch::X86_64 => "amd64",
+        crate::arch::Arch::Aarch64 => "arm64",
+        crate::arch::Arch::Ppc64le => "ppc64le",
+        crate::arch::Arch::S390x => "s390x",
+        crate::arch::Arch::I686 => "386",
+    };
+    if let Ok(output) = Command::new("podman")
+        .args(["manifest", "inspect", image])
+        .output()
+    {
+        if output.status.success() {
+            if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&output.stdout) {
+                if let Some(manifests) = value.get("manifests").and_then(|value| value.as_array()) {
+                    for manifest in manifests {
+                        let platform = manifest.get("platform");
+                        let architecture = platform
+                            .and_then(|platform| platform.get("architecture"))
+                            .and_then(|value| value.as_str());
+                        let os = platform
+                            .and_then(|platform| platform.get("os"))
+                            .and_then(|value| value.as_str());
+                        if architecture == Some(oci_arch) && os == Some("linux") {
+                            if let Some(digest) =
+                                manifest.get("digest").and_then(|value| value.as_str())
+                            {
+                                return Ok(digest.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // A local image has no manifest index. Accept it only when its recorded
+    // architecture matches the requested one.
+    let digest = ensure_image(image)?;
+    let actual_arch = inspect_image(image, "{{.Architecture}}")?;
+    let expected = match target {
+        crate::arch::Arch::X86_64 => "amd64",
+        crate::arch::Arch::Aarch64 => "arm64",
+        crate::arch::Arch::Ppc64le => "ppc64le",
+        crate::arch::Arch::S390x => "s390x",
+        crate::arch::Arch::I686 => "386",
+    };
+    if actual_arch != expected {
+        return Err(Error::new(
+            codes::ROOT_002,
+            format!("builder image {image} is {actual_arch}, but a {expected} image is required"),
+        ));
+    }
+    Ok(digest)
 }
 
 fn ensure_image(image: &str) -> Result<String> {
@@ -630,13 +688,17 @@ pub struct AssembleOptions<'a> {
 /// The root is left in `options.work/root`; the caller computes its digest and
 /// records it in the lock.
 pub fn assemble(lock: &RootLock, options: AssembleOptions<'_>) -> Result<std::path::PathBuf> {
+    let lock_arch = lock
+        .archs
+        .first()
+        .ok_or_else(|| Error::new(codes::ROOT_015, "lock declares no architecture"))?;
     let builder = lock.builder.as_ref().ok_or_else(|| {
         Error::new(
             codes::ROOT_015,
             "this lock has no builder image, so it cannot be assembled",
         )
     })?;
-    let actual_digest = ensure_image(&builder.image)?;
+    let actual_digest = image_digest_for_arch(&builder.image, lock_arch)?;
     if actual_digest != builder.image_digest {
         return Err(Error::new(
             codes::ROOT_002,
@@ -651,13 +713,14 @@ pub fn assemble(lock: &RootLock, options: AssembleOptions<'_>) -> Result<std::pa
         .first()
         .ok_or_else(|| Error::new(codes::ROOT_015, "lock declares no architecture"))?;
     let arch = normalize_arch(arch)?;
+    let target = crate::arch::Arch::parse(arch)?;
     let host = crate::arch::Arch::current()?;
-    if host.as_str() != arch {
+    if host != target && !crate::sandbox::emulation_available(target) {
         return Err(Error::new(
             codes::RUNNER_002,
             format!(
-                "cannot assemble a {arch} root on a {host} host; \
-                 an emulated runner is required"
+                "cannot assemble a {target} root on a {host} host; \
+                 no qemu-user binfmt handler is available"
             ),
         ));
     }
@@ -717,7 +780,7 @@ pub fn assemble(lock: &RootLock, options: AssembleOptions<'_>) -> Result<std::pa
     args.push("install".to_string());
     args.extend(files);
 
-    let output = podman_run_assembly(&builder.image, options.work, options.root, &args)?;
+    let output = podman_run_assembly(&builder.image, options.work, options.root, target, &args)?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let tail = stderr
@@ -738,7 +801,7 @@ pub fn assemble(lock: &RootLock, options: AssembleOptions<'_>) -> Result<std::pa
         ));
     }
 
-    verify_installed(lock, options.root, &builder.image)?;
+    verify_installed(lock, options.root, &builder.image, target)?;
     Ok(options.root.to_path_buf())
 }
 
@@ -792,13 +855,20 @@ fn podman_run_assembly(
     image: &str,
     work: &Path,
     root: &Path,
+    target: crate::arch::Arch,
     args: &[String],
 ) -> Result<std::process::Output> {
     let mut process = Command::new("podman");
+    let foreign = target != crate::arch::Arch::current()?;
+    process.arg("run").arg("--rm").arg(if foreign {
+        "--pull=missing"
+    } else {
+        "--pull=never"
+    });
+    if foreign {
+        process.arg("--arch").arg(target.to_string());
+    }
     process
-        .arg("run")
-        .arg("--rm")
-        .arg("--pull=never")
         .arg("--network=none")
         .arg("--read-only")
         .arg("--tmpfs")
@@ -822,7 +892,12 @@ fn podman_run_assembly(
     })
 }
 
-fn verify_installed(lock: &RootLock, root: &Path, image: &str) -> Result<()> {
+fn verify_installed(
+    lock: &RootLock,
+    root: &Path,
+    image: &str,
+    target: crate::arch::Arch,
+) -> Result<()> {
     let mut expected = std::collections::BTreeSet::new();
     for (package_arch, entries) in &lock.packages {
         for package in entries {
@@ -835,10 +910,16 @@ fn verify_installed(lock: &RootLock, root: &Path, image: &str) -> Result<()> {
     }
 
     let mut process = Command::new("podman");
+    let foreign = target != crate::arch::Arch::current()?;
+    process.arg("run").arg("--rm").arg(if foreign {
+        "--pull=missing"
+    } else {
+        "--pull=never"
+    });
+    if foreign {
+        process.arg("--arch").arg(target.to_string());
+    }
     process
-        .arg("run")
-        .arg("--rm")
-        .arg("--pull=never")
         .arg("--network=none")
         .arg("--read-only")
         .arg("--cap-drop=all")

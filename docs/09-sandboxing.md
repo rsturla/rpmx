@@ -259,12 +259,14 @@ pub trait Runner {
 }
 ```
 
-`bubblewrap` and the container runner support native execution only. A future
-emulated runner implements the same trait and reports `supports(host, target)`
-for foreign targets. The sandbox checks `supports` before spawning anything, so
-an unsupported combination is `RPMX-RUNNER-002`, not a mysterious target
-binary failure. Root assembly and test-root preparation apply the same check
-until an emulated runner is available.
+`bubblewrap` supports native execution only. The container runner passes
+`--arch` to podman for foreign targets, and the emulated runner uses
+`qemu-user` binfmt with the assembled target root. Both report
+`supports(host, target)` only when the host has a matching enabled binfmt
+handler. The sandbox checks `supports` before spawning
+anything, so an unsupported combination is `RPMX-RUNNER-002`, not a mysterious
+target binary failure. Root assembly and test-root preparation use the same
+host/target contract.
 
 ## 6. Stage-by-stage coverage
 

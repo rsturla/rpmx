@@ -234,8 +234,14 @@ pub fn run(args: RebuildArgs<'_>) -> Result<Vec<PathBuf>, Error> {
         None
     };
 
+    let host_arch = rpmx_core::arch::Arch::current()?;
+    let target_arch = rpmx_core::arch::Arch::parse(arch)?;
     let backend = if let Some(root_path) = assembled_root.as_deref() {
-        SandboxBackend::Root(root_path)
+        if host_arch == target_arch {
+            SandboxBackend::Root(root_path)
+        } else {
+            SandboxBackend::Emulated(root_path)
+        }
     } else if let Some(image) = root_image {
         SandboxBackend::Container(image)
     } else {
@@ -248,8 +254,8 @@ pub fn run(args: RebuildArgs<'_>) -> Result<Vec<PathBuf>, Error> {
         backend,
         workspace: work.path(),
         stage: &stage,
-        host_arch: rpmx_core::arch::Arch::current()?,
-        target_arch: rpmx_core::arch::Arch::parse(arch)?,
+        host_arch,
+        target_arch,
         source_date_epoch: extracted.source_date_epoch,
         jobs,
         timeout: Some(step_timeout).filter(|seconds| *seconds > 0),
@@ -677,8 +683,13 @@ fn run_planned_tests(
             "installed-stage tests need a test root, which requires a root lock",
         )
     })?;
+    let test_backend = if settings.host_arch == settings.target_arch {
+        SandboxBackend::Root(root)
+    } else {
+        SandboxBackend::Emulated(root)
+    };
     let test_sandbox = Sandbox {
-        backend: SandboxBackend::Root(root),
+        backend: test_backend,
         workspace: settings.workspace,
         stage: settings.stage,
         host_arch: settings.host_arch,
@@ -738,12 +749,13 @@ fn prepare_test_root(
             .ok_or_else(|| Error::new(codes::BUILD_007, "the test root has no architecture"))?,
     )?;
     let host = rpmx_core::arch::Arch::current()?;
-    if host != target {
+    let foreign = host != target;
+    if foreign && !rpmx_core::sandbox::emulation_available(target) {
         return Err(Error::new(
             codes::RUNNER_002,
             format!(
                 "cannot prepare a {target} test root on a {host} host; \
-                 an emulated runner is required"
+                 no qemu-user binfmt handler is available"
             ),
         ));
     }
@@ -812,16 +824,20 @@ fn prepare_test_root(
         .first()
         .and_then(|path| path.parent())
         .ok_or_else(|| Error::new(codes::BUILD_007, "no binary RPMs were written"))?;
-    let output = std::process::Command::new("podman")
-        .args([
-            "run",
-            "--rm",
-            "--network=none",
-            "--cap-drop=all",
-            "--cap-add=CHOWN,DAC_OVERRIDE,FOWNER,FSETID,SETGID,SETUID,SYS_CHROOT",
-            "--security-opt=no-new-privileges",
-            "-v",
-        ])
+    let mut command = std::process::Command::new("podman");
+    command.args([
+        "run",
+        "--rm",
+        "--network=none",
+        "--cap-drop=all",
+        "--cap-add=CHOWN,DAC_OVERRIDE,FOWNER,FSETID,SETGID,SETUID,SYS_CHROOT",
+        "--security-opt=no-new-privileges",
+    ]);
+    if foreign {
+        command.arg("--arch").arg(target.to_string());
+    }
+    let output = command
+        .arg("-v")
         .arg(format!("{}:/root:Z", root.display()))
         .arg("-v")
         .arg(format!("{}:/rpms:ro,Z", rpms_dir.display()))
