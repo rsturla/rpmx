@@ -651,6 +651,16 @@ pub fn assemble(lock: &RootLock, options: AssembleOptions<'_>) -> Result<std::pa
         .first()
         .ok_or_else(|| Error::new(codes::ROOT_015, "lock declares no architecture"))?;
     let arch = normalize_arch(arch)?;
+    let host = crate::arch::Arch::current()?;
+    if host.as_str() != arch {
+        return Err(Error::new(
+            codes::RUNNER_002,
+            format!(
+                "cannot assemble a {arch} root on a {host} host; \
+                 an emulated runner is required"
+            ),
+        ));
+    }
 
     prepare_assembly(options.work, options.root)?;
     let rpms = options.work.join("rpms");

@@ -248,6 +248,8 @@ pub fn run(args: RebuildArgs<'_>) -> Result<Vec<PathBuf>, Error> {
         backend,
         workspace: work.path(),
         stage: &stage,
+        host_arch: rpmx_core::arch::Arch::current()?,
+        target_arch: rpmx_core::arch::Arch::parse(arch)?,
         source_date_epoch: extracted.source_date_epoch,
         jobs,
         timeout: Some(step_timeout).filter(|seconds| *seconds > 0),
@@ -496,6 +498,8 @@ pub fn run(args: RebuildArgs<'_>) -> Result<Vec<PathBuf>, Error> {
             TestSandbox {
                 workspace: work.path(),
                 stage: &stage,
+                host_arch: rpmx_core::arch::Arch::current()?,
+                target_arch: rpmx_core::arch::Arch::parse(arch)?,
                 source_date_epoch: extracted.source_date_epoch,
                 jobs,
                 timeout: Some(step_timeout).filter(|seconds| *seconds > 0),
@@ -629,6 +633,8 @@ fn check_build_tools(
 struct TestSandbox<'a> {
     workspace: &'a Path,
     stage: &'a Path,
+    host_arch: rpmx_core::arch::Arch,
+    target_arch: rpmx_core::arch::Arch,
     source_date_epoch: u32,
     jobs: u32,
     timeout: Option<u64>,
@@ -675,6 +681,8 @@ fn run_planned_tests(
         backend: SandboxBackend::Root(root),
         workspace: settings.workspace,
         stage: settings.stage,
+        host_arch: settings.host_arch,
+        target_arch: settings.target_arch,
         source_date_epoch: settings.source_date_epoch,
         jobs: settings.jobs,
         timeout: settings.timeout,
@@ -724,6 +732,21 @@ fn prepare_test_root(
     builder_image: Option<&str>,
     work: &Path,
 ) -> Result<(PathBuf, String), Error> {
+    let target = rpmx_core::arch::Arch::parse(
+        lock.archs
+            .first()
+            .ok_or_else(|| Error::new(codes::BUILD_007, "the test root has no architecture"))?,
+    )?;
+    let host = rpmx_core::arch::Arch::current()?;
+    if host != target {
+        return Err(Error::new(
+            codes::RUNNER_002,
+            format!(
+                "cannot prepare a {target} test root on a {host} host; \
+                 an emulated runner is required"
+            ),
+        ));
+    }
     let image =
         builder_image.or_else(|| lock.builder.as_ref().map(|builder| builder.image.as_str()));
     let image = image.ok_or_else(|| {

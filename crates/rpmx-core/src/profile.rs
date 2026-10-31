@@ -263,15 +263,7 @@ pub fn default_sbom() -> bool {
 }
 
 pub fn normalize_arch(arch: &str) -> Result<&'static str> {
-    match arch {
-        "x86_64" | "amd64" => Ok("x86_64"),
-        "aarch64" | "arm64" => Ok("aarch64"),
-        "ppc64le" => Ok("ppc64le"),
-        "s390x" => Ok("s390x"),
-        "i686" | "i386" => Ok("i686"),
-        other => Err(Error::new(
-            codes::ROOT_009,
-            format!("unsupported architecture '{other}'"),
-        )),
-    }
+    crate::arch::Arch::parse(arch)
+        .map(crate::arch::Arch::as_str)
+        .map_err(|error| Error::new(codes::ROOT_009, error.message))
 }

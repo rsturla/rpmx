@@ -208,6 +208,31 @@ sources:
 
 Patches are a top-level list and are applied before source assembly.
 
+## Runners and architectures
+
+Every command distinguishes the **host architecture** (where `rpmx` runs) from
+the **target architecture** (the packages it produces). `--arch` defaults to
+the native architecture and drives templates, SRPM metadata, outputs and the
+repository.
+
+The runner is an explicit interface. The native bubblewrap and container
+runners currently accept only `host == target`; a different target fails with
+`RPMX-RUNNER-002` rather than silently executing the wrong architecture. The
+same interface is where an emulated target runner will plug in, without
+changing recipes or the sandbox callers:
+
+```rust
+pub trait Runner {
+    fn name(&self) -> &'static str;
+    fn supports(&self, host: Arch, target: Arch) -> bool;
+    fn run(&self, request: &RunnerRequest<'_>) -> Result<()>;
+}
+```
+
+The sandbox passes `RPMX_HOST_ARCH`, `RPMX_TARGET_ARCH` and `RPMX_CROSS` to
+steps. Root assembly and installed tests refuse a foreign target until an
+emulated runner exists.
+
 ## Sandbox
 
 Build steps run with no network, a cleared environment, a read-only root, and

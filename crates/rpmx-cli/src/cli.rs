@@ -175,6 +175,9 @@ pub enum Command {
     Lint {
         /// Recipe to check.
         file: PathBuf,
+        /// Target architecture used for templates.
+        #[arg(long, default_value = rpmx_core::arch::native_arch())]
+        arch: String,
         #[command(flatten)]
         policy: PolicyArgs,
         /// Emit machine-readable output.
@@ -186,7 +189,7 @@ pub enum Command {
         /// Recipe to plan.
         file: PathBuf,
         /// Target architecture used for templates.
-        #[arg(long, default_value = "x86_64")]
+        #[arg(long, default_value = rpmx_core::arch::native_arch())]
         arch: String,
         #[command(flatten)]
         policy: PolicyArgs,
@@ -220,6 +223,9 @@ pub enum Command {
     Source {
         /// Recipe to assemble.
         file: PathBuf,
+        /// Target architecture used for templates.
+        #[arg(long, default_value = rpmx_core::arch::native_arch())]
+        arch: String,
         #[command(flatten)]
         policy: PolicyArgs,
         /// CAS directory (default: $XDG_CACHE_HOME/rpmx/cas).
@@ -269,7 +275,7 @@ pub enum Command {
         #[arg(long, default_value = ".")]
         output: PathBuf,
         /// Build architecture recorded in the source header.
-        #[arg(long, default_value = "x86_64")]
+        #[arg(long, default_value = rpmx_core::arch::native_arch())]
         arch: String,
         /// Reproducible timestamp in Unix seconds (default: package.source-date-epoch).
         #[arg(long)]
@@ -303,7 +309,7 @@ pub enum Command {
         #[arg(long, default_value = ".")]
         output: PathBuf,
         /// Architecture for outputs that do not declare one.
-        #[arg(long, default_value = "x86_64")]
+        #[arg(long, default_value = rpmx_core::arch::native_arch())]
         arch: String,
         /// Build one matrix cell (required when the plan has several).
         #[arg(long)]
@@ -433,7 +439,7 @@ pub enum Command {
         #[arg(long, default_value = ".")]
         output: PathBuf,
         /// Architecture for outputs that do not declare one.
-        #[arg(long, default_value = "x86_64")]
+        #[arg(long, default_value = rpmx_core::arch::native_arch())]
         arch: String,
         /// Reproducible timestamp in Unix seconds (default: package.source-date-epoch).
         #[arg(long)]

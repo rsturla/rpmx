@@ -674,6 +674,7 @@ fn validate_outputs(recipe: &Recipe) -> Result<()> {
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn plan_cell(
     recipe: &Recipe,
     cell: &Cell,

@@ -93,6 +93,8 @@ pub mod codes {
         ROOT_016 = "RPMX-ROOT-016",
         ROOT_017 = "RPMX-ROOT-017",
         ROOT_018 = "RPMX-ROOT-018",
+        RUNNER_001 = "RPMX-RUNNER-001",
+        RUNNER_002 = "RPMX-RUNNER-002",
         SANDBOX_001 = "RPMX-SANDBOX-001",
         SANDBOX_002 = "RPMX-SANDBOX-002",
         SANDBOX_003 = "RPMX-SANDBOX-003",

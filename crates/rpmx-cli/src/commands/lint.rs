@@ -8,11 +8,12 @@ use crate::render;
 
 pub fn run(
     file: &Path,
+    arch: &str,
     pipeline_dir: Option<&Path>,
     policy: PlanPolicy<'_>,
     json: bool,
 ) -> Result<(), Error> {
-    let (_, plan) = load_plan(file, "x86_64", pipeline_dir, false, policy)?;
+    let (_, plan) = load_plan(file, arch, pipeline_dir, false, policy)?;
     if json {
         let value = serde_json::json!({
             "ok": true,

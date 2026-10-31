@@ -218,6 +218,7 @@ fn build_from_recipe(args: BuildArgs<'_>) -> Result<Vec<PathBuf>, Error> {
         proxy,
         offline,
         output: &source_output,
+        arch,
         source_date_epoch,
         jobs,
         step_timeout,

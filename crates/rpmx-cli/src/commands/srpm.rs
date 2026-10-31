@@ -24,22 +24,36 @@ pub fn run(args: SrpmArgs<'_>) -> Result<Vec<std::path::PathBuf>, Error> {
         json,
     } = args;
     let signing = crate::commands::load_signing_key(signing_key, signing_passphrase_env)?;
-    let root_lock = match root_lock {
-        Some(path) => {
-            let lock = load_lock(path)?;
-            if lock.root_digest.is_none() {
-                return Err(Error::new(
-                    codes::ROOT_016,
-                    format!(
-                        "{} has no root_digest; run `rpmx root assemble` before embedding it",
-                        path.display()
-                    ),
-                ));
+    let root_lock =
+        match root_lock {
+            Some(path) => {
+                let lock = load_lock(path)?;
+                let wanted = rpmx_core::profile::normalize_arch(arch)?;
+                if !lock.archs.iter().any(|candidate| {
+                    rpmx_core::profile::normalize_arch(candidate).ok() == Some(wanted)
+                }) {
+                    return Err(Error::new(
+                        codes::ROOT_016,
+                        format!(
+                            "root lock {} is for {}, but --arch is {wanted}",
+                            path.display(),
+                            lock.archs.join(", ")
+                        ),
+                    ));
+                }
+                if lock.root_digest.is_none() {
+                    return Err(Error::new(
+                        codes::ROOT_016,
+                        format!(
+                            "{} has no root_digest; run `rpmx root assemble` before embedding it",
+                            path.display()
+                        ),
+                    ));
+                }
+                Some(lock)
             }
-            Some(lock)
-        }
-        None => None,
-    };
+            None => None,
+        };
     // A root lock is a target-distro statement. It supplies the dist tag when
     // the profile and command line did not, and conflicts are errors rather
     // than silently producing contradictory provenance.

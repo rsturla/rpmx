@@ -13,3 +13,6 @@ does not promise a stable schema or CLI yet.
 - File directories, per-path owner/group/mode and file capabilities.
 - `rpmx repo` repository metadata and signed `repomd.xml`.
 - One-command `rpmx build` from recipe to SRPM to binary RPMs.
+- Host/target architecture separation, native-architecture defaults, and a
+  `Runner` interface that rejects foreign targets until an emulated runner is
+  available.

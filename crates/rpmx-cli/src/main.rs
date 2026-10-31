@@ -47,9 +47,20 @@ fn run(cli: Cli) -> Result<(), Error> {
         command,
     } = cli;
     match command {
-        Command::Lint { file, policy, json } => {
+        Command::Lint {
+            file,
+            arch,
+            policy,
+            json,
+        } => {
             let resolved = resolve_policy(policy)?;
-            commands::lint::run(&file, pipeline_dir.as_deref(), resolved.plan_policy(), json)
+            commands::lint::run(
+                &file,
+                &arch,
+                pipeline_dir.as_deref(),
+                resolved.plan_policy(),
+                json,
+            )
         }
         Command::Root { command } => match command {
             cli::RootCommand::Resolve {
@@ -137,6 +148,7 @@ fn run(cli: Cli) -> Result<(), Error> {
         }
         Command::Source {
             file,
+            arch,
             policy,
             cache,
             proxy,
@@ -159,6 +171,7 @@ fn run(cli: Cli) -> Result<(), Error> {
                 proxy: proxy.as_deref(),
                 offline,
                 output: &output,
+                arch: &arch,
                 source_date_epoch,
                 jobs,
                 step_timeout,

@@ -226,6 +226,7 @@ pub struct Manifest {
     pub root_lock: Option<LockRoot>,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn lock_json(
     recipe_digest: &str,
     version: &str,

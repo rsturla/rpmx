@@ -1,8 +1,10 @@
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
+use crate::arch::Arch;
 use crate::error::{codes, Error, Result};
 use crate::plan::PlannedStep;
 
@@ -16,7 +18,154 @@ const RESERVED_ENV: &[&str] = &["SOURCE_DATE_EPOCH", "SRC", "BUILD", "STAGE", "J
 
 static CID_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-#[derive(Debug, Clone, Copy)]
+/// Everything a runner needs to execute one step. The sandbox expands
+/// templates and builds the deterministic environment before this point, so a
+/// runner only has to deal with execution and isolation.
+pub struct RunnerRequest<'a> {
+    pub host: Arch,
+    pub target: Arch,
+    pub workspace: &'a Path,
+    pub stage: &'a Path,
+    pub command: &'a str,
+    pub args: &'a [String],
+    pub cwd: &'a str,
+    pub env: &'a BTreeMap<String, String>,
+    pub timeout: Option<u64>,
+    pub label: &'a str,
+}
+
+/// A way to execute a build step.
+///
+/// Native runners can only execute steps when `host == target`. An emulated or
+/// cross runner can override that policy without changing the sandbox or the
+/// callers.
+pub trait Runner {
+    fn name(&self) -> &'static str;
+    fn supports(&self, host: Arch, target: Arch) -> bool;
+    fn run(&self, request: &RunnerRequest<'_>) -> Result<()>;
+}
+
+pub struct BwrapRunner<'a> {
+    pub root: Option<&'a Path>,
+}
+
+impl Runner for BwrapRunner<'_> {
+    fn name(&self) -> &'static str {
+        "bubblewrap"
+    }
+
+    fn supports(&self, host: Arch, target: Arch) -> bool {
+        host == target
+    }
+
+    fn run(&self, request: &RunnerRequest<'_>) -> Result<()> {
+        let mut args = vec![
+            "--unshare-all".to_string(),
+            "--unshare-user".to_string(),
+            "--disable-userns".to_string(),
+            "--die-with-parent".to_string(),
+            "--new-session".to_string(),
+            "--clearenv".to_string(),
+            "--ro-bind".to_string(),
+            self.root
+                .unwrap_or_else(|| Path::new("/"))
+                .display()
+                .to_string(),
+            "/".to_string(),
+            "--dev".to_string(),
+            "/dev".to_string(),
+            "--proc".to_string(),
+            "/proc".to_string(),
+            "--tmpfs".to_string(),
+            "/sys".to_string(),
+            "--tmpfs".to_string(),
+            "/tmp".to_string(),
+            "--bind".to_string(),
+            request.workspace.display().to_string(),
+            "/tmp/build".to_string(),
+            "--bind".to_string(),
+            request.stage.display().to_string(),
+            "/tmp/stage".to_string(),
+            "--chdir".to_string(),
+            request.cwd.to_string(),
+        ];
+
+        for (key, value) in request.env {
+            args.push("--setenv".to_string());
+            args.push(key.clone());
+            args.push(value.clone());
+        }
+
+        args.push("--".to_string());
+        args.push(request.command.to_string());
+        args.extend(request.args.iter().cloned());
+
+        let completion = spawn("bwrap", &args, request.timeout, request.label)?;
+        finish(completion, request.timeout, request.label, "")
+    }
+}
+
+pub struct ContainerRunner<'a> {
+    pub image: &'a str,
+}
+
+impl Runner for ContainerRunner<'_> {
+    fn name(&self) -> &'static str {
+        "container"
+    }
+
+    fn supports(&self, host: Arch, target: Arch) -> bool {
+        host == target
+    }
+
+    fn run(&self, request: &RunnerRequest<'_>) -> Result<()> {
+        let cidfile = request.timeout.map(|_| cidfile_path());
+        let mut args = vec![
+            "run".to_string(),
+            "--rm".to_string(),
+            "--network=none".to_string(),
+            "--read-only".to_string(),
+            "--cap-drop=all".to_string(),
+            "--security-opt=no-new-privileges".to_string(),
+            "--pids-limit=1024".to_string(),
+            "--userns=keep-id".to_string(),
+            "--tmpfs".to_string(),
+            "/tmp:rw,size=2g".to_string(),
+            "-v".to_string(),
+            format!("{}:/tmp/build:Z", request.workspace.display()),
+            "-v".to_string(),
+            format!("{}:/tmp/stage:Z", request.stage.display()),
+            "-w".to_string(),
+            request.cwd.to_string(),
+        ];
+        if let Some(cidfile) = &cidfile {
+            args.push("--cidfile".to_string());
+            args.push(cidfile.display().to_string());
+        }
+        for (key, value) in request.env {
+            args.push("-e".to_string());
+            args.push(format!("{key}={value}"));
+        }
+        args.push("--entrypoint".to_string());
+        args.push(request.command.to_string());
+        args.push(self.image.to_string());
+        args.extend(request.args.iter().cloned());
+
+        let completion = spawn("podman", &args, request.timeout, request.label)?;
+        if timed_out(&completion, request.timeout) {
+            if let Some(cidfile) = &cidfile {
+                kill_container(cidfile);
+            }
+        }
+        let result = finish(completion, request.timeout, request.label, "container ");
+        if let Some(cidfile) = &cidfile {
+            let _ = std::fs::remove_file(cidfile);
+        }
+        result
+    }
+}
+
+#[derive(Clone, Copy)]
 pub enum SandboxBackend<'a> {
     /// Use the host root read-only (prototype).
     Bwrap,
@@ -24,12 +173,18 @@ pub enum SandboxBackend<'a> {
     Root(&'a Path),
     /// Use a builder image.
     Container(&'a str),
+    /// Use a caller-provided runner, such as a future emulated target runner.
+    Custom(&'a dyn Runner),
 }
 
 pub struct Sandbox<'a> {
     pub backend: SandboxBackend<'a>,
     pub workspace: &'a Path,
     pub stage: &'a Path,
+    /// Architecture of the process running the step.
+    pub host_arch: Arch,
+    /// Architecture of the produced packages.
+    pub target_arch: Arch,
     pub source_date_epoch: u32,
     pub jobs: u32,
     /// Wall-clock limit for each step in seconds. `None` or `Some(0)` disables
@@ -73,131 +228,51 @@ impl Sandbox<'_> {
             .map(|cwd| expand(cwd, self))
             .unwrap_or_else(|| "/tmp/build".to_string());
 
+        let mut env = BTreeMap::new();
+        for (key, value) in base_env(self) {
+            env.insert(key.to_string(), value);
+        }
+        for (key, value) in &step.env {
+            env.insert(key.clone(), expand(value, self));
+        }
+
+        let request = RunnerRequest {
+            host: self.host_arch,
+            target: self.target_arch,
+            workspace: self.workspace,
+            stage: self.stage,
+            command,
+            args: &args,
+            cwd: &cwd,
+            env: &env,
+            timeout: self.timeout,
+            label: &step.uses,
+        };
+
         match self.backend {
-            SandboxBackend::Container(image) => {
-                self.run_container(image, command, &args, &cwd, &step.env, &step.uses)
-            }
+            SandboxBackend::Bwrap => self.dispatch(&BwrapRunner { root: None }, &request),
             SandboxBackend::Root(root) => {
-                self.run_bwrap(Some(root), command, &args, &cwd, &step.env, &step.uses)
+                self.dispatch(&BwrapRunner { root: Some(root) }, &request)
             }
-            SandboxBackend::Bwrap => {
-                self.run_bwrap(None, command, &args, &cwd, &step.env, &step.uses)
-            }
+            SandboxBackend::Container(image) => self.dispatch(&ContainerRunner { image }, &request),
+            SandboxBackend::Custom(runner) => self.dispatch(runner, &request),
         }
     }
 
-    fn run_bwrap(
-        &self,
-        root: Option<&Path>,
-        command: &str,
-        command_args: &[String],
-        cwd: &str,
-        env: &std::collections::BTreeMap<String, String>,
-        label: &str,
-    ) -> Result<()> {
-        let mut args = vec![
-            "--unshare-all".to_string(),
-            "--unshare-user".to_string(),
-            "--disable-userns".to_string(),
-            "--die-with-parent".to_string(),
-            "--new-session".to_string(),
-            "--clearenv".to_string(),
-            "--ro-bind".to_string(),
-            root.unwrap_or_else(|| Path::new("/")).display().to_string(),
-            "/".to_string(),
-            "--dev".to_string(),
-            "/dev".to_string(),
-            "--proc".to_string(),
-            "/proc".to_string(),
-            "--tmpfs".to_string(),
-            "/sys".to_string(),
-            "--tmpfs".to_string(),
-            "/tmp".to_string(),
-            "--bind".to_string(),
-            self.workspace.display().to_string(),
-            "/tmp/build".to_string(),
-            "--bind".to_string(),
-            self.stage.display().to_string(),
-            "/tmp/stage".to_string(),
-            "--chdir".to_string(),
-            cwd.to_string(),
-        ];
-
-        for (key, value) in base_env(self) {
-            args.push("--setenv".to_string());
-            args.push(key.to_string());
-            args.push(value);
+    fn dispatch(&self, runner: &dyn Runner, request: &RunnerRequest<'_>) -> Result<()> {
+        if !runner.supports(self.host_arch, self.target_arch) {
+            return Err(Error::new(
+                codes::RUNNER_002,
+                format!(
+                    "runner '{}' cannot execute {} steps on a {} host; \
+                     an emulated or cross runner is required",
+                    runner.name(),
+                    self.target_arch,
+                    self.host_arch
+                ),
+            ));
         }
-        for (key, value) in env {
-            args.push("--setenv".to_string());
-            args.push(key.clone());
-            args.push(expand(value, self));
-        }
-
-        args.push("--".to_string());
-        args.push(command.to_string());
-        args.extend(command_args.iter().cloned());
-
-        let completion = spawn("bwrap", &args, self.timeout, label)?;
-        finish(completion, self.timeout, label, "")
-    }
-
-    fn run_container(
-        &self,
-        image: &str,
-        command: &str,
-        command_args: &[String],
-        cwd: &str,
-        env: &std::collections::BTreeMap<String, String>,
-        label: &str,
-    ) -> Result<()> {
-        let cidfile = self.timeout.map(|_| cidfile_path());
-        let mut args = vec![
-            "run".to_string(),
-            "--rm".to_string(),
-            "--network=none".to_string(),
-            "--read-only".to_string(),
-            "--cap-drop=all".to_string(),
-            "--security-opt=no-new-privileges".to_string(),
-            "--pids-limit=1024".to_string(),
-            "--userns=keep-id".to_string(),
-            "--tmpfs".to_string(),
-            "/tmp:rw,size=2g".to_string(),
-            "-v".to_string(),
-            format!("{}:/tmp/build:Z", self.workspace.display()),
-            "-v".to_string(),
-            format!("{}:/tmp/stage:Z", self.stage.display()),
-            "-w".to_string(),
-            cwd.to_string(),
-        ];
-        if let Some(cidfile) = &cidfile {
-            args.push("--cidfile".to_string());
-            args.push(cidfile.display().to_string());
-        }
-        for (key, value) in base_env(self) {
-            args.push("-e".to_string());
-            args.push(format!("{key}={value}"));
-        }
-        for (key, value) in env {
-            args.push("-e".to_string());
-            args.push(format!("{key}={}", expand(value, self)));
-        }
-        args.push("--entrypoint".to_string());
-        args.push(command.to_string());
-        args.push(image.to_string());
-        args.extend(command_args.iter().cloned());
-
-        let completion = spawn("podman", &args, self.timeout, label)?;
-        if timed_out(&completion, self.timeout) {
-            if let Some(cidfile) = &cidfile {
-                kill_container(cidfile);
-            }
-        }
-        let result = finish(completion, self.timeout, label, "container ");
-        if let Some(cidfile) = &cidfile {
-            let _ = std::fs::remove_file(cidfile);
-        }
-        result
+        runner.run(request)
     }
 }
 
@@ -302,6 +377,17 @@ fn base_env(sandbox: &Sandbox<'_>) -> Vec<(&'static str, String)> {
         ("BUILD", "/tmp/build".to_string()),
         ("STAGE", "/tmp/stage".to_string()),
         ("JOBS", sandbox.jobs.to_string()),
+        ("RPMX_HOST_ARCH", sandbox.host_arch.to_string()),
+        ("RPMX_TARGET_ARCH", sandbox.target_arch.to_string()),
+        (
+            "RPMX_CROSS",
+            if sandbox.host_arch == sandbox.target_arch {
+                "0"
+            } else {
+                "1"
+            }
+            .to_string(),
+        ),
         (
             "RPMX_DEBUGINFO",
             if sandbox.debuginfo { "1" } else { "0" }.to_string(),

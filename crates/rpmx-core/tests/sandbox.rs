@@ -1,8 +1,9 @@
 use std::collections::BTreeMap;
 use std::process::Command;
 
+use rpmx_core::arch::Arch;
 use rpmx_core::plan::PlannedStep;
-use rpmx_core::sandbox::{Sandbox, SandboxBackend};
+use rpmx_core::sandbox::{Runner, RunnerRequest, Sandbox, SandboxBackend};
 
 fn bwrap_available() -> bool {
     Command::new("bwrap")
@@ -35,12 +36,94 @@ fn run(step: &PlannedStep) -> Result<(), rpmx_core::Error> {
         backend: SandboxBackend::Bwrap,
         workspace: work.path(),
         stage: stage.path(),
+        host_arch: rpmx_core::arch::Arch::current().expect("host arch"),
+        target_arch: rpmx_core::arch::Arch::current().expect("target arch"),
         source_date_epoch: 1_700_000_000,
         jobs: 1,
         timeout: None,
         debuginfo: false,
     }
     .run(step)
+}
+
+#[test]
+fn native_runners_reject_a_foreign_target() {
+    let host = Arch::current().expect("host arch");
+    let target = if host == Arch::X86_64 {
+        Arch::Aarch64
+    } else {
+        Arch::X86_64
+    };
+    let work = tempfile::tempdir().expect("work");
+    let stage = tempfile::tempdir().expect("stage");
+    let error = Sandbox {
+        backend: SandboxBackend::Bwrap,
+        workspace: work.path(),
+        stage: stage.path(),
+        host_arch: host,
+        target_arch: target,
+        source_date_epoch: 1_700_000_000,
+        jobs: 1,
+        timeout: None,
+        debuginfo: false,
+    }
+    .run(&step("true", &[]))
+    .expect_err("bwrap cannot execute foreign architecture binaries");
+
+    assert_eq!(error.code, "RPMX-RUNNER-002");
+    assert!(error.message.contains("emulated or cross runner"));
+}
+
+struct ProbeRunner {
+    seen: std::sync::Mutex<Option<(Arch, Arch, String)>>,
+}
+
+impl Runner for ProbeRunner {
+    fn name(&self) -> &'static str {
+        "probe"
+    }
+
+    fn supports(&self, _host: Arch, _target: Arch) -> bool {
+        true
+    }
+
+    fn run(&self, request: &RunnerRequest<'_>) -> Result<(), rpmx_core::Error> {
+        *self.seen.lock().expect("probe lock") = Some((
+            request.host,
+            request.target,
+            request
+                .env
+                .get("RPMX_TARGET_ARCH")
+                .cloned()
+                .unwrap_or_default(),
+        ));
+        Ok(())
+    }
+}
+
+#[test]
+fn a_custom_runner_receives_the_arch_contract() {
+    let work = tempfile::tempdir().expect("work");
+    let stage = tempfile::tempdir().expect("stage");
+    let probe = ProbeRunner {
+        seen: std::sync::Mutex::new(None),
+    };
+    Sandbox {
+        backend: SandboxBackend::Custom(&probe),
+        workspace: work.path(),
+        stage: stage.path(),
+        host_arch: Arch::X86_64,
+        target_arch: Arch::Aarch64,
+        source_date_epoch: 1_700_000_000,
+        jobs: 2,
+        timeout: None,
+        debuginfo: false,
+    }
+    .run(&step("true", &[]))
+    .expect("custom runner");
+
+    let seen = probe.seen.lock().expect("probe lock").clone();
+    assert_eq!(seen, Some((Arch::X86_64, Arch::Aarch64, "aarch64".into())));
 }
 
 #[test]
@@ -64,6 +147,8 @@ fn runs_an_inline_step_with_a_writable_stage() {
         backend: SandboxBackend::Bwrap,
         workspace: work.path(),
         stage: stage.path(),
+        host_arch: rpmx_core::arch::Arch::current().expect("host arch"),
+        target_arch: rpmx_core::arch::Arch::current().expect("target arch"),
         source_date_epoch: 1_700_000_000,
         jobs: 1,
         timeout: None,
@@ -107,7 +192,10 @@ fn sandbox_environment_is_reproducible() {
             "test \"$HOME\" = /tmp/build && test \"$TZ\" = UTC && \
              test \"$LANG\" = C.UTF-8 && test \"$LC_ALL\" = C.UTF-8 && \
              test \"$PATH\" = /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin && \
-             test \"$SOURCE_DATE_EPOCH\" = 1700000000",
+             test \"$SOURCE_DATE_EPOCH\" = 1700000000 && \
+             test \"$RPMX_HOST_ARCH\" = \"$(uname -m | sed 's/arm64/aarch64/')\" && \
+             test \"$RPMX_TARGET_ARCH\" = \"$RPMX_HOST_ARCH\" && \
+             test \"$RPMX_CROSS\" = 0",
         ],
     ))
     .expect("deterministic environment");
@@ -167,6 +255,8 @@ fn a_step_that_overruns_is_killed() {
         backend: SandboxBackend::Bwrap,
         workspace: work.path(),
         stage: stage.path(),
+        host_arch: rpmx_core::arch::Arch::current().expect("host arch"),
+        target_arch: rpmx_core::arch::Arch::current().expect("target arch"),
         source_date_epoch: 1_700_000_000,
         jobs: 1,
         timeout: Some(1),

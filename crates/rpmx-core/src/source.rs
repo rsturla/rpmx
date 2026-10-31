@@ -66,6 +66,8 @@ pub fn assemble(options: SourceOptions<'_>) -> Result<PathBuf> {
         backend,
         workspace: options.workspace,
         stage: options.stage,
+        host_arch: crate::arch::Arch::current()?,
+        target_arch: crate::arch::Arch::parse(&options.plan.arch)?,
         source_date_epoch: options.source_date_epoch,
         jobs: options.jobs,
         timeout: Some(options.step_timeout).filter(|seconds| *seconds > 0),

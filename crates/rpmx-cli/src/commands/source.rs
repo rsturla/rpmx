@@ -14,6 +14,7 @@ pub fn run(args: SourceArgs<'_>) -> Result<std::path::PathBuf, Error> {
         proxy,
         offline,
         output,
+        arch,
         source_date_epoch,
         jobs,
         step_timeout,
@@ -31,7 +32,7 @@ pub fn run(args: SourceArgs<'_>) -> Result<std::path::PathBuf, Error> {
         .map(str::to_string)
         .or_else(|| std::env::var("RPMX_PROXY").ok())
         .or_else(|| std::env::var("RPMX_ACQUISITION_PROXY").ok());
-    let (recipe, plan) = load_plan(file, "x86_64", pipeline_dir, false, policy)?;
+    let (recipe, plan) = load_plan(file, arch, pipeline_dir, false, policy)?;
     let source_date_epoch = crate::commands::source_date_epoch(&recipe, source_date_epoch);
     let work = tempfile::tempdir().map_err(|error| {
         Error::new(
@@ -67,7 +68,7 @@ pub fn run(args: SourceArgs<'_>) -> Result<std::path::PathBuf, Error> {
                     "the source root lock has no root_digest; run `rpmx root assemble` first",
                 )
             })?;
-            let wanted = rpmx_core::profile::normalize_arch("x86_64")?;
+            let wanted = rpmx_core::profile::normalize_arch(arch)?;
             if !lock
                 .archs
                 .iter()

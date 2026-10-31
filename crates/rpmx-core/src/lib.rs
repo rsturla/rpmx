@@ -1,3 +1,4 @@
+pub mod arch;
 pub mod binary_package;
 pub mod cas;
 pub mod elf;
@@ -22,6 +23,7 @@ pub mod tree;
 use std::path::Path;
 
 use crate::error::codes;
+pub use arch::Arch;
 pub use error::{Error, Result};
 pub use model::Recipe;
 pub use plan::{

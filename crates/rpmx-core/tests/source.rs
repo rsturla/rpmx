@@ -123,6 +123,8 @@ fn patches_are_applied_and_removed_from_the_workspace() {
         backend: SandboxBackend::Bwrap,
         workspace: work.path(),
         stage: stage.path(),
+        host_arch: rpmx_core::arch::Arch::current().expect("host arch"),
+        target_arch: rpmx_core::arch::Arch::current().expect("target arch"),
         source_date_epoch: 1_700_000_000,
         jobs: 1,
         timeout: None,

@@ -233,6 +233,39 @@ umask=022
 - Fixed working directory (`/build`).
 - No random or host-specific values.
 
+## 5.1 Runner interface
+
+The sandbox expands templates and builds the deterministic environment; the
+runner only executes the resulting command. The interface is:
+
+```rust
+pub struct RunnerRequest<'a> {
+    pub host: Arch,
+    pub target: Arch,
+    pub workspace: &'a Path,
+    pub stage: &'a Path,
+    pub command: &'a str,
+    pub args: &'a [String],
+    pub cwd: &'a str,
+    pub env: &'a BTreeMap<String, String>,
+    pub timeout: Option<u64>,
+    pub label: &'a str,
+}
+
+pub trait Runner {
+    fn name(&self) -> &'static str;
+    fn supports(&self, host: Arch, target: Arch) -> bool;
+    fn run(&self, request: &RunnerRequest<'_>) -> Result<()>;
+}
+```
+
+`bubblewrap` and the container runner support native execution only. A future
+emulated runner implements the same trait and reports `supports(host, target)`
+for foreign targets. The sandbox checks `supports` before spawning anything, so
+an unsupported combination is `RPMX-RUNNER-002`, not a mysterious target
+binary failure. Root assembly and test-root preparation apply the same check
+until an emulated runner is available.
+
 ## 6. Stage-by-stage coverage
 
 | Phase | Sandbox? | Network | Rootfs | Writable | What runs |
