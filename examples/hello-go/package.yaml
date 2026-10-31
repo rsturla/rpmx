@@ -1,0 +1,73 @@
+# yaml-language-server: $schema=https://example.org/rpmx/package.schema.json
+#
+# A Go package pulled from a module proxy. No hand-made source tarball:
+# rpmx fetches the module, vendors its dependencies, and puts the snapshot
+# into the SRPM. This file is illustrative and is not a tested build.
+
+schema: 1
+
+package:
+  name: hello-go
+  epoch: 0
+  version: "1.4.0"
+  release: 1
+  summary: A small Go hello-world service
+  description: |
+    A tiny Go program used to demonstrate module-proxy acquisition,
+    vendoring and SRPM-first builds.
+  license: Apache-2.0
+  upstream: https://github.com/example/hello
+  maintainers:
+    - name: Jane Packager
+      email: jane@example.org
+  vcs:
+    type: git
+    url: https://github.com/example/hello.git
+    tag: v1.4.0
+
+build:
+  pipeline:
+    - uses: go/build
+      with:
+        args:
+          - -trimpath
+          - -buildvcs=false
+        output: /usr/bin/hello
+  environment:
+    CGO_ENABLED: "0"
+  dependencies:
+    tools:
+      - "go >= 1.24"
+    tests: []
+
+sources:
+  - name: hello
+    kind: go-module
+    module: github.com/example/hello
+    version: v1.4.0
+    digest: "sha512:00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    sum: "h1:0000000000000000000000000000000000000000000="
+    locators:
+      - kind: go-module
+        proxy: https://proxy.golang.org
+        sumdb: sum.golang.org
+      - kind: oci
+        ref: registry.example.org/rpmx/sources/hello-go@sha256:...
+
+source-assembly:
+  pipeline:
+    - uses: go/vendor
+
+outputs:
+  - name: hello-go
+    summary: A small Go hello-world service
+    description: The hello binary.
+    arch: any
+    files:
+      include:
+        - /usr/bin/hello
+
+tests:
+  - name: smoke
+    stage: installed
+    argv: [hello]

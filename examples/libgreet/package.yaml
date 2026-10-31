@@ -1,0 +1,78 @@
+# yaml-language-server: $schema=https://example.org/rpmx/package.schema.json
+#
+# A shared library with a devel subpackage, pkgconfig metadata and an installed
+# test that compiles a consumer against the packaged headers and library.
+
+schema: 1
+
+package:
+  name: libgreet
+  version: "1.0.0"
+  release: 1
+  summary: A tiny shared library with a devel subpackage
+  license: MIT
+  source-date-epoch: 1704067200
+
+build:
+  dependencies:
+    tools: [gcc, make, sh]
+    tests: [gcc]
+  pipeline:
+    - uses: make
+    - uses: strip
+
+source-assembly:
+  pipeline:
+    - runs: |
+        cat > greet.h <<'HEADER'
+        #ifndef GREET_H
+        #define GREET_H
+        int greet(void);
+        #endif
+        HEADER
+        cat > greet.c <<'SOURCE'
+        #include "greet.h"
+        int greet(void) { return 42; }
+        SOURCE
+        cat > Makefile <<'MAKE'
+        PREFIX ?= /usr
+        LIBDIR ?= /usr/lib64
+        CFLAGS ?= -g -O2
+        all: libgreet.so.1.0.0
+        libgreet.so.1.0.0: greet.c greet.h
+        	$(CC) -shared -fPIC $(CFLAGS) -Wl,-soname,libgreet.so.1 -o $@ greet.c
+        check: all
+        	test -s libgreet.so.1.0.0
+        install: all
+        	install -D -m 0755 libgreet.so.1.0.0 $(DESTDIR)$(LIBDIR)/libgreet.so.1.0.0
+        	ln -sf libgreet.so.1.0.0 $(DESTDIR)$(LIBDIR)/libgreet.so.1
+        	ln -sf libgreet.so.1.0.0 $(DESTDIR)$(LIBDIR)/libgreet.so
+        	install -D -m 0644 greet.h $(DESTDIR)$(PREFIX)/include/greet.h
+        	mkdir -p $(DESTDIR)$(LIBDIR)/pkgconfig
+        	printf 'prefix=/usr\nlibdir=/usr/lib64\nincludedir=/usr/include\n\nName: libgreet\nVersion: 1.0.0\nLibs: -L/usr/lib64 -lgreet\nCflags: -I/usr/include\n' > $(DESTDIR)$(LIBDIR)/pkgconfig/libgreet.pc
+        MAKE
+
+outputs:
+  - name: libgreet
+    summary: The libgreet shared library
+    files:
+      include:
+        - /usr/lib64/libgreet.so.1*
+
+  - name: libgreet-devel
+    summary: Headers and pkgconfig metadata for libgreet
+    dependencies:
+      run: ["libgreet = ${package.version}-${package.release}"]
+    files:
+      include:
+        - /usr/lib64/libgreet.so
+        - /usr/include/greet.h
+        - /usr/lib64/pkgconfig/libgreet.pc
+
+tests:
+  - name: build
+    stage: build
+    argv: ["sh", "-c", "test -s libgreet.so.1.0.0"]
+  - name: installed
+    stage: installed
+    argv: ["sh", "-c", "printf '#include <greet.h>\\nint main(void){return greet() != 42;}\\n' > /tmp/t.c && cc /tmp/t.c -o /tmp/t -lgreet && /tmp/t"]

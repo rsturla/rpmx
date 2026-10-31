@@ -1,0 +1,103 @@
+schema: 1
+package:
+  name: hello-daemon
+  version: "1.0"
+  release: 1
+  summary: A tiny systemd service with sysusers, tmpfiles and config
+  license: MIT
+  cpe:
+    vendor: example
+    product: hello-daemon
+  source-date-epoch: 1704067200
+source-assembly:
+  pipeline:
+    - runs: |
+        mkdir -p files
+        cat > files/hello-daemon <<'EOF'
+        #!/bin/sh
+        if [ "$${1:-}" = "--version" ]; then
+            echo "hello-daemon 1.0"
+            exit 0
+        fi
+        echo "hello from hello-daemon"
+        EOF
+        chmod 0755 files/hello-daemon
+        cat > files/hello-daemon.service <<'EOF'
+        [Unit]
+        Description=Hello Daemon
+        After=network.target
+
+        [Service]
+        Type=simple
+        ExecStart=/usr/bin/hello-daemon
+        Restart=on-failure
+
+        [Install]
+        WantedBy=multi-user.target
+        EOF
+        cat > files/hello-daemon.conf <<'EOF'
+        greeting=hello
+        EOF
+        cat > files/hello-daemon.sysusers <<'EOF'
+        u hello-daemon - "Hello Daemon" /var/lib/hello-daemon /sbin/nologin
+        EOF
+        cat > files/hello-daemon.tmpfiles <<'EOF'
+        d /var/lib/hello-daemon 0750 hello-daemon hello-daemon -
+        EOF
+build:
+  dependencies:
+    tools: [sh]
+  pipeline:
+    - runs: |
+        mkdir -p ${stage}/usr/bin ${stage}/usr/lib/systemd/system \
+            ${stage}/usr/lib/sysusers.d ${stage}/usr/lib/tmpfiles.d ${stage}/etc
+        install -m 0755 files/hello-daemon ${stage}/usr/bin/hello-daemon
+        install -m 0644 files/hello-daemon.service \
+            ${stage}/usr/lib/systemd/system/hello-daemon.service
+        install -m 0644 files/hello-daemon.sysusers \
+            ${stage}/usr/lib/sysusers.d/hello-daemon.conf
+        install -m 0644 files/hello-daemon.tmpfiles \
+            ${stage}/usr/lib/tmpfiles.d/hello-daemon.conf
+        install -m 0644 files/hello-daemon.conf ${stage}/etc/hello-daemon.conf
+    - uses: strip
+outputs:
+  - name: hello-daemon
+    dependencies:
+      run:
+        - /bin/sh
+    files:
+      include:
+        - /usr/bin/hello-daemon
+        - /usr/lib/systemd/system/hello-daemon.service
+        - /usr/lib/sysusers.d/hello-daemon.conf
+        - /usr/lib/tmpfiles.d/hello-daemon.conf
+        - /etc/hello-daemon.conf
+      config:
+        - /etc/hello-daemon.conf
+      noreplace:
+        - /etc/hello-daemon.conf
+      directories:
+        - path: /var/lib/hello-daemon
+          mode: "0750"
+          user: hello-daemon
+          group: hello-daemon
+      attributes:
+        - path: /usr/bin/hello-daemon
+          mode: "0750"
+          user: root
+          group: root
+    scriptlets:
+      post: |
+        systemctl --no-reload preset hello-daemon.service >/dev/null 2>&1 || :
+      preun: |
+        if [ "$${1}" = "0" ]; then
+            systemctl --no-reload disable --now hello-daemon.service >/dev/null 2>&1 || :
+        fi
+      postun: |
+        systemctl daemon-reload >/dev/null 2>&1 || :
+tests:
+  - name: installed
+    stage: installed
+    argv:
+      - /usr/bin/hello-daemon
+      - --version

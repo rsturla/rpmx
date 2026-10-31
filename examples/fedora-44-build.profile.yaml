@@ -1,0 +1,24 @@
+document: rpmx-profile
+version: 1
+name: fedora-44-build
+releasever: "44"
+dist-tag: .fc44
+archs: [x86_64]
+builder:
+  image: registry.fedoraproject.org/fedora:44
+repositories:
+  - id: fedora
+    metalink: https://mirrors.fedoraproject.org/metalink?repo=fedora-$releasever&arch=$basearch
+  - id: updates
+    metalink: https://mirrors.fedoraproject.org/metalink?repo=updates-released-f$releasever&arch=$basearch
+packages:
+  install: [bash, coreutils, findutils, gcc, make, patch, python3,
+    autoconf, automake, libtool, gettext, gawk, sed, grep, diffutils,
+    pkgconf-pkg-config,
+    cmake, ninja-build, meson, ncurses-devel, zlib-devel, oniguruma-devel,
+    python3-devel, python3-pip, python3-setuptools, python3-wheel, python3-build]
+debuginfo: false
+sbom: true
+options:
+  weak_deps: false
+  docs: false

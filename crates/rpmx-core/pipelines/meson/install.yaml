@@ -1,0 +1,9 @@
+name: meson/install
+version: 1
+summary: Install a Meson project into the staging root
+needs:
+  tools: [meson]
+run:
+  cwd: /tmp/build
+  runs: |
+    meson install -C build --destdir "$STAGE"

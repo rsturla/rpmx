@@ -1,0 +1,9 @@
+name: cmake/install
+version: 1
+summary: Install a CMake project into the staging root
+needs:
+  tools: [cmake]
+run:
+  cwd: /tmp/build
+  runs: |
+    DESTDIR="$STAGE" cmake --install build --prefix /usr

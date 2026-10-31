@@ -1,0 +1,19 @@
+name: go/build
+version: 1
+summary: Build a Go binary
+inputs:
+  output:
+    type: string
+    required: true
+  packages:
+    type: string
+    default: "."
+  args:
+    type: list<string>
+    default: []
+needs:
+  tools: [go]
+run:
+  cwd: /tmp/build
+  runs: |
+    go build ${inputs.args} -o "$STAGE${inputs.output}" ${inputs.packages}

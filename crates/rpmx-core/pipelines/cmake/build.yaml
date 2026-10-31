@@ -1,0 +1,9 @@
+name: cmake/build
+version: 1
+summary: Build a CMake project
+needs:
+  tools: [cmake]
+run:
+  cwd: /tmp/build
+  runs: |
+    cmake --build build --parallel 1

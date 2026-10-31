@@ -1,0 +1,9 @@
+name: autotools/check
+version: 1
+summary: Run an autotools project's checks
+needs:
+  tools: [make]
+run:
+  cwd: /tmp/build
+  runs: |
+    make check

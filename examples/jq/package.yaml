@@ -1,0 +1,57 @@
+schema: 1
+package:
+  name: jq
+  version: "1.7.1"
+  release: 1
+  summary: Command-line JSON processor
+  license: MIT AND ICU
+  source-date-epoch: 1702425600
+sources:
+  - name: jq-1.7.1.tar.gz
+    kind: archive
+    digest: "sha512:464861fb2e0d6934b616f1dc7f8002d7dae727c8c0c07b385b813e7522ba1ada8ead4165e1d99c892e3ea76e238c55a15b718c738805419721920f88f8d8478c"
+    locators:
+      - kind: https
+        url: https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-1.7.1.tar.gz
+build:
+  dependencies:
+    tools: [gcc, make, sh]
+    tests: [oniguruma]
+  pipeline:
+    - runs: |
+        cd jq-1.7.1
+        CFLAGS="-O2 -Wno-incompatible-pointer-types" ./configure --prefix=/usr --libdir=/usr/lib64 --disable-maintainer-mode --disable-docs --with-oniguruma=/usr
+        make -j"$JOBS"
+        make install DESTDIR=${stage}
+        find ${stage} -name '*.la' -delete
+    - uses: strip
+outputs:
+  - name: libjq
+    files:
+      include:
+        - /usr/lib64/libjq.so.1*
+  - name: libjq-devel
+    dependencies:
+      run: ["libjq = ${package.version}-${package.release}"]
+    files:
+      include:
+        - /usr/lib64/libjq.so
+        - /usr/lib64/libjq.a
+        - /usr/include/jq.h
+        - /usr/include/jv.h
+        - /usr/include/jq/**
+        - /usr/lib64/pkgconfig/libjq.pc
+  - name: jq
+    dependencies:
+      run: ["libjq = ${package.version}-${package.release}"]
+    files:
+      include:
+        - /usr/bin/jq
+        - /usr/share/man/**
+        - /usr/share/doc/jq/**
+      doc:
+        - /usr/share/doc/jq/**
+tests:
+  - name: installed
+    stage: installed
+    argv: ["sh", "-c", "echo '{\"a\":1}' | jq -r .a | grep -qx 1"]

@@ -1,0 +1,69 @@
+# yaml-language-server: $schema=https://example.org/rpmx/package.schema.json
+#
+# The first real upstream package: zstd builds a shared library, a CLI and a
+# development tree, and its install step creates symlinks.
+
+schema: 1
+
+package:
+  name: zstd
+  version: "1.5.7"
+  release: 1
+  summary: Zstandard compression tools and library
+  description: |
+    Fast lossless compression algorithm with a command-line tool, a shared
+    library and development headers.
+  license: BSD-3-Clause AND GPL-2.0-only
+  source-date-epoch: 1718150400
+  upstream: https://github.com/facebook/zstd
+
+sources:
+  - name: zstd-1.5.7.tar.gz
+    kind: archive
+    digest: "sha512:b4de208f179b68d4c6454139ca60d66ed3ef3893a560d6159a056640f83d3ee67cdf6ffb88971cdba35449dba4b597eaa8b4ae908127ef7fd58c89f40bf9a705"
+    locators:
+      - kind: https
+        url: https://github.com/facebook/zstd/releases/download/v1.5.7/zstd-1.5.7.tar.gz
+
+build:
+  dependencies:
+    tools: [gcc, make, sh]
+  pipeline:
+    - runs: |
+        cd zstd-1.5.7
+        make -j"$JOBS" ARFLAGS=rcsD
+        make install DESTDIR=${stage} PREFIX=/usr LIBDIR=/usr/lib64 ARFLAGS=rcsD
+        install -D -m 0644 LICENSE ${stage}/usr/share/licenses/zstd/LICENSE
+    - uses: strip
+
+outputs:
+  - name: libzstd
+    summary: Zstandard shared library
+    files:
+      include:
+        - /usr/lib64/libzstd.so.1*
+
+  - name: libzstd-devel
+    summary: Headers and development files for libzstd
+    dependencies:
+      run: ["libzstd = ${package.version}-${package.release}", "glibc-devel"]
+    files:
+      include:
+        - /usr/lib64/libzstd.so
+        - /usr/lib64/libzstd.a
+        - /usr/include/zstd.h
+        - /usr/include/zstd_errors.h
+        - /usr/include/zdict.h
+        - /usr/lib64/pkgconfig/libzstd.pc
+
+  - name: zstd
+    summary: Zstandard compression tools
+    dependencies:
+      run: ["libzstd = ${package.version}-${package.release}"]
+    files:
+      include:
+        - /usr/bin/*
+        - /usr/share/man/**
+        - /usr/share/licenses/**
+      license:
+        - /usr/share/licenses/**

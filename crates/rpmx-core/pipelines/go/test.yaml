@@ -1,0 +1,16 @@
+name: go/test
+version: 1
+summary: Run Go tests
+inputs:
+  packages:
+    type: string
+    default: "./..."
+  args:
+    type: list<string>
+    default: []
+needs:
+  tools: [go]
+run:
+  cwd: /tmp/build
+  runs: |
+    go test ${inputs.args} ${inputs.packages}

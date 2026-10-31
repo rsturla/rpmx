@@ -1,0 +1,16 @@
+name: python/install-wheel
+version: 1
+summary: Install a built wheel into the staging root
+inputs:
+  python:
+    type: string
+    default: python3
+  prefix:
+    type: string
+    default: /usr
+needs:
+  tools: [python3-pip]
+run:
+  cwd: /tmp/build
+  runs: |
+    ${inputs.python} -m pip install --root "$STAGE" --prefix ${inputs.prefix} --no-index --no-deps dist/*.whl

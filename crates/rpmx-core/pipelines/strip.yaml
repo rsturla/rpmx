@@ -1,0 +1,27 @@
+name: strip
+version: 1
+summary: Strip ELF files and optionally extract debuginfo
+needs:
+  tools: [binutils, findutils]
+run:
+  runs: |
+    find /tmp/stage -type f -exec sh -c '
+      for f do
+        case "$f" in
+          /tmp/stage/usr/lib/debug/*) continue ;;
+        esac
+        if [ "$RPMX_DEBUGINFO" = "1" ]; then
+          rel="$${f#/tmp/stage}"
+          debug="/tmp/stage/usr/lib/debug$rel.debug"
+          mkdir -p "$(dirname "$debug")"
+          if objcopy --only-keep-debug "$f" "$debug" 2>/dev/null; then
+            strip --strip-unneeded "$f" 2>/dev/null || true
+            ( cd "$(dirname "$debug")" && objcopy --add-gnu-debuglink="$(basename "$debug")" "$f" ) 2>/dev/null || true
+          else
+            rm -f "$debug"
+          fi
+        else
+          strip --strip-unneeded "$f" 2>/dev/null || true
+        fi
+      done
+    ' sh {} +

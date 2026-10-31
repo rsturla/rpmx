@@ -1,0 +1,9 @@
+name: make/build
+version: 1
+summary: Run make
+needs:
+  tools: [make]
+run:
+  cwd: /tmp/build
+  runs: |
+    make -j1

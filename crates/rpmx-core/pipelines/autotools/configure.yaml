@@ -1,0 +1,13 @@
+name: autotools/configure
+version: 1
+summary: Configure an autotools project
+inputs:
+  args:
+    type: list<string>
+    default: []
+needs:
+  tools: [make]
+run:
+  cwd: /tmp/build
+  runs: |
+    ./configure --prefix=/usr --libdir=/usr/lib64 ${inputs.args}

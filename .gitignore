@@ -1,0 +1,18 @@
+# Rust build output
+/target/
+**/target/
+
+# Build artifacts
+*.rpm
+*.src.rpm
+*.build.spdx.json
+*.test-root.lock.json
+*.spdx.json
+/out/
+/repo/
+*.log
+
+# Local scratch
+*.tmp
+*.swp
+.DS_Store

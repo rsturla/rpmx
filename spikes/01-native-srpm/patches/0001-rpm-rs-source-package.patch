@@ -1,0 +1,27 @@
+--- /tmp/opencode/rpmcrate/rpm-0.30.2/src/rpm/builder.rs	2006-07-24 02:21:28.000000000 +0100
++++ vendor/rpm/src/rpm/builder.rs	2026-10-31 03:27:34.106411446 +0000
+@@ -2190,6 +2190,7 @@
+             None
+         };
+ 
++        let is_source_package = self.arch == "src";
+         let mut actual_records = vec![
+             // Existence of this tag is how rpm decides whether or not a package is a source rpm or binary rpm
+             // If the SOURCERPM tag is set, then the package is seen as a binary rpm.
+@@ -2257,6 +2258,16 @@
+             ),
+         ];
+ 
++        // rpmx spike: source packages set SOURCEPACKAGE=1 and omit SOURCERPM,
++        // which is what stock rpm uses to distinguish source from binary.
++        if is_source_package {
++            actual_records.retain(|e| e.tag != IndexTag::RPMTAG_SOURCERPM as u32);
++            actual_records.push(IndexEntry::new(
++                IndexTag::RPMTAG_SOURCEPACKAGE,
++                IndexData::Int32(vec![1]),
++            ));
++        }
++
+         // Only add epoch if explicitly set (even if 0)
+         if let Some(e) = self.epoch {
+             actual_records.push(IndexEntry::new(

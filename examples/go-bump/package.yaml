@@ -1,0 +1,90 @@
+# yaml-language-server: $schema=https://example.org/rpmx/package.schema.json
+#
+# A CVE-remediation rebuild that bumps specific Go modules.
+# The bump happens in source assembly, before the SRPM. The build remains
+# offline. This file is illustrative and is not a tested build.
+
+schema: 1
+
+package:
+  name: hello-api
+  epoch: 0
+  version: "1.4.0"
+  release: 2
+  summary: An example Go service
+  description: |
+    A small HTTP service used to demonstrate targeted Go module bumps
+    for CVE remediation.
+  license: Apache-2.0
+  upstream: https://github.com/example/hello-api
+  maintainers:
+    - name: Jane Packager
+      email: jane@example.org
+  vcs:
+    type: git
+    url: https://github.com/example/hello-api.git
+    tag: v1.4.0
+
+build:
+  pipeline:
+    - uses: go/build
+      with:
+        output: /usr/bin/hello-api
+        args:
+          - -trimpath
+          - -buildvcs=false
+  environment:
+    CGO_ENABLED: "0"
+    GOTOOLCHAIN: local
+  dependencies:
+    tools:
+      - "go >= 1.24"
+    tests:
+      - govulncheck
+
+sources:
+  - name: hello-api
+    kind: go-module
+    module: github.com/example/hello-api
+    version: v1.4.0
+    digest: "sha512:00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    sum: "h1:0000000000000000000000000000000000000000000="
+    locators:
+      - kind: go-module
+        proxy: https://proxy.golang.org
+        sumdb: sum.golang.org
+      - kind: oci
+        ref: registry.example.org/rpmx/sources/hello-api@sha256:...
+
+source-assembly:
+  pipeline:
+    - uses: go/bump
+      with:
+        deps:
+          - module: golang.org/x/net
+            version: v0.33.0
+            reason: CVE-2024-45337
+            advisory: https://pkg.go.dev/vuln/GO-2024-3333
+          - module: github.com/sirupsen/logrus
+            version: v1.9.3
+            reason: CVE-2023-45142
+            advisory: https://pkg.go.dev/vuln/GO-2023-2135
+    - uses: go/vendor
+
+outputs:
+  - name: hello-api
+    summary: An example Go service
+    description: The hello-api binary.
+    arch: any
+    files:
+      include:
+        - /usr/bin/hello-api
+
+tests:
+  - name: unit
+    stage: build
+    argv: [go, test, ./...]
+
+  - name: smoke
+    stage: installed
+    argv: [hello-api, --version]

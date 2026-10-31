@@ -1,0 +1,14 @@
+name: go/bump
+version: 1
+summary: Update Go modules before vendoring
+inputs:
+  deps:
+    type: list<map>
+    required: true
+needs:
+  tools: [go, omnibump]
+render: omnibump-deps
+run:
+  cwd: /tmp/build
+  runs: |
+    omnibump --deps deps.yaml --tidy

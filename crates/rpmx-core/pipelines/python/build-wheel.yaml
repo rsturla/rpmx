@@ -1,0 +1,13 @@
+name: python/build-wheel
+version: 1
+summary: Build a PEP 517 wheel
+inputs:
+  python:
+    type: string
+    default: python3
+needs:
+  tools: [python3-build, python3-setuptools, python3-wheel]
+run:
+  cwd: /tmp/build
+  runs: |
+    ${inputs.python} -m build --wheel --no-isolation --outdir dist

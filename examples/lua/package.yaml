@@ -1,0 +1,41 @@
+schema: 1
+package:
+  name: lua
+  version: "5.4.7"
+  release: 1
+  summary: The Lua programming language
+  license: MIT
+  source-date-epoch: 1719273600
+sources:
+  - name: lua-5.4.7.tar.gz
+    kind: archive
+    digest: "sha512:98c5c8978dfdf867e37e9eb3b3ec83dee92d199243b5119505da83895e33f10d43c841be6a7d3b106daba8a0b2bd25fe099ebff8f87831dcc55c79c78b97d8b8"
+    locators:
+      - kind: https
+        url: https://www.lua.org/ftp/lua-5.4.7.tar.gz
+build:
+  dependencies:
+    tools: [gcc, make, sh]
+  pipeline:
+    - runs: |
+        cd lua-5.4.7
+        make -j"$JOBS" posix
+        make install INSTALL_TOP=${stage}/usr INSTALL_LIB=${stage}/usr/lib64 INSTALL_INC=${stage}/usr/include INSTALL_MAN=${stage}/usr/share/man/man1
+    - uses: strip
+outputs:
+  - name: lua
+    files:
+      include:
+        - /usr/bin/lua*
+        - /usr/share/man/**
+        - /usr/share/lua/**
+  - name: lua-devel
+    files:
+      include:
+        - /usr/lib64/liblua.a
+        - /usr/include/lua*
+        - /usr/include/lauxlib.h
+tests:
+  - name: installed
+    stage: installed
+    argv: ["lua", "-e", "assert(1 + 1 == 2)"]

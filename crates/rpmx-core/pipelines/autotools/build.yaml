@@ -1,0 +1,9 @@
+name: autotools/build
+version: 1
+summary: Build an autotools project
+needs:
+  tools: [make]
+run:
+  cwd: /tmp/build
+  runs: |
+    make -j1

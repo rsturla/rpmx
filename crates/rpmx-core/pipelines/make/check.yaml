@@ -1,0 +1,9 @@
+name: make/check
+version: 1
+summary: Run make check
+needs:
+  tools: [make]
+run:
+  cwd: /tmp/build
+  runs: |
+    make check

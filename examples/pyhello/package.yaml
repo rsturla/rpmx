@@ -1,0 +1,52 @@
+schema: 1
+package:
+  name: pyhello
+  version: "1.0.0"
+  release: 1
+  summary: A pure-Python hello package
+  license: MIT
+  cpe:
+    vendor: example
+    product: pyhello
+  source-date-epoch: 1704067200
+build:
+  dependencies:
+    tools: [python3, sh]
+    tests: [python3]
+  pipeline:
+    - runs: |
+        python3 -m build --wheel --no-isolation --outdir dist
+        python3 -m pip install --root ${stage} --prefix /usr --no-deps dist/*.whl
+    - uses: strip
+source-assembly:
+  pipeline:
+    - runs: |
+        mkdir -p pyhello
+        cat > pyproject.toml <<'EOF2'
+        [build-system]
+        requires = ["setuptools>=61"]
+        build-backend = "setuptools.build_meta"
+
+        [project]
+        name = "pyhello"
+        version = "1.0.0"
+        description = "A pure-Python hello package"
+
+        [tool.setuptools]
+        packages = ["pyhello"]
+        EOF2
+        cat > pyhello/__init__.py <<'EOF2'
+        def answer():
+            return 42
+        EOF2
+outputs:
+  - name: pyhello
+    arch: noarch
+    files:
+      include:
+        - /usr/lib/python3*/site-packages/pyhello/**
+        - /usr/lib/python3*/site-packages/pyhello-*.dist-info/**
+tests:
+  - name: installed
+    stage: installed
+    argv: ["python3", "-c", "import pyhello; assert pyhello.answer() == 42"]

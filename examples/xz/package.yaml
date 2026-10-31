@@ -1,0 +1,51 @@
+schema: 1
+package:
+  name: xz
+  version: "5.6.4"
+  release: 1
+  summary: XZ Utils compression tools and library
+  license: 0BSD AND LGPL-2.1-or-later AND GPL-2.0-or-later
+  source-date-epoch: 1716076800
+sources:
+  - name: xz-5.6.4.tar.gz
+    kind: archive
+    digest: "sha512:b966950eb9206e31f284c9dc3bb0a79f2fabbaf515e88c89da53d3da41ddfeebd2fc6d3d3f8fcd150c70caaaefa43dec0bce84aa183e08bf339d1aebbe041751"
+    locators:
+      - kind: https
+        url: https://tukaani.org/xz/xz-5.6.4.tar.gz
+build:
+  dependencies:
+    tools: [gcc, make, sh]
+  pipeline:
+    - runs: |
+        cd xz-5.6.4
+        ./configure --prefix=/usr --libdir=/usr/lib64 --disable-static --disable-doc --disable-nls
+        make -j"$JOBS"
+        make install DESTDIR=${stage}
+        find ${stage} -name '*.la' -delete
+    - uses: strip
+outputs:
+  - name: xz-libs
+    files:
+      include:
+        - /usr/lib64/liblzma.so.5*
+  - name: xz-devel
+    dependencies:
+      run: ["xz-libs = ${package.version}-${package.release}"]
+    files:
+      include:
+        - /usr/lib64/liblzma.so
+        - /usr/include/lzma.h
+        - /usr/include/lzma/**
+        - /usr/lib64/pkgconfig/liblzma.pc
+  - name: xz
+    dependencies:
+      run: ["xz-libs = ${package.version}-${package.release}"]
+    files:
+      include:
+        - /usr/bin/*
+        - /usr/share/man/**
+tests:
+  - name: installed
+    stage: installed
+    argv: ["sh", "-c", "xz --version >/dev/null && echo hello | xz -q | unxz -q"]

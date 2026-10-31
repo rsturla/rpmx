@@ -1,0 +1,9 @@
+name: meson/test
+version: 1
+summary: Run Meson tests
+needs:
+  tools: [meson]
+run:
+  cwd: /tmp/build
+  runs: |
+    meson test -C build --print-errorlogs

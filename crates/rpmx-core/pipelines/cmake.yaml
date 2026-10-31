@@ -1,0 +1,16 @@
+name: cmake
+version: 1
+summary: Configure, build, check and install a CMake project
+inputs:
+  args:
+    type: list<string>
+    default: []
+needs:
+  tools: [cmake]
+run:
+  cwd: /tmp/build
+  runs: |
+    cmake -S . -B build -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=lib64 ${inputs.args}
+    cmake --build build --parallel "$JOBS"
+    ctest --test-dir build --output-on-failure
+    DESTDIR="$STAGE" cmake --install build --prefix /usr

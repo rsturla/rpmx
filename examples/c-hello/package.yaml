@@ -1,0 +1,67 @@
+# yaml-language-server: $schema=https://example.org/rpmx/package.schema.json
+#
+# A self-contained C fixture: the source snapshot is generated, the build uses
+# python3 to emit a header, make to compile, and coreutils to install. It is the
+# end-to-end test for rebuilding from a locked root.
+
+schema: 1
+
+package:
+  name: c-hello
+  version: "1.0"
+  release: 1
+  summary: A C fixture built with gcc, make and python3
+  license: MIT
+  source-date-epoch: 1704067200
+
+source-assembly:
+  pipeline:
+    - runs: |
+        cat > hello.c <<'COMPILE'
+        #include <stdio.h>
+        #include "greeting.h"
+
+        int main(void) {
+            puts(GREETING);
+            return 0;
+        }
+        COMPILE
+        cat > Makefile <<'MAKE'
+        CFLAGS ?= -O2 -Wall -Wextra -Werror
+        all: c-hello
+        c-hello: hello.c greeting.h
+        	$(CC) $(CFLAGS) -o $@ hello.c
+        check: c-hello
+        	./c-hello
+        install: c-hello
+        	install -D -m 0755 c-hello $(DESTDIR)/usr/bin/c-hello
+        	ln -sf c-hello $(DESTDIR)/usr/bin/c-hello-alias
+        MAKE
+
+build:
+  dependencies:
+    tools: [gcc, make, python3, sh]
+  pipeline:
+    - runs: |
+        python3 - <<'HEADER'
+        from pathlib import Path
+        Path("greeting.h").write_text('#define GREETING "hello from a locked root"\n')
+        HEADER
+    - uses: make
+    - uses: strip
+
+outputs:
+  - name: c-hello
+    scriptlets:
+      post: |
+        echo "c-hello installed" > /usr/share/c-hello.marker
+    files:
+      include: ["/usr/bin/c-hello*"]
+
+tests:
+  - name: smoke
+    stage: build
+    argv: ["./c-hello"]
+  - name: installed
+    stage: installed
+    argv: ["c-hello"]

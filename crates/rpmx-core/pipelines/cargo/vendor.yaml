@@ -1,0 +1,9 @@
+name: cargo/vendor
+version: 1
+summary: Vendor Cargo dependencies
+needs:
+  tools: [cargo]
+run:
+  cwd: /tmp/build
+  runs: |
+    cargo vendor

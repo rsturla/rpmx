@@ -1,0 +1,13 @@
+name: cmake/configure
+version: 1
+summary: Configure a CMake project
+inputs:
+  args:
+    type: list<string>
+    default: []
+needs:
+  tools: [cmake]
+run:
+  cwd: /tmp/build
+  runs: |
+    cmake -S . -B build -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=lib64 ${inputs.args}

@@ -1,0 +1,9 @@
+name: make/install
+version: 1
+summary: Run make install into the staging root
+needs:
+  tools: [make]
+run:
+  cwd: /tmp/build
+  runs: |
+    make install DESTDIR="$STAGE"

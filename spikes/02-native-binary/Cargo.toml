@@ -1,0 +1,7 @@
+[package]
+name = "binary-spike"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rpm = "0.30"

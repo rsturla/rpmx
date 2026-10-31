@@ -1,0 +1,10 @@
+[package]
+name = "srpm-spike"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rpm = "0.30"
+
+[patch.crates-io]
+rpm = { path = "vendor/rpm" }

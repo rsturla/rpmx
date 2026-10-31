@@ -1,0 +1,89 @@
+# yaml-language-server: $schema=https://example.org/rpmx/package.schema.json
+#
+# A Python library built against multiple Python versions.
+# Each matrix cell has its own SRPM, build dependencies and output name.
+# This file is illustrative and is not a tested build.
+
+schema: 1
+
+package:
+  name: foo
+  epoch: 0
+  version: "1.0.0"
+  release: 1
+  summary: An example Python library
+  description: |
+    A tiny Python library used to demonstrate matrix expansion across
+    multiple Python interpreters.
+  license: MIT
+  upstream: https://github.com/example/foo
+  maintainers:
+    - name: Jane Packager
+      email: jane@example.org
+
+build:
+  pipeline:
+    - uses: python/build-wheel
+      with:
+        python: /usr/bin/python${matrix.python.version}
+    - uses: python/install-wheel
+      with:
+        python: /usr/bin/python${matrix.python.version}
+        prefix: /usr
+  dependencies:
+    tools:
+      - "${matrix.python.package}-devel"
+      - python3-pip
+    tests:
+      - "${matrix.python.package}-pytest"
+
+sources:
+  - name: foo
+    kind: pypi
+    package: foo
+    version: "1.0.0"
+    digest: "sha512:00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    locators:
+      - kind: https
+        url: https://files.pythonhosted.org/packages/source/f/foo/foo-1.0.0.tar.gz
+
+matrix:
+  axes:
+    python:
+      - value: "3.10"
+        version: "3.10"
+        tag: "310"
+        slug: py310
+        package: "python3.10"
+        site: /usr/lib/python3.10/site-packages
+      - value: "3.11"
+        version: "3.11"
+        tag: "311"
+        slug: py311
+        package: "python3.11"
+        site: /usr/lib/python3.11/site-packages
+      - value: "3.12"
+        version: "3.12"
+        tag: "312"
+        slug: py312
+        package: "python3.12"
+        site: /usr/lib/python3.12/site-packages
+  max-cells: 16
+
+outputs:
+  - name: "${matrix.python.package}-foo"
+    summary: Python library for ${matrix.python.version}
+    description: The foo library for Python ${matrix.python.version}.
+    arch: any
+    files:
+      include:
+        - "${matrix.python.site}/foo/**"
+        - "${matrix.python.site}/foo-*.dist-info/**"
+    dependencies:
+      run:
+        - "${matrix.python.package}"
+
+tests:
+  - name: import-${matrix.python.tag}
+    stage: installed
+    argv: ["/usr/bin/python${matrix.python.version}", "-c", "import foo"]

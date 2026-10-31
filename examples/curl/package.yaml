@@ -1,0 +1,217 @@
+# yaml-language-server: $schema=https://example.org/rpmx/package.schema.json
+#
+# A worked recipe for curl. The hashes are placeholders; replace them with
+# real values from `rpmx lock --update`. This file is illustrative, not a
+# tested build.
+
+schema: 1
+
+package:
+  name: curl
+  epoch: 0
+  version: "8.11.1"
+  release: 1
+  summary: A command line tool for transferring data with URLs
+  description: |
+    curl is a command line tool and library for transferring data with URLs.
+    It supports HTTP, HTTPS, FTP, SFTP, SCP, LDAP, MQTT and more.
+  license: curl
+  upstream: https://curl.se/
+  maintainers:
+    - name: Jane Packager
+      email: jane@example.org
+  vcs:
+    type: git
+    url: https://github.com/curl/curl.git
+    tag: curl-8_11_1
+  unowned-files: error
+
+build:
+  pipeline:
+    - uses: cmake
+      with:
+        args:
+          - -DCMAKE_BUILD_TYPE=Release
+          - -DCURL_USE_OPENSSL=ON
+          - -DCURL_USE_NGHTTP2=ON
+          - -DCURL_USE_LIBPSL=ON
+          - -DBUILD_TESTING=ON
+          - -DCURL_HIDDEN_SYMBOLS=ON
+    - name: remove-duplicate-changelog
+      # Upstream installs the changelog in a second location that is not packaged.
+      argv: [rm, -rf, "${stage}/usr/share/doc/curl/CHANGES"]
+    - uses: strip
+  environment:
+    CURL_CA_BUNDLE: /etc/pki/tls/certs/ca-bundle.crt
+  dependencies:
+    tools:
+      - "cmake >= 3.20"
+      - ninja
+      - pkgconf
+      - gcc
+      - gcc-c++
+    host:
+      - "openssl-devel >= 3.0"
+      - zlib-devel
+      - libpsl-devel
+    tests:
+      - python3
+
+sources:
+  - name: curl
+    digest: "sha512:00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    size: 1234567
+    signature:
+      type: openpgp
+      url: https://curl.se/download/curl-8.11.1.tar.xz.asc
+      fingerprint: "27EDEAF22F3ABCE1"
+    locators:
+      - kind: https
+        url: https://curl.se/download/curl-8.11.1.tar.xz
+      - kind: https
+        url: https://mirror.example.org/curl/curl-8.11.1.tar.xz
+      - kind: oci
+        ref: registry.example.org/rpmx/sources/curl@sha256:...
+    extract:
+      format: tar.xz
+      strip-components: 1
+
+patches:
+  - file: patches/0001-curl-ca-bundle-path.patch
+    strip: 1
+    reason: Use the distro CA bundle path instead of the upstream default
+    resolves:
+      - https://github.com/curl/curl/pull/0000
+
+features:
+  default: [ssl, http2]
+  tls:
+    summary: A TLS backend is selected
+  ssl:
+    summary: TLS support via OpenSSL
+    requires: [tls]
+    conflicts: [gnutls]
+    dependencies:
+      host:
+        - "openssl-devel >= 3.0"
+    pipeline:
+      - at: cmake/configure
+        inputs:
+          args:
+            append:
+              - -DCURL_USE_OPENSSL=ON
+    provides:
+      run:
+        - curl-tls
+  gnutls:
+    summary: TLS support via GnuTLS
+    requires: [tls]
+    conflicts: [ssl]
+    dependencies:
+      host:
+        - "gnutls-devel >= 3.8"
+    pipeline:
+      - at: cmake/configure
+        inputs:
+          args:
+            append:
+              - -DCURL_USE_GNUTLS=ON
+  http2:
+    summary: HTTP/2 support via nghttp2
+    dependencies:
+      host:
+        - libnghttp2-devel
+    pipeline:
+      - at: cmake/configure
+        inputs:
+          args:
+            append:
+              - -DCURL_USE_NGHTTP2=ON
+  idn:
+    summary: Internationalized domain names via libidn2
+    dependencies:
+      host:
+        - libidn2-devel
+    pipeline:
+      - at: cmake/configure
+        inputs:
+          args:
+            append:
+              - -DCURL_USE_LIBIDN2=ON
+
+outputs:
+  - name: curl
+    summary: Command line tool for transferring data with URLs
+    description: The curl command line tool.
+    arch: any
+    files:
+      include:
+        - /usr/bin/curl
+      attributes:
+        - path: /usr/bin/curl
+          mode: "0755"
+    dependencies:
+      run:
+        - "libcurl = ${version}-${release}"
+        - ca-certificates
+      recommends:
+        - curl-doc
+
+  - name: libcurl
+    summary: Library for transferring data with URLs
+    description: libcurl is a client-side URL transfer library.
+    arch: any
+    files:
+      include:
+        - /usr/lib/libcurl.so.4*
+    dependencies:
+      run:
+        - ca-certificates
+      provides:
+        - libcurl.so.4()(64bit)
+    actions:
+      - type: ldconfig
+
+  - name: libcurl-devel
+    summary: Development files for libcurl
+    description: Headers and pkg-config files for libcurl.
+    arch: any
+    files:
+      include:
+        - /usr/include/curl/**
+        - /usr/lib/libcurl.so
+        - /usr/lib/pkgconfig/libcurl.pc
+    dependencies:
+      run:
+        - "libcurl = ${version}-${release}"
+
+  - name: curl-doc
+    summary: Documentation for curl
+    description: Documentation and examples for curl.
+    arch: noarch
+    files:
+      include:
+        - /usr/share/doc/curl/**
+        - /usr/share/man/**
+      attributes:
+        - path: /usr/share/doc/curl/COPYING
+          license: true
+
+tests:
+  - name: unit
+    stage: build
+    argv: [ctest, --output-on-failure, --test-dir, build]
+  - name: smoke
+    stage: installed
+    argv: [curl, --version]
+    dependencies:
+      run:
+        - ca-certificates
+  - name: abi
+    stage: installed
+    kind: abi
+    library: libcurl.so.4
+    baseline: abi/libcurl-8.10.json
+  - name: reproduce
+    stage: package
+    kind: reproduce

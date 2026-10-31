@@ -1,0 +1,94 @@
+# yaml-language-server: $schema=https://example.org/rpmx/package.schema.json
+#
+# A package that generates part of its source from the upstream Git checkout.
+# The generated files are part of the source snapshot and the SRPM; the build
+# does not run the generator. This file is illustrative and is not tested.
+
+schema: 1
+
+package:
+  name: libfoo
+  epoch: 0
+  version: "2.3.4"
+  release: 1
+  summary: An example library with generated parser tables
+  description: |
+    libfoo is a small example library whose parser tables are generated
+    from a declarative grammar at source-assembly time.
+  license: MIT
+  upstream: https://github.com/example/libfoo
+  maintainers:
+    - name: Jane Packager
+      email: jane@example.org
+  vcs:
+    type: git
+    url: https://github.com/example/libfoo.git
+    tag: v2.3.4
+
+build:
+  pipeline:
+    - uses: meson
+  dependencies:
+    tools:
+      - "meson >= 1.4"
+      - ninja
+      - python3
+    host: []
+    tests:
+      - pkg-config
+
+sources:
+  - name: libfoo
+    kind: git
+    url: https://github.com/example/libfoo.git
+    commit: "0123456789abcdef0123456789abcdef01234567"
+    destination: libfoo
+
+source-assembly:
+  pipeline:
+    - argv: ["python3", "tools/gen-parser.py"]
+      reason: Parser tables are deterministic and belong in the source snapshot
+    - argv: ["python3", "tools/check-generated.py"]
+      reason: Fail the source assembly if generated files are stale or nondeterministic
+
+patches:
+  - file: patches/0001-libfoo-pkgconfig-prefix.patch
+    strip: 1
+    reason: Use the distro prefix in the generated pkg-config file
+
+outputs:
+  - name: libfoo
+    summary: An example library with generated parser tables
+    description: Runtime library.
+    arch: any
+    files:
+      include:
+        - /usr/lib/libfoo.so.2*
+    dependencies:
+      run:
+        - glibc
+
+  - name: libfoo-devel
+    summary: Development files for libfoo
+    description: Headers, pkg-config file and the unversioned library symlink.
+    arch: any
+    files:
+      include:
+        - /usr/include/foo/**
+        - /usr/lib/libfoo.so
+        - /usr/lib/pkgconfig/foo.pc
+    dependencies:
+      run:
+        - "libfoo = ${version}-${release}"
+
+tests:
+  - name: unit
+    stage: build
+    argv: [meson, test, -C, build, --print-errorlogs]
+
+  - name: installed
+    stage: installed
+    argv: [pkg-config, --modversion, foo]
+    dependencies:
+      run:
+        - pkg-config

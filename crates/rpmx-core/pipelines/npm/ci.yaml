@@ -1,0 +1,9 @@
+name: npm/ci
+version: 1
+summary: Install npm dependencies from the lockfile, offline
+needs:
+  tools: [npm]
+run:
+  cwd: /tmp/build
+  runs: |
+    npm ci --offline

@@ -1,0 +1,19 @@
+document: rpmx-profile
+version: 1
+name: fedora-44-debug
+releasever: "44"
+archs: [x86_64]
+builder:
+  image: registry.fedoraproject.org/fedora:44
+repositories:
+  - id: fedora
+    metalink: https://mirrors.fedoraproject.org/metalink?repo=fedora-$releasever&arch=$basearch
+  - id: updates
+    metalink: https://mirrors.fedoraproject.org/metalink?repo=updates-released-f$releasever&arch=$basearch
+packages:
+  install: [bash, coreutils, findutils, gcc, make, patch, python3]
+debuginfo: true
+sbom: true
+options:
+  weak_deps: false
+  docs: false

@@ -1,0 +1,16 @@
+name: meson
+version: 1
+summary: Configure, build, test and install a Meson project
+inputs:
+  args:
+    type: list<string>
+    default: []
+needs:
+  tools: [meson]
+run:
+  cwd: /tmp/build
+  runs: |
+    meson setup build --prefix=/usr --libdir=lib64 --buildtype=release ${inputs.args}
+    meson compile -C build -j "$JOBS"
+    meson test -C build --print-errorlogs
+    meson install -C build --destdir "$STAGE"

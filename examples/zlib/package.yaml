@@ -1,0 +1,46 @@
+schema: 1
+package:
+  name: zlib
+  version: "1.3.1"
+  release: 1
+  summary: Compression library
+  license: Zlib
+  source-date-epoch: 1705881600
+sources:
+  - name: zlib-1.3.1.tar.gz
+    kind: archive
+    digest: "sha512:580677aad97093829090d4b605ac81c50327e74a6c2de0b85dd2e8525553f3ddde17556ea46f8f007f89e435493c9a20bc997d1ef1c1c2c23274528e3c46b94f"
+    locators:
+      - kind: https
+        url: https://zlib.net/fossils/zlib-1.3.1.tar.gz
+build:
+  dependencies:
+    tools: [gcc, make, sh]
+    tests: [gcc]
+  pipeline:
+    - runs: |
+        cd zlib-1.3.1
+        ./configure --prefix=/usr --libdir=/usr/lib64
+        make -j"$JOBS"
+        make install DESTDIR=${stage}
+    - uses: strip
+outputs:
+  - name: zlib
+    files:
+      include:
+        - /usr/lib64/libz.so.1*
+        - /usr/share/man/**
+  - name: zlib-devel
+    dependencies:
+      run: ["zlib = ${package.version}-${package.release}"]
+    files:
+      include:
+        - /usr/lib64/libz.so
+        - /usr/lib64/libz.a
+        - /usr/include/zlib.h
+        - /usr/include/zconf.h
+        - /usr/lib64/pkgconfig/zlib.pc
+tests:
+  - name: installed
+    stage: installed
+    argv: ["sh", "-c", "printf '#include <zlib.h>\\nint main(void){return zlibVersion()==0;}\\n' > /tmp/z.c && cc /tmp/z.c -o /tmp/z -lz && /tmp/z"]

@@ -1,0 +1,9 @@
+name: cmake/check
+version: 1
+summary: Run CTest tests
+needs:
+  tools: [cmake]
+run:
+  cwd: /tmp/build
+  runs: |
+    ctest --test-dir build --output-on-failure
