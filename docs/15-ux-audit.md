@@ -27,9 +27,9 @@ gzip/xz/zstd, SHA-256 sources, package policy checks, and Melange-style step
 feedback.
 
 Still open from the proposal set: `features`, typed `actions` (systemd,
-sysusers, tmpfiles), `update` metadata and `--install-dir` test reuse, and a
-config file. `rpmx bump` is implemented. JUnit reports aggregate across matrix
-cells.
+sysusers, tmpfiles), `update` metadata, and a config file. `rpmx bump` and
+`rpmx test --install-dir` are implemented. JUnit reports aggregate across
+matrix cells. Local `file://` repositories are mounted into the resolver.
 
 ---
 

@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::profile::{Profile, Repository};
 use crate::root::container::{image_digest_for_arch, podman_run};
@@ -20,11 +20,12 @@ pub fn resolve_profile(
     let image_digest = image_digest_for_arch(&image, profile.arch())?;
 
     prepare_work(work)?;
-    write_repositories(work, &profile.repositories)?;
+    let local_repositories = write_repositories(work, &profile.repositories)?;
 
     run_dnf(
         &image,
         work,
+        &local_repositories,
         dnf_base_args(profile)
             .into_iter()
             .chain([
@@ -56,7 +57,7 @@ pub fn resolve_profile(
     }
 
     let specs = downloaded.iter().map(Downloaded::spec).collect::<Vec<_>>();
-    let metadata = query_repositories(&image, work, profile, &specs)?;
+    let metadata = query_repositories(&image, work, profile, &specs, &local_repositories)?;
 
     let mut packages: BTreeMap<String, Vec<LockedPackage>> = BTreeMap::new();
     for package in downloaded {
@@ -142,8 +143,9 @@ fn prepare_work(work: &Path) -> Result<()> {
     Ok(())
 }
 
-fn write_repositories(work: &Path, repositories: &[Repository]) -> Result<()> {
-    for repository in repositories {
+fn write_repositories(work: &Path, repositories: &[Repository]) -> Result<Vec<(PathBuf, String)>> {
+    let mut mounts = Vec::new();
+    for (index, repository) in repositories.iter().enumerate() {
         if repository.id.is_empty()
             || repository.id == "."
             || repository.id == ".."
@@ -157,6 +159,49 @@ fn write_repositories(work: &Path, repositories: &[Repository]) -> Result<()> {
             ));
         }
         let (kind, url) = repository.location();
+        let mut url = url.to_string();
+        if kind == "baseurl" {
+            if let Some(path) = local_repository_path(&url) {
+                let path = std::fs::canonicalize(&path).map_err(|error| {
+                    Error::new(
+                        codes::ROOT_006,
+                        format!(
+                            "cannot resolve local repository {}: {error}",
+                            path.display()
+                        ),
+                    )
+                })?;
+                let target = format!("/rpmx-repos/{index}");
+                url = format!("file://{target}");
+                mounts.push((path, target));
+            }
+        }
+        let gpgkey = match &repository.gpgkey {
+            Some(key) => match local_repository_path(key) {
+                Some(path) if path.is_file() => {
+                    let keys = work.join("keys");
+                    std::fs::create_dir_all(&keys).map_err(|error| {
+                        Error::new(
+                            codes::ROOT_004,
+                            format!("cannot create {}: {error}", keys.display()),
+                        )
+                    })?;
+                    let target = keys.join(format!("{}.key", repository.id));
+                    std::fs::copy(&path, &target).map_err(|error| {
+                        Error::new(
+                            codes::ROOT_004,
+                            format!("cannot copy {}: {error}", path.display()),
+                        )
+                    })?;
+                    Some(format!(
+                        "file:///work/keys/{}",
+                        target.file_name().unwrap_or_default().to_string_lossy()
+                    ))
+                }
+                _ => Some(key.clone()),
+            },
+            None => None,
+        };
         // Fedora dropped signed repository metadata, so only package
         // signatures are checked. Metadata pinning is an open question.
         let mut text = format!(
@@ -165,7 +210,7 @@ fn write_repositories(work: &Path, repositories: &[Repository]) -> Result<()> {
             repository.id,
             u8::from(repository.gpgcheck()),
         );
-        if let Some(key) = &repository.gpgkey {
+        if let Some(key) = gpgkey {
             text.push_str(&format!("gpgkey={key}\n"));
         }
         let path = work.join("repos.d").join(format!("{}.repo", repository.id));
@@ -176,7 +221,17 @@ fn write_repositories(work: &Path, repositories: &[Repository]) -> Result<()> {
             )
         })?;
     }
-    Ok(())
+    Ok(mounts)
+}
+
+fn local_repository_path(value: &str) -> Option<PathBuf> {
+    let path = value.strip_prefix("file://").unwrap_or(value);
+    let path = PathBuf::from(path);
+    if path.is_absolute() {
+        Some(path)
+    } else {
+        None
+    }
 }
 
 fn dnf_base_args(profile: &Profile) -> Vec<String> {
@@ -205,8 +260,13 @@ fn dnf_base_args(profile: &Profile) -> Vec<String> {
     args
 }
 
-fn run_dnf(image: &str, work: &Path, args: Vec<String>) -> Result<()> {
-    let output = podman_run(image, work, &args)?;
+fn run_dnf(
+    image: &str,
+    work: &Path,
+    local_repositories: &[(PathBuf, String)],
+    args: Vec<String>,
+) -> Result<()> {
+    let output = podman_run(image, work, local_repositories, &args)?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let tail = stderr
@@ -332,6 +392,7 @@ fn query_repositories(
     work: &Path,
     profile: &Profile,
     specs: &[String],
+    local_repositories: &[(PathBuf, String)],
 ) -> Result<BTreeMap<PackageKey, RepositoryMatch>> {
     let mut args = dnf_base_args(profile);
     args.extend([
@@ -341,7 +402,7 @@ fn query_repositories(
     ]);
     args.extend(specs.iter().cloned());
 
-    let output = podman_run(image, work, &args)?;
+    let output = podman_run(image, work, local_repositories, &args)?;
     if !output.status.success() {
         return Err(Error::new(
             codes::ROOT_007,
@@ -378,4 +439,51 @@ fn query_repositories(
         found.insert(key, RepositoryMatch { repo_id, srpm });
     }
     Ok(found)
+}
+
+#[cfg(test)]
+mod local_repository_tests {
+    use super::write_repositories;
+    use crate::profile::Repository;
+
+    #[test]
+    fn a_local_baseurl_is_mounted_and_rewritten() {
+        let work = tempfile::tempdir().expect("work");
+        std::fs::create_dir_all(work.path().join("repos.d")).expect("repos.d");
+        let repository = tempfile::tempdir().expect("repository");
+        let repositories = vec![Repository {
+            id: "local".to_string(),
+            baseurl: Some(format!("file://{}", repository.path().display())),
+            metalink: None,
+            mirrorlist: None,
+            gpgkey: None,
+        }];
+        let mounts = write_repositories(work.path(), &repositories).expect("write");
+        assert_eq!(mounts.len(), 1);
+        assert_eq!(mounts[0].1, "/rpmx-repos/0");
+        let text = std::fs::read_to_string(work.path().join("repos.d/local.repo")).expect("repo");
+        assert!(text.contains("baseurl=file:///rpmx-repos/0"), "{text}");
+    }
+
+    #[test]
+    fn a_local_gpgkey_is_copied_into_the_work_directory() {
+        let work = tempfile::tempdir().expect("work");
+        std::fs::create_dir_all(work.path().join("repos.d")).expect("repos.d");
+        let key = work.path().join("key.asc");
+        std::fs::write(&key, b"key").expect("key");
+        let repositories = vec![Repository {
+            id: "local".to_string(),
+            baseurl: Some("https://example.invalid".to_string()),
+            metalink: None,
+            mirrorlist: None,
+            gpgkey: Some(format!("file://{}", key.display())),
+        }];
+        write_repositories(work.path(), &repositories).expect("write");
+        let text = std::fs::read_to_string(work.path().join("repos.d/local.repo")).expect("repo");
+        assert!(
+            text.contains("gpgkey=file:///work/keys/local.key"),
+            "{text}"
+        );
+        assert!(work.path().join("keys/local.key").is_file());
+    }
 }

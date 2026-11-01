@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use rpmx_base::error::{codes, Error, Result};
@@ -6,6 +6,7 @@ use rpmx_base::error::{codes, Error, Result};
 pub(crate) fn podman_run(
     image: &str,
     work: &Path,
+    local_repositories: &[(PathBuf, String)],
     args: &[String],
 ) -> Result<std::process::Output> {
     let mut process = Command::new("podman");
@@ -19,6 +20,11 @@ pub(crate) fn podman_run(
         .arg(format!("{}:/work:Z", work.display()))
         .arg("-w")
         .arg("/work");
+    for (source, target) in local_repositories {
+        process
+            .arg("-v")
+            .arg(format!("{}:{target}:ro,Z", source.display()));
+    }
     for variable in [
         "http_proxy",
         "https_proxy",

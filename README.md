@@ -163,7 +163,7 @@ Autotools packages, Lua, jq, a noarch Python wheel, and a systemd service.
 | `rpmx lock [FILE]` | Write `package.lock.json`; `--check` verifies it. |
 | `rpmx plan [FILE]` | Show cells, outputs and expanded steps. |
 | `rpmx build [FILE]` | Resolve the root, build, package and index. |
-| `rpmx test [FILE]` | Run build- and installed-stage tests; `--test` selects. |
+| `rpmx test [FILE]` | Run tests; `--test` selects and `--install-dir DIR` tests existing RPMs. |
 | `rpmx rebuild SRPM` | Rebuild binaries from an SRPM, assembling its root. |
 | `rpmx explain TOPIC` | Explain policy, root, steps, matrix, requires or files. |
 | `rpmx shell` | Enter the build sandbox with the same mounts. |
@@ -182,6 +182,27 @@ Every command defaults `FILE` to `./package.yaml`. `build`, `test` and
 unless `--jobs` is given, and write repository metadata unless `--no-index` is
 set. `--keep-workdir` preserves a failed workspace; `--debug` echoes the
 commands a step runs.
+
+## Local repositories
+
+A profile repository may point at a directory on the host:
+
+```yaml
+repositories:
+  - id: local
+    baseurl: file:///srv/rpmx/packages
+```
+
+rpmx mounts that directory read-only in the resolver container, so a package
+built earlier can satisfy another package's build dependency:
+
+```console
+rpmx repo --rpms out/ --output /srv/rpmx/packages
+rpmx root resolve local.profile.yaml
+```
+
+The same applies to a local `gpgkey`; it is copied into the resolver work
+directory and referenced by `file://`.
 
 ## Policies and artifacts
 

@@ -10,6 +10,8 @@ use rpmx_core::test_root::{prepare as prepare_test_root, TestRootOptions};
 use rpmx_core::test_runner::{run_planned_tests, TestSandboxConfig};
 use rpmx_core::Error;
 
+use crate::commands::report::{self, TestOutcome};
+
 pub(super) struct TestRunOptions<'a> {
     pub(super) sandbox: &'a Sandbox<'a>,
     pub(super) cell: &'a PlannedCell,
@@ -94,19 +96,19 @@ pub(super) fn run(options: TestRunOptions<'_>) -> Result<Option<PathBuf>, Error>
             if error.is_some() { "FAILED" } else { "ok" },
             started.elapsed().as_secs_f64()
         );
-        outcomes.push((
-            test.name.clone(),
-            test.stage.clone(),
+        outcomes.push(TestOutcome {
+            name: test.name.clone(),
+            stage: test.stage.clone(),
             error,
-            started.elapsed(),
-        ));
+            duration: started.elapsed(),
+        });
     }
-    let failed: Vec<_> = outcomes
+    let failed = outcomes
         .iter()
-        .filter(|(_, _, error, _)| error.is_some())
-        .collect();
+        .filter(|outcome| outcome.error.is_some())
+        .count();
     if let Some(path) = options.junit {
-        write_junit(path, &outcomes).map_err(|error| {
+        report::write_junit(path, &outcomes).map_err(|error| {
             Error::new(
                 codes::TEST_003,
                 format!("cannot write {}: {error}", path.display()),
@@ -131,135 +133,12 @@ pub(super) fn run(options: TestRunOptions<'_>) -> Result<Option<PathBuf>, Error>
     } else {
         None
     };
-    if !failed.is_empty() {
+    if failed > 0 {
         return Err(Error::new(
             codes::TEST_003,
-            format!("{} test(s) failed", failed.len()),
+            format!("{failed} test(s) failed"),
         ));
     }
     let _ = evidence;
     Ok(evidence)
-}
-
-fn write_junit(
-    path: &Path,
-    outcomes: &[(String, String, Option<String>, std::time::Duration)],
-) -> std::io::Result<()> {
-    // A matrix runs several cells; append to the report instead of replacing
-    // the previous cell's results.
-    let existing = std::fs::read_to_string(path).unwrap_or_default();
-    let mut tests = existing.matches("<testcase ").count();
-    let mut failures = existing.matches("<failure ").count();
-    let mut body = existing;
-    if let Some(position) = body.rfind("</testsuite>") {
-        body.truncate(position);
-    } else {
-        body.clear();
-    }
-    if let Some(start) = body.find("<testsuite") {
-        if let Some(end) = body[start..].find('>') {
-            body.drain(..start + end + 1);
-        }
-    }
-    let mut cases = String::new();
-    for (name, stage, error, duration) in outcomes {
-        tests += 1;
-        if error.is_some() {
-            failures += 1;
-        }
-        cases.push_str(&format!(
-            "  <testcase name=\"{}\" classname=\"{}\" time=\"{:.3}\">",
-            escape(name),
-            escape(stage),
-            duration.as_secs_f64()
-        ));
-        if let Some(error) = error {
-            cases.push_str(&format!(
-                "<failure message=\"{}\">{}</failure>",
-                escape(error),
-                escape(error)
-            ));
-        }
-        cases.push_str("</testcase>\n");
-    }
-    let xml = format!(
-        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<testsuite name=\"rpmx\" tests=\"{tests}\" failures=\"{failures}\">\n{}{cases}</testsuite>\n",
-        body.trim_start_matches('\n')
-    );
-    std::fs::write(path, xml)
-}
-
-fn escape(value: &str) -> String {
-    value
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&apos;")
-}
-
-#[cfg(test)]
-mod tests {
-    use super::write_junit;
-    use std::time::Duration;
-
-    #[test]
-    fn junit_escapes_messages_and_counts_failures() {
-        let directory = tempfile::tempdir().expect("tempdir");
-        let path = directory.path().join("report.xml");
-        write_junit(
-            &path,
-            &[
-                (
-                    "ok <test>".to_string(),
-                    "build".to_string(),
-                    None,
-                    Duration::from_millis(10),
-                ),
-                (
-                    "bad".to_string(),
-                    "installed".to_string(),
-                    Some("a & b".to_string()),
-                    Duration::from_millis(20),
-                ),
-            ],
-        )
-        .expect("junit");
-        let text = std::fs::read_to_string(&path).expect("read");
-        assert!(text.contains("tests=\"2\""), "{text}");
-        assert!(text.contains("failures=\"1\""), "{text}");
-        assert!(text.contains("ok &lt;test&gt;"), "{text}");
-        assert!(text.contains("a &amp; b"), "{text}");
-    }
-
-    #[test]
-    fn a_second_cell_appends_to_the_same_report() {
-        let directory = tempfile::tempdir().expect("tempdir");
-        let path = directory.path().join("report.xml");
-        write_junit(
-            &path,
-            &[(
-                "one".to_string(),
-                "build".to_string(),
-                None,
-                Duration::from_millis(1),
-            )],
-        )
-        .expect("first");
-        write_junit(
-            &path,
-            &[(
-                "two".to_string(),
-                "installed".to_string(),
-                None,
-                Duration::from_millis(2),
-            )],
-        )
-        .expect("second");
-        let text = std::fs::read_to_string(&path).expect("read");
-        assert!(text.contains("tests=\"2\""), "{text}");
-        assert!(text.contains("name=\"one\""), "{text}");
-        assert!(text.contains("name=\"two\""), "{text}");
-        assert_eq!(text.matches("</testsuite>").count(), 1, "{text}");
-    }
 }

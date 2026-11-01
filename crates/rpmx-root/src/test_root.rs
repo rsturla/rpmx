@@ -126,12 +126,19 @@ pub fn prepare(options: TestRootOptions<'_>) -> Result<PreparedTestRoot> {
         .first()
         .and_then(|path| path.parent())
         .ok_or_else(|| Error::new(codes::BUILD_007, "no binary RPMs were written"))?;
+    // podman treats a relative -v source as a named volume.
+    let rpms_dir = std::fs::canonicalize(rpms_dir).map_err(|error| {
+        Error::new(
+            codes::BUILD_007,
+            format!("cannot resolve {}: {error}", rpms_dir.display()),
+        )
+    })?;
     let output =
         crate::root::container::run_offline_root(crate::root::container::OfflineRootCommand {
             root: &root_path,
             image,
             target,
-            mode: crate::root::container::OfflineRootMode::Install { rpms: rpms_dir },
+            mode: crate::root::container::OfflineRootMode::Install { rpms: &rpms_dir },
         })?;
     if !output.status.success() {
         return Err(Error::new(

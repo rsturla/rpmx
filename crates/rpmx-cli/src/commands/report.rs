@@ -84,6 +84,82 @@ pub fn print(
     Ok(())
 }
 
+#[derive(Debug, Clone)]
+pub struct TestOutcome {
+    pub name: String,
+    pub stage: String,
+    pub error: Option<String>,
+    pub duration: std::time::Duration,
+}
+
+/// Aggregate one command's test results into JUnit XML.
+pub fn write_junit(path: &std::path::Path, outcomes: &[TestOutcome]) -> std::io::Result<()> {
+    let existing = std::fs::read_to_string(path).unwrap_or_default();
+    let mut tests = existing.matches("<testcase ").count();
+    let mut failures = existing.matches("<failure ").count();
+    let mut body = existing;
+    if let Some(position) = body.rfind("</testsuite>") {
+        body.truncate(position);
+    } else {
+        body.clear();
+    }
+    if let Some(start) = body.find("<testsuite") {
+        if let Some(end) = body[start..].find('>') {
+            body.drain(..start + end + 1);
+        }
+    }
+    let mut cases = String::new();
+    for outcome in outcomes {
+        tests += 1;
+        if outcome.error.is_some() {
+            failures += 1;
+        }
+        cases.push_str(&format!(
+            "  <testcase name=\"{}\" classname=\"{}\" time=\"{:.3}\">",
+            xml_escape(&outcome.name),
+            xml_escape(&outcome.stage),
+            outcome.duration.as_secs_f64()
+        ));
+        if let Some(error) = &outcome.error {
+            cases.push_str(&format!(
+                "<failure message=\"{}\">{}</failure>",
+                xml_escape(error),
+                xml_escape(error)
+            ));
+        }
+        cases.push_str("</testcase>\n");
+    }
+    let xml = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<testsuite name=\"rpmx\" tests=\"{tests}\" failures=\"{failures}\">\n{}{cases}</testsuite>\n",
+        body.trim_start_matches('\n')
+    );
+    std::fs::write(path, xml)
+}
+
+pub fn test_document(outcomes: &[TestOutcome]) -> serde_json::Value {
+    serde_json::json!({
+        "schema": 1,
+        "ok": outcomes.iter().all(|outcome| outcome.error.is_none()),
+        "command": "test",
+        "tests": outcomes.iter().map(|outcome| serde_json::json!({
+            "name": outcome.name,
+            "stage": outcome.stage,
+            "ok": outcome.error.is_none(),
+            "duration_ms": outcome.duration.as_millis() as u64,
+            "message": outcome.error,
+        })).collect::<Vec<_>>(),
+    })
+}
+
+fn xml_escape(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
+}
+
 #[cfg(test)]
 mod tests {
     use super::{document, ArtifactGroup};
