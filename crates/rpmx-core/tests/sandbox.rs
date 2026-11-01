@@ -3,7 +3,9 @@ use std::process::Command;
 
 use rpmx_core::arch::Arch;
 use rpmx_core::plan::PlannedStep;
-use rpmx_core::sandbox::{Runner, RunnerRequest, Sandbox, SandboxBackend, Session, SessionConfig};
+use rpmx_core::sandbox::{
+    Runner, RunnerKind, RunnerRequest, Sandbox, SandboxBackend, Session, SessionConfig,
+};
 
 fn bwrap_available() -> bool {
     Command::new("bwrap")
@@ -341,4 +343,51 @@ fn podman_session_has_no_network() {
             ],
         ))
         .expect("podman container must have no network interfaces");
+}
+
+#[test]
+fn runner_selection_is_centralized() {
+    let host = Arch::current().expect("host arch");
+    let root = std::path::Path::new("/root");
+
+    assert!(matches!(
+        RunnerKind::Auto
+            .select(host, host, Some(root), None)
+            .expect("native auto"),
+        SandboxBackend::NativeRoot(_)
+    ));
+    assert!(matches!(
+        RunnerKind::Bwrap
+            .select(host, host, Some(root), None)
+            .expect("native bwrap"),
+        SandboxBackend::NativeRoot(_)
+    ));
+    assert!(matches!(
+        RunnerKind::Auto
+            .select(host, host, None, Some("image"))
+            .expect("container auto"),
+        SandboxBackend::Container(_)
+    ));
+
+    let foreign = if host == Arch::X86_64 {
+        Arch::Aarch64
+    } else {
+        Arch::X86_64
+    };
+    assert!(matches!(
+        RunnerKind::Auto
+            .select(host, foreign, Some(root), None)
+            .expect("foreign auto"),
+        SandboxBackend::Qemu(_)
+    ));
+    let error = match RunnerKind::Bwrap.select(host, foreign, Some(root), None) {
+        Ok(_) => panic!("bwrap cannot cross"),
+        Err(error) => error,
+    };
+    assert_eq!(error.code, "RPMX-RUNNER-002");
+    let error = match RunnerKind::Qemu.select(host, foreign, None, None) {
+        Ok(_) => panic!("qemu needs a root"),
+        Err(error) => error,
+    };
+    assert_eq!(error.code, "RPMX-ROOT-016");
 }

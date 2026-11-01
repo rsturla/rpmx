@@ -8,7 +8,7 @@ use rpmx_core::error::codes;
 use rpmx_core::plan::PlannedStep;
 use rpmx_core::profile::normalize_arch;
 use rpmx_core::root::load_lock;
-use rpmx_core::sandbox::{Sandbox, SandboxBackend};
+use rpmx_core::sandbox::Sandbox;
 use rpmx_core::sbom::Generator;
 use rpmx_core::srpm::load_lock_file;
 use rpmx_core::steps::validate_name;
@@ -244,42 +244,12 @@ pub fn run(args: RebuildArgs<'_>) -> Result<Vec<PathBuf>, Error> {
 
     let host_arch = rpmx_core::arch::Arch::current()?;
     let target_arch = rpmx_core::arch::Arch::parse(arch)?;
-    let backend = match runner {
-        "qemu" => {
-            let root_path = assembled_root.as_deref().ok_or_else(|| {
-                Error::new(codes::ROOT_016, "the qemu runner needs an assembled root")
-            })?;
-            SandboxBackend::Qemu(root_path)
-        }
-        "bwrap" => {
-            let root_path = assembled_root.as_deref().ok_or_else(|| {
-                Error::new(
-                    codes::ROOT_016,
-                    "the bubblewrap runner needs an assembled root",
-                )
-            })?;
-            if host_arch != target_arch {
-                return Err(Error::new(
-                    codes::RUNNER_002,
-                    "bubblewrap cannot run a foreign target; use --runner qemu",
-                ));
-            }
-            SandboxBackend::Root(root_path)
-        }
-        _ => {
-            if let Some(root_path) = assembled_root.as_deref() {
-                if host_arch == target_arch {
-                    SandboxBackend::Root(root_path)
-                } else {
-                    SandboxBackend::Qemu(root_path)
-                }
-            } else if let Some(image) = root_image {
-                SandboxBackend::Container(image)
-            } else {
-                unreachable!("root selection checked above")
-            }
-        }
-    };
+    let backend = runner.parse::<rpmx_core::sandbox::RunnerKind>()?.select(
+        host_arch,
+        target_arch,
+        assembled_root.as_deref(),
+        root_image,
+    )?;
 
     let debuginfo = active_lock.as_ref().is_some_and(|lock| lock.debuginfo);
     let sbom_enabled = active_lock.as_ref().map(|lock| lock.sbom).unwrap_or(true);
@@ -722,18 +692,10 @@ fn run_planned_tests(
             "installed-stage tests need a test root, which requires a root lock",
         )
     })?;
-    let test_backend = match settings.runner {
-        "qemu" => SandboxBackend::Qemu(root),
-        "bwrap" if settings.host_arch == settings.target_arch => SandboxBackend::Root(root),
-        "bwrap" => {
-            return Err(Error::new(
-                codes::RUNNER_002,
-                "bubblewrap cannot run foreign installed tests; use --runner qemu",
-            ));
-        }
-        _ if settings.host_arch == settings.target_arch => SandboxBackend::Root(root),
-        _ => SandboxBackend::Qemu(root),
-    };
+    let test_backend = settings
+        .runner
+        .parse::<rpmx_core::sandbox::RunnerKind>()?
+        .select(settings.host_arch, settings.target_arch, Some(root), None)?;
     let test_sandbox = Sandbox {
         backend: test_backend,
         workspace: settings.workspace,

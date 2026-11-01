@@ -61,28 +61,10 @@ pub fn assemble(options: SourceOptions<'_>) -> Result<PathBuf> {
 
     let host_arch = crate::arch::Arch::current()?;
     let target_arch = crate::arch::Arch::parse(&options.plan.arch)?;
-    let backend = match (options.runner, options.root) {
-        ("qemu", Some(root)) => crate::sandbox::SandboxBackend::Qemu(root),
-        ("qemu", None) => {
-            return Err(Error::new(
-                codes::ROOT_016,
-                "the qemu runner needs --root-lock and --root for source assembly",
-            ));
-        }
-        ("bwrap", Some(root)) if host_arch == target_arch => {
-            crate::sandbox::SandboxBackend::Root(root)
-        }
-        ("bwrap", Some(_)) => {
-            return Err(Error::new(
-                codes::RUNNER_002,
-                "bubblewrap cannot assemble a foreign source root; use --runner qemu",
-            ));
-        }
-        ("bwrap", None) => crate::sandbox::SandboxBackend::Bwrap,
-        (_, Some(root)) if host_arch == target_arch => crate::sandbox::SandboxBackend::Root(root),
-        (_, Some(root)) => crate::sandbox::SandboxBackend::Qemu(root),
-        (_, None) => crate::sandbox::SandboxBackend::Bwrap,
-    };
+    let backend = options
+        .runner
+        .parse::<crate::sandbox::RunnerKind>()?
+        .select(host_arch, target_arch, options.root, None)?;
     let sandbox = Sandbox {
         backend,
         workspace: options.workspace,

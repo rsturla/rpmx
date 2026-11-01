@@ -74,18 +74,79 @@ pub trait Runner {
     fn start(&self, config: &SessionConfig<'_>) -> Result<Box<dyn Session>>;
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RunnerKind {
+    Auto,
+    Bwrap,
+    Qemu,
+}
+
+impl std::str::FromStr for RunnerKind {
+    type Err = Error;
+
+    fn from_str(value: &str) -> Result<Self> {
+        match value {
+            "auto" => Ok(Self::Auto),
+            "bwrap" => Ok(Self::Bwrap),
+            "qemu" => Ok(Self::Qemu),
+            other => Err(Error::new(
+                codes::RUNNER_001,
+                format!("unknown runner '{other}'; expected auto, bwrap or qemu"),
+            )),
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 pub enum SandboxBackend<'a> {
     /// Use the host root read-only (prototype).
     Bwrap,
     /// Use an assembled root directory read-only.
-    Root(&'a Path),
+    NativeRoot(&'a Path),
     /// Use an assembled root inside a full QEMU VM.
     Qemu(&'a Path),
     /// Use a builder image.
     Container(&'a str),
     /// Use a caller-provided runner.
     Custom(&'a dyn Runner),
+}
+
+impl<'a> RunnerKind {
+    /// Turn the command-line runner choice and the available roots into one
+    /// backend. Every caller must use this, so `auto` cannot drift between
+    /// source assembly, rebuild and installed tests.
+    pub fn select(
+        self,
+        host: Arch,
+        target: Arch,
+        root: Option<&'a Path>,
+        image: Option<&'a str>,
+    ) -> Result<SandboxBackend<'a>> {
+        match self {
+            Self::Qemu => {
+                let root = root.ok_or_else(|| {
+                    Error::new(codes::ROOT_016, "the qemu runner needs an assembled root")
+                })?;
+                Ok(SandboxBackend::Qemu(root))
+            }
+            Self::Bwrap => match root {
+                Some(_root) if host != target => Err(Error::new(
+                    codes::RUNNER_002,
+                    "bubblewrap cannot run a foreign target; use --runner qemu",
+                )),
+                Some(root) => Ok(SandboxBackend::NativeRoot(root)),
+                None => Ok(SandboxBackend::Bwrap),
+            },
+            Self::Auto => match root {
+                Some(root) if host == target => Ok(SandboxBackend::NativeRoot(root)),
+                Some(root) => Ok(SandboxBackend::Qemu(root)),
+                None => match image {
+                    Some(image) => Ok(SandboxBackend::Container(image)),
+                    None => Ok(SandboxBackend::Bwrap),
+                },
+            },
+        }
+    }
 }
 
 pub struct Sandbox<'a> {
@@ -182,7 +243,7 @@ impl<'a> Sandbox<'a> {
         };
         let runner: Box<dyn Runner> = match self.backend {
             SandboxBackend::Bwrap => Box::new(BwrapRunner { root: None }),
-            SandboxBackend::Root(root) => {
+            SandboxBackend::NativeRoot(root) => {
                 if self.host_arch == self.target_arch {
                     Box::new(BwrapRunner { root: Some(root) })
                 } else {
