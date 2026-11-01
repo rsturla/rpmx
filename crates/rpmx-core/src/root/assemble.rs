@@ -5,7 +5,7 @@ use crate::cas;
 use crate::error::{codes, Error, Result};
 use crate::profile::normalize_arch;
 use crate::root::container::{image_digest_for_arch, podman_run_assembly};
-use crate::root::lock::RootLock;
+use crate::root::lock::{PackageKey, RootLock};
 
 pub struct AssembleOptions<'a> {
     pub cache: &'a Path,
@@ -253,9 +253,12 @@ pub(crate) fn verify_installed(
     for (package_arch, entries) in &lock.packages {
         for package in entries {
             let (epoch, version, release) = evr_parts(&package.evr)?;
-            expected.insert(format!(
-                "{}|{epoch}|{version}|{release}|{package_arch}",
-                package.name
+            expected.insert(PackageKey::new(
+                &package.name,
+                &epoch,
+                &version,
+                &release,
+                package_arch,
             ));
         }
     }
@@ -303,14 +306,8 @@ pub(crate) fn verify_installed(
         if fields.len() != 5 {
             continue;
         }
-        let epoch = if fields[1] == "(none)" {
-            "0"
-        } else {
-            fields[1]
-        };
-        installed.insert(format!(
-            "{}|{epoch}|{}|{}|{}",
-            fields[0], fields[2], fields[3], fields[4]
+        installed.insert(PackageKey::new(
+            fields[0], fields[1], fields[2], fields[3], fields[4],
         ));
     }
 
@@ -331,8 +328,8 @@ pub(crate) fn verify_installed(
                 "installed package set differs from the lock ({} expected, {} installed); missing: {}; extra: {}",
                 expected.len(),
                 installed.len(),
-                missing.join(", "),
-                extra.join(", ")
+                missing.iter().map(ToString::to_string).collect::<Vec<_>>().join(", "),
+                extra.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ")
             ),
         ));
     }

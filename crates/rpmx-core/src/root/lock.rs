@@ -115,6 +115,43 @@ impl RootSelection {
     }
 }
 
+/// The identity of one installed package, independent of its repository.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct PackageKey {
+    pub name: String,
+    pub epoch: String,
+    pub version: String,
+    pub release: String,
+    pub arch: String,
+}
+
+impl PackageKey {
+    pub fn new(name: &str, epoch: &str, version: &str, release: &str, arch: &str) -> Self {
+        Self {
+            name: name.to_string(),
+            epoch: if epoch.is_empty() || epoch == "(none)" {
+                "0"
+            } else {
+                epoch
+            }
+            .to_string(),
+            version: version.to_string(),
+            release: release.to_string(),
+            arch: arch.to_string(),
+        }
+    }
+}
+
+impl std::fmt::Display for PackageKey {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "{}|{}|{}|{}|{}",
+            self.name, self.epoch, self.version, self.release, self.arch
+        )
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LockedBuilder {

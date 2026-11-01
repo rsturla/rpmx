@@ -6,7 +6,7 @@ use crate::error::{codes, Error, Result};
 use crate::profile::{Profile, Repository};
 use crate::root::container::{image_digest_for_arch, podman_run};
 use crate::root::lock::{
-    closure_digest, LockedBuilder, LockedPackage, RootLock, DOCUMENT, VERSION,
+    closure_digest, LockedBuilder, LockedPackage, PackageKey, RootLock, DOCUMENT, VERSION,
 };
 
 pub fn resolve_profile(
@@ -226,10 +226,13 @@ struct Downloaded {
 }
 
 impl Downloaded {
-    fn key(&self) -> String {
-        format!(
-            "{}|{}|{}|{}|{}",
-            self.name, self.epoch, self.version, self.release, self.arch
+    fn key(&self) -> PackageKey {
+        PackageKey::new(
+            &self.name,
+            &self.epoch.to_string(),
+            &self.version,
+            &self.release,
+            &self.arch,
         )
     }
 
@@ -317,7 +320,7 @@ fn query_repositories(
     work: &Path,
     profile: &Profile,
     specs: &[String],
-) -> Result<BTreeMap<String, RepositoryMatch>> {
+) -> Result<BTreeMap<PackageKey, RepositoryMatch>> {
     let mut args = dnf_base_args(profile);
     args.extend([
         "repoquery".to_string(),
@@ -337,16 +340,13 @@ fn query_repositories(
         ));
     }
 
-    let mut found: BTreeMap<String, RepositoryMatch> = BTreeMap::new();
+    let mut found: BTreeMap<PackageKey, RepositoryMatch> = BTreeMap::new();
     for line in String::from_utf8_lossy(&output.stdout).lines() {
         let fields = line.split('|').collect::<Vec<_>>();
         if fields.len() != 7 {
             continue;
         }
-        let key = format!(
-            "{}|{}|{}|{}|{}",
-            fields[0], fields[1], fields[2], fields[3], fields[4]
-        );
+        let key = PackageKey::new(fields[0], fields[1], fields[2], fields[3], fields[4]);
         let srpm = fields[6].trim();
         let srpm = (!srpm.is_empty() && srpm != "(none)").then(|| srpm.to_string());
         let repo_id = fields[5].to_string();
