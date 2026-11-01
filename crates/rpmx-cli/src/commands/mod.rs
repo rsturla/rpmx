@@ -19,6 +19,7 @@ pub mod sign;
 mod signing;
 pub mod source;
 pub mod srpm;
+pub mod testcmd;
 
 pub use args::*;
 pub use loader::{load_plan, step_root};

@@ -32,6 +32,7 @@ impl Cli {
             Command::Keygen(_) => "keygen",
             Command::Sign(_) => "sign",
             Command::Build(_) => "build",
+            Command::Test(_) => "test",
         }
     }
 
@@ -46,6 +47,7 @@ impl Cli {
             Command::Plan(args) => args.json,
             Command::Fetch(args) => args.json,
             Command::Build(args) => args.json,
+            Command::Test(args) => args.json,
             Command::Rebuild(args) => args.json,
             Command::Source(args) => args.json,
             Command::Srpm(args) => args.json,
@@ -140,6 +142,8 @@ pub enum Command {
     Keygen(crate::commands::KeygenArgs),
     /// Sign RPM packages in place with an OpenPGP secret key.
     Sign(crate::commands::SignArgs),
+    /// Run a recipe's tests, building it first when needed.
+    Test(crate::commands::TestArgs),
     /// Build a recipe end to end, or package an already-staged tree.
     Build(crate::commands::BuildArgs),
 }

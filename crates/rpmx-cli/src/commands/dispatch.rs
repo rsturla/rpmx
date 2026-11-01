@@ -24,6 +24,7 @@ pub fn run(cli: Cli) -> Result<(), Error> {
         Command::Srpm(args) => commands::srpm::run(args, pipeline_dir.as_deref()).map(|_| ()),
         Command::Rebuild(args) => commands::rebuild::run(args).map(|_| ()),
         Command::Build(args) => commands::build::run(args, pipeline_dir.as_deref()).map(|_| ()),
+        Command::Test(args) => commands::testcmd::run(args, pipeline_dir.as_deref()),
         Command::Repo(args) => commands::repo::run(args),
         Command::Cache { command } => match command {
             cli::CacheCommand::Gc(args) => commands::cache::gc(args),

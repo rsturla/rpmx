@@ -8,6 +8,7 @@ use rpmx_base::arch::Arch;
 use rpmx_base::error::{codes, Error, Result};
 use rpmx_language::plan::PlannedStep;
 
+#[derive(Clone, Copy)]
 pub struct TestSandboxConfig<'a> {
     pub workspace: &'a Path,
     pub stage: &'a Path,

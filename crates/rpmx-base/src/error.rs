@@ -433,6 +433,8 @@ pub mod codes {
         TEST_004 = "RPMX-TEST-004",
         /// Installed-stage tests need a test root, which needs a root lock.
         TEST_005 = "RPMX-TEST-005",
+        /// A recipe declares no tests.
+        TEST_006 = "RPMX-TEST-006",
         /// A source-assembly tool uses a digest algorithm other than sha512.
         TOOL_001 = "RPMX-TOOL-001",
         /// A source-assembly tool has a malformed sha512 digest.

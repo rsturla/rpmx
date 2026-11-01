@@ -1,7 +1,7 @@
 use std::num::{NonZeroU32, NonZeroU64};
 use std::path::PathBuf;
 
-#[derive(Debug, Clone, clap::Args)]
+#[derive(Debug, Clone, Default, clap::Args)]
 pub struct OptionalSigningArgs {
     /// Sign with this ASCII-armored OpenPGP secret key.
     #[arg(long)]
@@ -76,6 +76,12 @@ pub struct BuildArgs {
     /// Run build-stage and installed-stage tests.
     #[arg(long)]
     pub run_tests: bool,
+    /// Run only the named test; repeat for several.
+    #[arg(long = "test", value_name = "NAME")]
+    pub test: Vec<String>,
+    /// Write a JUnit XML report for the tests that ran.
+    #[arg(long)]
+    pub junit: Option<PathBuf>,
     /// Override the build-level SPDX SBOM path.
     #[arg(long)]
     pub sbom: Option<PathBuf>,
@@ -131,6 +137,12 @@ pub struct RebuildArgs {
     /// Run build-stage tests after the build.
     #[arg(long)]
     pub run_tests: bool,
+    /// Run only the named test; repeat for several.
+    #[arg(long = "test", value_name = "NAME")]
+    pub test: Vec<String>,
+    /// Write a JUnit XML report for the tests that ran.
+    #[arg(long)]
+    pub junit: Option<PathBuf>,
     /// Override the build-level SPDX SBOM path.
     #[arg(long)]
     pub sbom: Option<PathBuf>,
@@ -160,6 +172,48 @@ pub struct LintArgs {
     /// Treat warnings as errors.
     #[arg(long)]
     pub strict: bool,
+    /// Emit machine-readable output.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct TestArgs {
+    /// Recipe to test (default: ./package.yaml).
+    #[arg(default_value = "package.yaml")]
+    pub file: PathBuf,
+    #[command(flatten)]
+    pub policy: crate::cli::PolicyArgs,
+    /// Target architecture used for templates.
+    #[arg(long, default_value = rpmx_core::arch::native_arch())]
+    pub arch: String,
+    /// Runner: auto, bwrap or qemu.
+    #[arg(long, default_value = "auto", value_parser = ["auto", "bwrap", "qemu"])]
+    pub runner: String,
+    /// Run only the named test; repeat for several.
+    #[arg(long = "test", value_name = "NAME")]
+    pub selected: Vec<String>,
+    /// Test an existing directory of RPMs instead of building first.
+    #[arg(long)]
+    pub install_dir: Option<PathBuf>,
+    /// Write a JUnit XML report.
+    #[arg(long)]
+    pub junit: Option<PathBuf>,
+    /// Root lock for the test environment.
+    #[arg(long)]
+    pub root_lock: Option<PathBuf>,
+    /// Assembled root for the test environment.
+    #[arg(long, requires = "root_lock")]
+    pub root: Option<PathBuf>,
+    /// Content-addressed cache (default: $XDG_CACHE_HOME/rpmx/cas).
+    #[arg(long)]
+    pub cache: Option<PathBuf>,
+    /// Do not use the network; fail on a cache miss.
+    #[arg(long)]
+    pub offline: bool,
+    /// Parallelism exposed as JOBS.
+    #[arg(long, default_value_t = crate::commands::default_jobs())]
+    pub jobs: NonZeroU32,
     /// Emit machine-readable output.
     #[arg(long)]
     pub json: bool,

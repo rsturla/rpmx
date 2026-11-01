@@ -37,6 +37,8 @@ pub struct RebuildRequest<'a> {
     /// resolved or cached the root passes false.
     pub verify_root: bool,
     pub run_tests: bool,
+    pub test_filter: &'a [String],
+    pub junit: Option<&'a Path>,
     pub sbom: Option<&'a Path>,
     pub test_root_lock: Option<&'a Path>,
     pub signing: &'a OptionalSigningArgs,
@@ -75,6 +77,8 @@ pub fn run(args: RebuildArgs) -> Result<Vec<PathBuf>, Error> {
         offline: args.offline,
         verify_root: true,
         run_tests: args.run_tests,
+        test_filter: &args.test,
+        junit: args.junit.as_deref(),
         sbom: args.sbom.as_deref(),
         test_root_lock: args.test_root_lock.as_deref(),
         signing: &args.signing,
@@ -262,6 +266,8 @@ pub fn execute(request: RebuildRequest<'_>) -> Result<RebuildOutput, Error> {
             jobs,
             timeout: step_timeout,
             debuginfo,
+            filter: request.test_filter,
+            junit: request.junit,
         })? {
             evidence.push(path);
         }
