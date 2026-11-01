@@ -9,6 +9,7 @@ rpmx-base = { path = "../rpmx-base" }
 rpmx-language = { path = "../rpmx-language" }
 rpmx-store = { path = "../rpmx-store" }
 rpmx-runner = { path = "../rpmx-runner" }
+rpmx-root = { path = "../rpmx-root" }
 serde.workspace = true
 serde_json.workspace = true
 serde_yaml_ng.workspace = true

@@ -2,9 +2,9 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::error::{codes, Error, Result};
 use crate::profile::{normalize_arch, Repository, ResolveOptions};
 use crate::root::{closure_digest, LockedPackage, RootLock};
+use rpmx_base::error::{codes, Error, Result};
 
 pub const DOCUMENT: &str = "rpm-package-manifest";
 pub const VERSION: &str = "0.2.3";

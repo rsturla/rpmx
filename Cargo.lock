@@ -1840,6 +1840,7 @@ dependencies = [
  "rpm",
  "rpmx-base",
  "rpmx-language",
+ "rpmx-root",
  "rpmx-runner",
  "rpmx-store",
  "saphyr-parser",
@@ -1862,6 +1863,21 @@ dependencies = [
  "serde_json",
  "serde_yaml_ng",
  "sha2",
+]
+
+[[package]]
+name = "rpmx-root"
+version = "0.0.0"
+dependencies = [
+ "rpm",
+ "rpmx-base",
+ "rpmx-language",
+ "rpmx-runner",
+ "rpmx-store",
+ "serde",
+ "serde_json",
+ "serde_yaml_ng",
+ "tempfile",
 ]
 
 [[package]]

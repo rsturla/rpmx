@@ -3,9 +3,9 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use crate::error::{codes, Error, Result};
-use crate::hash::sha512_hex;
 use crate::profile::{normalize_arch, Repository, ResolveOptions};
+use rpmx_base::error::{codes, Error, Result};
+use rpmx_base::hash::sha512_hex;
 
 pub const DOCUMENT: &str = "rpmx-root-lock";
 pub const VERSION: u32 = 1;
@@ -92,7 +92,7 @@ impl RootSelection {
                 format!("cannot resolve {}: {error}", root.display()),
             )
         })?;
-        let digest = crate::tree::digest_root(&path)?;
+        let digest = rpmx_store::tree::digest_root(&path)?;
         if digest != expected {
             return Err(Error::new(
                 codes::ROOT_017,

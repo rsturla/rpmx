@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::process::Command;
 
-use crate::error::{codes, Error, Result};
+use rpmx_base::error::{codes, Error, Result};
 
 pub(crate) fn podman_run(
     image: &str,
@@ -14,7 +14,7 @@ pub(crate) fn podman_run(
         .arg("--rm")
         .arg("--pull=missing")
         .arg("--arch")
-        .arg(crate::arch::Arch::current()?.to_string())
+        .arg(rpmx_base::arch::Arch::current()?.to_string())
         .arg("-v")
         .arg(format!("{}:/work:Z", work.display()))
         .arg("-w")
@@ -41,7 +41,7 @@ pub(crate) fn podman_run(
 }
 
 pub(crate) fn image_digest_for_arch(image: &str, arch: &str) -> Result<String> {
-    let target = crate::arch::Arch::parse(arch)?;
+    let target = rpmx_base::arch::Arch::parse(arch)?;
     let oci_arch = target.oci_arch();
     if let Ok(output) = Command::new("podman")
         .args(["manifest", "inspect", image])
@@ -140,7 +140,7 @@ pub(crate) fn podman_run_assembly(
     image: &str,
     work: &Path,
     root: &Path,
-    target: crate::arch::Arch,
+    target: rpmx_base::arch::Arch,
     args: &[String],
 ) -> Result<std::process::Output> {
     let mut process = Command::new("podman");

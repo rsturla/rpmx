@@ -1,0 +1,18 @@
+[package]
+name = "rpmx-root"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+rpmx-base = { path = "../rpmx-base" }
+rpmx-language = { path = "../rpmx-language" }
+rpmx-store = { path = "../rpmx-store" }
+rpmx-runner = { path = "../rpmx-runner" }
+rpm.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml_ng.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

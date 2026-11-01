@@ -1,11 +1,11 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use crate::arch::Arch;
-use crate::error::{codes, Error, Result};
 use crate::profile::{Packages, Profile};
 use crate::root::{self, RootLock};
-use crate::runner::{emulation_available, RunnerKind};
+use rpmx_base::arch::Arch;
+use rpmx_base::error::{codes, Error, Result};
+use rpmx_runner::runner::{emulation_available, RunnerKind};
 
 pub struct TestRootOptions<'a> {
     pub lock: &'a RootLock,
@@ -74,7 +74,7 @@ pub fn prepare(options: TestRootOptions<'_>) -> Result<PreparedTestRoot> {
         );
     }
     for tool in options.tools {
-        let name = crate::build_env::dependency_name(tool);
+        let name = rpmx_runner::build_env::dependency_name(tool);
         if !name.is_empty() && !install.iter().any(|package| package == name) {
             install.push(name.to_string());
         }
@@ -190,7 +190,7 @@ fn check_lock(path: &Path, lock: &RootLock, required: &[String], archs: &[String
         .collect();
     let missing: Vec<&str> = required
         .iter()
-        .map(|dependency| crate::build_env::dependency_name(dependency))
+        .map(|dependency| rpmx_runner::build_env::dependency_name(dependency))
         .filter(|name| !name.is_empty() && !names.contains(name))
         .collect();
     if !missing.is_empty() {

@@ -1,13 +1,13 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use crate::cas;
-use crate::error::{codes, Error, Result};
 use crate::profile::{Profile, Repository};
 use crate::root::container::{image_digest_for_arch, podman_run};
 use crate::root::lock::{
     closure_digest, LockedBuilder, LockedPackage, PackageKey, RootLock, DOCUMENT, VERSION,
 };
+use rpmx_base::error::{codes, Error, Result};
+use rpmx_store::cas;
 
 pub fn resolve_profile(
     profile: &Profile,

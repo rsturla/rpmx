@@ -1,11 +1,11 @@
 use std::path::Path;
 use std::process::Command;
 
-use crate::cas;
-use crate::error::{codes, Error, Result};
 use crate::profile::normalize_arch;
 use crate::root::container::{image_digest_for_arch, podman_run_assembly};
 use crate::root::lock::{PackageKey, RootLock};
+use rpmx_base::error::{codes, Error, Result};
+use rpmx_store::cas;
 
 pub struct AssembleOptions<'a> {
     pub cache: &'a Path,
@@ -44,9 +44,9 @@ pub fn assemble(lock: &RootLock, options: AssembleOptions<'_>) -> Result<std::pa
         .first()
         .ok_or_else(|| Error::new(codes::ROOT_015, "lock declares no architecture"))?;
     let arch = normalize_arch(arch)?;
-    let target = crate::arch::Arch::parse(arch)?;
-    let host = crate::arch::Arch::current()?;
-    if host != target && !crate::runner::emulation_available(target) {
+    let target = rpmx_base::arch::Arch::parse(arch)?;
+    let host = rpmx_base::arch::Arch::current()?;
+    if host != target && !rpmx_runner::runner::emulation_available(target) {
         return Err(Error::new(
             codes::RUNNER_002,
             format!(
@@ -247,7 +247,7 @@ pub(crate) fn verify_installed(
     lock: &RootLock,
     root: &Path,
     image: &str,
-    target: crate::arch::Arch,
+    target: rpmx_base::arch::Arch,
 ) -> Result<()> {
     let mut expected = std::collections::BTreeSet::new();
     for (package_arch, entries) in &lock.packages {

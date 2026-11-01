@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
-use crate::error::{codes, Error, Result};
-use crate::yaml;
+use rpmx_base::error::{codes, Error, Result};
+use rpmx_base::yaml;
 
 pub const DOCUMENT: &str = "rpmx-profile";
 pub const VERSION: u32 = 1;
@@ -150,7 +150,7 @@ impl Profile {
             ));
         }
         if let Some(tag) = &self.dist_tag {
-            crate::plan::normalize_dist_tag(tag)
+            rpmx_language::plan::normalize_dist_tag(tag)
                 .map_err(|error| Error::new(codes::ROOT_006, error.message))?;
         }
         if self.archs.is_empty() {
@@ -244,7 +244,7 @@ impl Profile {
     pub fn dist_tag(&self) -> Result<Option<String>> {
         self.dist_tag
             .as_deref()
-            .map(crate::plan::normalize_dist_tag)
+            .map(rpmx_language::plan::normalize_dist_tag)
             .transpose()
     }
 }
@@ -255,7 +255,7 @@ pub fn default_sbom() -> bool {
 
 /// Normalize an architecture name to the RPM spelling used in NEVRAs.
 pub fn normalize_arch(arch: &str) -> Result<&'static str> {
-    crate::arch::Arch::parse(arch)
-        .map(crate::arch::Arch::as_str)
+    rpmx_base::arch::Arch::parse(arch)
+        .map(rpmx_base::arch::Arch::as_str)
         .map_err(|error| Error::new(codes::ROOT_009, error.message))
 }
