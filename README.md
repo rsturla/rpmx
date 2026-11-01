@@ -64,38 +64,41 @@ The binary is `target/release/rpmx`.
 
 ## Quick start
 
-Resolve a build root and assemble it offline:
-
 ```console
-./target/release/rpmx root resolve examples/fedora-44-build.profile.yaml \
-  --output root.lock.yaml
+cargo build --release
+./target/release/rpmx init hello
+cd hello
 
-./target/release/rpmx root assemble root.lock.yaml \
-  --root ./root --output root.assembled.yaml
+./target/release/rpmx lint         # every rule, one pass
+./target/release/rpmx build        # resolve root, build, package, index
+./target/release/rpmx test         # build- and installed-stage tests
 ```
 
-Build a package end to end, including its tests:
+`rpmx init` writes a recipe, a root profile, a README and a `.gitignore`. The
+recipe names its root (`build.root.profile`); rpmx resolves and assembles it on
+the first build, then reuses it from the cache.
 
-```console
-./target/release/rpmx build examples/pyhello/package.yaml \
-  --root-lock root.assembled.yaml --root ./root \
-  --output ./out --run-tests
-```
-
-Output:
+Output lands in `packages/<arch>/`:
 
 ```text
-out/pyhello-1.0.0-1.noarch.rpm
-out/src/pyhello-1.0.0-1.src.rpm
-out/pyhello-1.0.0-1.build.spdx.json
-out/pyhello-1.0.0-1.test-root.lock.json
+packages/x86_64/hello-0.1.0-1.fc44.x86_64.rpm
+packages/x86_64/src/hello-0.1.0-1.fc44.src.rpm
+packages/x86_64/hello-0.1.0-1.fc44.build.spdx.json
+packages/x86_64/repodata/repomd.xml
 ```
 
-Rebuild from the SRPM without the recipe:
+Pin what was resolved and make CI reject drift:
 
 ```console
-./target/release/rpmx rebuild out/src/pyhello-1.0.0-1.src.rpm \
-  --root ./root --output ./rebuilt
+./target/release/rpmx lock
+./target/release/rpmx build --locked
+```
+
+Rebuild from the SRPM without the recipe. The root lock is embedded, so the
+root is assembled from the cache automatically:
+
+```console
+./target/release/rpmx rebuild packages/x86_64/src/hello-0.1.0-1.fc44.src.rpm
 ```
 
 ## A recipe
@@ -154,21 +157,30 @@ Autotools packages, Lua, jq, a noarch Python wheel, and a systemd service.
 
 | Command | Purpose |
 |---|---|
-| `rpmx lint FILE` | Validate a recipe and expand its matrix. |
-| `rpmx plan FILE` | Show cells, outputs and expanded steps. |
-| `rpmx fetch FILE` | Populate the content-addressed cache. |
-| `rpmx source FILE --root-lock L --root R` | Assemble the deterministic source snapshot. |
-| `rpmx srpm FILE --sources DIR` | Write a native SRPM. |
-| `rpmx build FILE --root-lock L --root R` | Run the full source → SRPM → binary pipeline. |
-| `rpmx build FILE --stage DIR` | Package an already-staged tree. |
-| `rpmx rebuild SRPM --root R` | Rebuild binaries from an SRPM. |
-| `rpmx root resolve PROFILE` | Pin a package closure. |
-| `rpmx root assemble LOCK` | Build the root offline from the cache. |
-| `rpmx root digest ROOT` | Compute the deterministic root digest. |
-| `rpmx keygen` | Generate an OpenPGP signing key. |
-| `rpmx sign --signing-key KEY RPM…` | Sign existing RPMs. |
+| `rpmx init [DIR]` | Create a package that builds on the first try. |
+| `rpmx lint [FILE]` | Validate a recipe, report every rule, and expand its matrix. |
+| `rpmx lock [FILE]` | Write `package.lock.json`; `--check` verifies it. |
+| `rpmx plan [FILE]` | Show cells, outputs and expanded steps. |
+| `rpmx build [FILE]` | Resolve the root, build, package and index. |
+| `rpmx test [FILE]` | Run build- and installed-stage tests; `--test` selects. |
+| `rpmx rebuild SRPM` | Rebuild binaries from an SRPM, assembling its root. |
+| `rpmx explain TOPIC` | Explain policy, root, steps, matrix, requires or files. |
+| `rpmx shell` | Enter the build sandbox with the same mounts. |
+| `rpmx steps list\|show` | Browse the built-in step library. |
+| `rpmx doctor` | Check host tools, runners and cache. |
+| `rpmx fetch [FILE]` | Populate the content-addressed cache. |
+| `rpmx source [FILE]` | Assemble the deterministic source snapshot. |
+| `rpmx srpm [FILE]` | Write a native SRPM. |
+| `rpmx root resolve\|assemble\|digest` | Explicit root plumbing for debugging. |
+| `rpmx keygen` / `rpmx sign` | Generate a key; sign existing RPMs. |
 | `rpmx repo --rpms DIR --output DIR` | Write and optionally sign repository metadata. |
 | `rpmx cache gc --lock L --recipe R` | Remove unreferenced cache blobs. |
+
+Every command defaults `FILE` to `./package.yaml`. `build`, `test` and
+`rebuild` default their output to `./packages/<arch>/`, use all available CPUs
+unless `--jobs` is given, and write repository metadata unless `--no-index` is
+set. `--keep-workdir` preserves a failed workspace; `--debug` echoes the
+commands a step runs.
 
 ## Policies and artifacts
 
@@ -306,6 +318,8 @@ explicit escape hatch.
 - [`docs/09-sandboxing.md`](docs/09-sandboxing.md) — the sandbox contract.
 - [`docs/14-build-root.md`](docs/14-build-root.md) — root resolution and
   assembly.
+- [`docs/15-ux-audit.md`](docs/15-ux-audit.md) — UX audit against Melange,
+  with prioritized proposals.
 - [`examples/README.md`](examples/README.md) — the tested example corpus.
 
 ## License
