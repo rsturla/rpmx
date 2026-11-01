@@ -125,6 +125,8 @@ impl BuildPipeline<'_> {
                     root_image: None,
                     root_lock: self.root_lock,
                     root: self.root,
+                    cache: self.cache,
+                    offline: self.offline,
                     verify_root: false,
                     run_tests: self.run_tests,
                     sbom: self.sbom,

@@ -173,29 +173,32 @@ pub(super) fn prepare(
                 "a root lock cannot be combined with --root-image",
             ));
         }
-        let root_path = request.root.ok_or_else(|| {
-            Error::new(
-                codes::ROOT_016,
-                "a root lock is available; pass --root with the assembled root directory",
-            )
-        })?;
         builder_image = lock.builder.as_ref().map(|builder| builder.image.clone());
         for entries in lock.packages.values() {
             for package in entries {
                 locked_packages.insert(package.name.clone());
             }
         }
-        let path = if request.verify_root {
-            RootSelection::verify(lock, root_path, request.arch)?.path
-        } else {
-            lock.require_target(request.arch)?;
-            lock.require_digest()?;
-            std::fs::canonicalize(root_path).map_err(|error| {
-                Error::new(
-                    codes::ROOT_017,
-                    format!("cannot resolve {}: {error}", root_path.display()),
-                )
-            })?
+        let path = match request.root {
+            Some(root_path) if request.verify_root => {
+                RootSelection::verify(lock, root_path, request.arch)?.path
+            }
+            Some(root_path) => {
+                lock.require_target(request.arch)?;
+                lock.require_digest()?;
+                std::fs::canonicalize(root_path).map_err(|error| {
+                    Error::new(
+                        codes::ROOT_017,
+                        format!("cannot resolve {}: {error}", root_path.display()),
+                    )
+                })?
+            }
+            None => crate::commands::autoroot::ensure_from_lock(
+                lock,
+                request.cache,
+                request.offline,
+                request.arch,
+            )?,
         };
         Some(path)
     } else {

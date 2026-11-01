@@ -117,6 +117,12 @@ pub struct RebuildArgs {
     /// Assembled root directory.
     #[arg(long)]
     pub root: Option<PathBuf>,
+    /// Content-addressed cache (default: $XDG_CACHE_HOME/rpmx/cas).
+    #[arg(long)]
+    pub cache: Option<PathBuf>,
+    /// Do not use the network; fail if the root is not cached.
+    #[arg(long)]
+    pub offline: bool,
     /// Run build-stage tests after the build.
     #[arg(long)]
     pub run_tests: bool,

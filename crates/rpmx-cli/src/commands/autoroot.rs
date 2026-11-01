@@ -188,6 +188,115 @@ pub fn ensure(
     }))
 }
 
+/// Assemble a root described by an SRPM-embedded lock, reusing the cache.
+///
+/// This is what makes `rpmx rebuild foo.src.rpm` self-sufficient without
+/// extracting `root.lock.json` by hand.
+pub fn ensure_from_lock(
+    lock: &RootLock,
+    cache: Option<&Path>,
+    offline: bool,
+    arch: &str,
+) -> Result<PathBuf, Error> {
+    let cas = match cache {
+        Some(path) => path.to_path_buf(),
+        None => default_cache()?,
+    };
+    let roots = cas.parent().unwrap_or(&cas).join("roots");
+    let digest = lock.require_digest()?.to_string();
+    let key = digest.strip_prefix("sha512:").unwrap_or(&digest);
+    let directory = roots.join(format!("lock-{key}"));
+    let lock_path = directory.join("root.lock.yaml");
+    let root_path = directory.join("root");
+
+    if let Ok(Some(root)) = load_cached(&lock_path, &root_path, arch) {
+        return Ok(root.root);
+    }
+    if let Some(root) = find_published_root(&roots, &digest) {
+        return Ok(root);
+    }
+    if offline {
+        return Err(Error::new(
+            codes::ROOT_016,
+            format!(
+                "the root recorded in this SRPM is not cached at {}; run without --offline to assemble it",
+                directory.display()
+            ),
+        ));
+    }
+
+    std::fs::create_dir_all(&roots).map_err(|error| {
+        Error::new(
+            codes::ROOT_004,
+            format!("cannot create {}: {error}", roots.display()),
+        )
+    })?;
+    let _publishing = CacheLock::acquire(&roots, &format!("lock-{key}"))?;
+    if let Ok(Some(root)) = load_cached(&lock_path, &root_path, arch) {
+        return Ok(root.root);
+    }
+    if directory.exists() {
+        remove_tree(&directory)?;
+    }
+    std::fs::create_dir_all(&directory).map_err(|error| {
+        Error::new(
+            codes::ROOT_004,
+            format!("cannot create {}: {error}", directory.display()),
+        )
+    })?;
+    let work = tempfile::Builder::new()
+        .prefix("rpmx-root-")
+        .tempdir_in(&roots)
+        .map_err(|error| {
+            Error::new(
+                codes::ROOT_004,
+                format!(
+                    "cannot create a work directory in {}: {error}",
+                    roots.display()
+                ),
+            )
+        })?;
+    let assembled = assemble(
+        lock,
+        AssembleOptions {
+            cache: &cas,
+            work: work.path(),
+            root: &root_path,
+        },
+    )?;
+    let actual = digest_root(&assembled)?;
+    if actual != digest {
+        return Err(Error::new(
+            codes::ROOT_017,
+            format!("assembled root digest {actual} does not match the SRPM lock's {digest}"),
+        ));
+    }
+    write_lock(&lock_path, lock)?;
+    Ok(root_path)
+}
+
+/// Find an already-published root with the same digest under a different
+/// requirement key. A build's automatic root and an SRPM's embedded lock often
+/// describe the same tree.
+fn find_published_root(roots: &Path, digest: &str) -> Option<PathBuf> {
+    let entries = std::fs::read_dir(roots).ok()?;
+    for entry in entries.flatten() {
+        let directory = entry.path();
+        let lock_path = directory.join("root.lock.yaml");
+        let root_path = directory.join("root");
+        if !lock_path.is_file() || !root_path.is_dir() {
+            continue;
+        }
+        let Ok(lock) = load_lock(&lock_path) else {
+            continue;
+        };
+        if lock.root_digest.as_deref() == Some(digest) {
+            return std::fs::canonicalize(root_path).ok();
+        }
+    }
+    None
+}
+
 fn load_cached(
     lock_path: &Path,
     root_path: &Path,
