@@ -31,13 +31,13 @@ fn package_stage(
     policy: PlanPolicy<'_>,
 ) -> Result<Vec<PathBuf>, Error> {
     let signing = crate::commands::load_signing_key(
-        args.signing_key.as_deref(),
-        args.signing_passphrase_env.as_deref(),
+        args.signing.signing_key.as_deref(),
+        args.signing.signing_passphrase_env.as_deref(),
     )?;
     let (recipe, plan) = load_plan(args.file.as_path(), &args.arch, pipeline_dir, false, policy)?;
     let source_date_epoch = crate::commands::source_date_epoch(&recipe, args.source_date_epoch);
     let signature_timestamp = crate::commands::signature_timestamp(
-        args.signing_timestamp,
+        args.signing.signing_timestamp,
         source_date_epoch,
         signing.as_ref(),
     )?;
@@ -115,9 +115,7 @@ fn build_from_recipe(
         run_tests,
         sbom,
         test_root_lock,
-        signing_key,
-        signing_passphrase_env,
-        signing_timestamp,
+        signing,
         json,
         ..
     } = args;
@@ -212,9 +210,7 @@ fn build_from_recipe(
                 source_date_epoch,
                 cell: Some(planned.id.clone()),
                 root_lock: root_lock.clone(),
-                signing_key: signing_key.clone(),
-                signing_passphrase_env: signing_passphrase_env.clone(),
-                signing_timestamp,
+                signing: signing.clone(),
                 json: false,
                 quiet: true,
             },
@@ -242,9 +238,7 @@ fn build_from_recipe(
                 run_tests,
                 sbom: sbom.clone(),
                 test_root_lock: test_root_lock.clone(),
-                signing_key: signing_key.clone(),
-                signing_passphrase_env: signing_passphrase_env.clone(),
-                signing_timestamp,
+                signing: signing.clone(),
                 json: false,
                 quiet: true,
             })?);

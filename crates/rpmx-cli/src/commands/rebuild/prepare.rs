@@ -41,7 +41,7 @@ pub(super) fn prepare(
     // is user-controlled recipe data and must not be able to replace it.
     let package_lock = load_lock_file(&work.path().join("package.lock.json"))?;
     let signature_timestamp = crate::commands::signature_timestamp(
-        args.signing_timestamp,
+        args.signing.signing_timestamp,
         extracted.source_date_epoch,
         signing,
     )?;

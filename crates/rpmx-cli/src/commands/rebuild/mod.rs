@@ -25,8 +25,8 @@ pub fn run(args: RebuildArgs) -> Result<Vec<PathBuf>, Error> {
     })?;
     let policy = resolved.plan_policy();
     let signing = crate::commands::load_signing_key(
-        args.signing_key.as_deref(),
-        args.signing_passphrase_env.as_deref(),
+        args.signing.signing_key.as_deref(),
+        args.signing.signing_passphrase_env.as_deref(),
     )?;
     let state = prepare(&args, signing.as_ref(), policy)?;
     let RebuildState {

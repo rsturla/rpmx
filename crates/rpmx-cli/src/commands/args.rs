@@ -1,6 +1,19 @@
 use std::num::{NonZeroU32, NonZeroU64};
 use std::path::PathBuf;
 
+#[derive(Debug, Clone, clap::Args)]
+pub struct OptionalSigningArgs {
+    /// Sign with this ASCII-armored OpenPGP secret key.
+    #[arg(long)]
+    pub signing_key: Option<PathBuf>,
+    /// Read the signing key passphrase from this environment variable.
+    #[arg(long, requires = "signing_key")]
+    pub signing_passphrase_env: Option<String>,
+    /// Signature creation time in Unix seconds.
+    #[arg(long, requires = "signing_key")]
+    pub signing_timestamp: Option<u32>,
+}
+
 #[derive(Debug, clap::Args)]
 pub struct BuildArgs {
     /// Recipe to build.
@@ -64,15 +77,8 @@ pub struct BuildArgs {
     /// Use a pinned test-root lock instead of resolving one.
     #[arg(long, requires = "run_tests")]
     pub test_root_lock: Option<PathBuf>,
-    /// Sign the SRPM and binary RPMs with this ASCII-armored OpenPGP secret key.
-    #[arg(long)]
-    pub signing_key: Option<PathBuf>,
-    /// Read the signing key passphrase from this environment variable.
-    #[arg(long, requires = "signing_key")]
-    pub signing_passphrase_env: Option<String>,
-    /// Signature creation time in Unix seconds (default: source date epoch, then now).
-    #[arg(long, requires = "signing_key")]
-    pub signing_timestamp: Option<u32>,
+    #[command(flatten)]
+    pub signing: OptionalSigningArgs,
     /// Emit machine-readable output.
     #[arg(long)]
     pub json: bool,
@@ -120,15 +126,8 @@ pub struct RebuildArgs {
     /// Use a pinned test-root lock instead of resolving one.
     #[arg(long, requires = "run_tests")]
     pub test_root_lock: Option<PathBuf>,
-    /// Sign the built RPMs with this ASCII-armored OpenPGP secret key.
-    #[arg(long)]
-    pub signing_key: Option<PathBuf>,
-    /// Read the signing key passphrase from this environment variable.
-    #[arg(long, requires = "signing_key")]
-    pub signing_passphrase_env: Option<String>,
-    /// Signature creation time in Unix seconds (default: source date epoch, then now).
-    #[arg(long, requires = "signing_key")]
-    pub signing_timestamp: Option<u32>,
+    #[command(flatten)]
+    pub signing: OptionalSigningArgs,
     /// Emit machine-readable output.
     #[arg(long)]
     pub json: bool,
@@ -257,15 +256,8 @@ pub struct SrpmArgs {
     /// Root lock to embed in the SRPM.
     #[arg(long)]
     pub root_lock: Option<PathBuf>,
-    /// Sign the SRPM with this ASCII-armored OpenPGP secret key.
-    #[arg(long)]
-    pub signing_key: Option<PathBuf>,
-    /// Read the signing key passphrase from this environment variable.
-    #[arg(long, requires = "signing_key")]
-    pub signing_passphrase_env: Option<String>,
-    /// Signature creation time in Unix seconds (default: now).
-    #[arg(long, requires = "signing_key")]
-    pub signing_timestamp: Option<u32>,
+    #[command(flatten)]
+    pub signing: OptionalSigningArgs,
     /// Emit machine-readable output.
     #[arg(long)]
     pub json: bool,
@@ -363,15 +355,8 @@ pub struct RepoArgs {
     /// Repository directory; RPMs are copied here and repodata is written.
     #[arg(long)]
     pub output: PathBuf,
-    /// Sign repodata with this ASCII-armored OpenPGP secret key.
-    #[arg(long)]
-    pub signing_key: Option<PathBuf>,
-    /// Read the signing key passphrase from this environment variable.
-    #[arg(long, requires = "signing_key")]
-    pub signing_passphrase_env: Option<String>,
-    /// Repository revision/signature timestamp in Unix seconds (default: now).
-    #[arg(long, requires = "signing_key")]
-    pub signing_timestamp: Option<u32>,
+    #[command(flatten)]
+    pub signing: OptionalSigningArgs,
     /// Emit machine-readable output.
     #[arg(long)]
     pub json: bool,

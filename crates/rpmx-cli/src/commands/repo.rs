@@ -6,10 +6,10 @@ use crate::commands::{load_signing_key, RepoArgs};
 
 pub fn run(args: RepoArgs) -> Result<(), Error> {
     let key = load_signing_key(
-        args.signing_key.as_deref(),
-        args.signing_passphrase_env.as_deref(),
+        args.signing.signing_key.as_deref(),
+        args.signing.signing_passphrase_env.as_deref(),
     )?;
-    let timestamp = args.signing_timestamp.unwrap_or_else(|| {
+    let timestamp = args.signing.signing_timestamp.unwrap_or_else(|| {
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|duration| duration.as_secs() as u32)

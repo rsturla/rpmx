@@ -18,8 +18,8 @@ pub fn run(args: SrpmArgs, pipeline_dir: Option<&Path>) -> Result<Vec<std::path:
     })?;
     let policy = resolved.plan_policy();
     let signing = crate::commands::load_signing_key(
-        args.signing_key.as_deref(),
-        args.signing_passphrase_env.as_deref(),
+        args.signing.signing_key.as_deref(),
+        args.signing.signing_passphrase_env.as_deref(),
     )?;
     let root_lock = match args.root_lock.as_deref() {
         Some(path) => {
@@ -52,7 +52,7 @@ pub fn run(args: SrpmArgs, pipeline_dir: Option<&Path>) -> Result<Vec<std::path:
     }
     let source_date_epoch = crate::commands::source_date_epoch(&recipe, args.source_date_epoch);
     let signature_timestamp = crate::commands::signature_timestamp(
-        args.signing_timestamp,
+        args.signing.signing_timestamp,
         source_date_epoch,
         signing.as_ref(),
     )?;
