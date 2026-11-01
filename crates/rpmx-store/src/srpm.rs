@@ -79,26 +79,10 @@ pub fn read_bundle(directory: &Path, files: Vec<String>) -> Result<ExtractedBund
     let mut lock_steps = BTreeMap::new();
     let lock_path = directory.join("package.lock.json");
     if lock_path.exists() {
-        let text = read_text_capped(&lock_path, codes::EXTRACT_006)?;
-        let lock: serde_json::Value = serde_json::from_str(&text).map_err(|error| {
-            Error::new(
-                codes::EXTRACT_004,
-                format!("invalid {}: {error}", lock_path.display()),
-            )
-        })?;
-        if let Some(steps) = lock.get("steps").and_then(serde_json::Value::as_array) {
-            for step in steps {
-                let name = step
-                    .get("name")
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or_default();
-                let digest = step
-                    .get("digest")
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or_default();
-                if !name.is_empty() && !digest.is_empty() {
-                    lock_steps.insert(name.to_string(), digest.to_string());
-                }
+        let lock = load_lock_file(&lock_path)?;
+        for step in lock.steps {
+            if !step.name.is_empty() && !step.digest.is_empty() {
+                lock_steps.insert(step.name, step.digest);
             }
         }
     }
@@ -107,17 +91,13 @@ pub fn read_bundle(directory: &Path, files: Vec<String>) -> Result<ExtractedBund
     let manifest_path = directory.join("RPMX-MANIFEST.json");
     if manifest_path.exists() {
         let text = read_text_capped(&manifest_path, codes::EXTRACT_006)?;
-        let manifest: serde_json::Value = serde_json::from_str(&text).map_err(|error| {
+        let manifest: SourceManifest = serde_json::from_str(&text).map_err(|error| {
             Error::new(
                 codes::EXTRACT_004,
                 format!("invalid {}: {error}", manifest_path.display()),
             )
         })?;
-        source_date_epoch = manifest
-            .get("source_date_epoch")
-            .and_then(serde_json::Value::as_u64)
-            .and_then(|value| u32::try_from(value).ok())
-            .unwrap_or(0);
+        source_date_epoch = manifest.source_date_epoch;
     }
 
     Ok(ExtractedBundle {
@@ -305,26 +285,26 @@ pub struct PackageLock {
     pub build: LockBuild,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct SourceManifestRecipe {
     pub path: String,
     pub digest: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct SourceManifestLock {
     pub path: String,
     pub digest: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct SourceManifestSource {
     pub path: String,
     pub digest: String,
     pub size: usize,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct SourceManifest {
     pub schema: u32,
     pub generator: String,
