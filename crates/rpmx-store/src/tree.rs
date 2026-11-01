@@ -1,6 +1,5 @@
 use std::fs::{self, File};
 use std::io::Read;
-use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 use std::process::Command;
@@ -57,25 +56,7 @@ pub fn tree_digest(root: &Path) -> Result<String> {
 
 fn walk(root: &Path, relative: &Path, lines: &mut Vec<String>) -> Result<()> {
     let directory = root.join(relative);
-    let mut entries = fs::read_dir(&directory)
-        .map_err(|error| {
-            Error::new(
-                codes::ROOT_014,
-                format!("cannot read {}: {error}", directory.display()),
-            )
-        })?
-        .collect::<std::result::Result<Vec<_>, _>>()
-        .map_err(|error| {
-            Error::new(
-                codes::ROOT_014,
-                format!("cannot read {}: {error}", directory.display()),
-            )
-        })?;
-    entries.sort_by(|left, right| {
-        left.file_name()
-            .as_bytes()
-            .cmp(right.file_name().as_bytes())
-    });
+    let entries = rpmx_base::io::sorted_entries(&directory, codes::ROOT_014)?;
 
     for entry in entries {
         let name = entry.file_name();

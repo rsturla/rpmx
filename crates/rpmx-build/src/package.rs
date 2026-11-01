@@ -41,21 +41,7 @@ pub fn scan_stage(root: &Path) -> Result<Vec<StagedFile>> {
 }
 
 fn walk(root: &Path, dir: &Path, files: &mut Vec<StagedFile>) -> Result<()> {
-    let mut entries = std::fs::read_dir(dir)
-        .map_err(|error| {
-            Error::new(
-                codes::STAGE_002,
-                format!("cannot read {}: {error}", dir.display()),
-            )
-        })?
-        .collect::<std::result::Result<Vec<_>, _>>()
-        .map_err(|error| {
-            Error::new(
-                codes::STAGE_002,
-                format!("cannot read {}: {error}", dir.display()),
-            )
-        })?;
-    entries.sort_by_key(|entry| entry.file_name());
+    let entries = rpmx_base::io::sorted_entries(dir, codes::STAGE_002)?;
 
     for entry in entries {
         let path = entry.path();

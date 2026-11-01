@@ -179,21 +179,7 @@ fn build_git_tar(root: &Path, prefix: &str, temp_dir: &Path) -> Result<tempfile:
 }
 
 fn collect_git_entries(root: &Path, directory: &Path, entries: &mut Vec<String>) -> Result<()> {
-    let mut children = std::fs::read_dir(directory)
-        .map_err(|error| {
-            Error::new(
-                codes::FETCH_003,
-                format!("cannot read {}: {error}", directory.display()),
-            )
-        })?
-        .collect::<std::result::Result<Vec<_>, _>>()
-        .map_err(|error| {
-            Error::new(
-                codes::FETCH_003,
-                format!("cannot read {}: {error}", directory.display()),
-            )
-        })?;
-    children.sort_by_key(|entry| entry.file_name());
+    let children = rpmx_base::io::sorted_entries(directory, codes::FETCH_003)?;
     for child in children {
         let path = child.path();
         if child.file_name() == ".git" {

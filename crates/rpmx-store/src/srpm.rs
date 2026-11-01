@@ -140,21 +140,7 @@ pub fn snapshot_dir(dir: &Path) -> Result<Vec<SnapshotFile>> {
 }
 
 fn walk(root: &Path, dir: &Path, files: &mut Vec<SnapshotFile>) -> Result<()> {
-    let mut entries = std::fs::read_dir(dir)
-        .map_err(|error| {
-            Error::new(
-                codes::SOURCE_011,
-                format!("cannot read {}: {error}", dir.display()),
-            )
-        })?
-        .collect::<std::result::Result<Vec<_>, _>>()
-        .map_err(|error| {
-            Error::new(
-                codes::SOURCE_011,
-                format!("cannot read {}: {error}", dir.display()),
-            )
-        })?;
-    entries.sort_by_key(|entry| entry.file_name());
+    let entries = rpmx_base::io::sorted_entries(dir, codes::SOURCE_011)?;
 
     for entry in entries {
         let path = entry.path();

@@ -1,4 +1,7 @@
 use std::io::{self, Read, Write};
+use std::path::Path;
+
+use crate::error::{Code, Error, Result};
 
 /// A reader that fails once more than `limit` bytes are consumed.
 pub struct BoundedReader<R> {
@@ -54,6 +57,25 @@ pub fn read_to_end<R: Read>(reader: R, limit: u64) -> io::Result<Vec<u8>> {
 pub fn copy_to<R: Read, W: Write>(reader: R, writer: &mut W, limit: u64) -> io::Result<u64> {
     let mut reader = BoundedReader::new(reader, limit);
     io::copy(&mut reader, writer)
+}
+
+/// List a directory with byte-wise name ordering, so callers do not depend on
+/// the filesystem's traversal order.
+pub fn sorted_entries(directory: &Path, code: Code) -> Result<Vec<std::fs::DirEntry>> {
+    let mut entries = std::fs::read_dir(directory)
+        .and_then(|entries| entries.collect::<std::io::Result<Vec<_>>>())
+        .map_err(|error| {
+            Error::new(
+                code,
+                format!("cannot read {}: {error}", directory.display()),
+            )
+        })?;
+    entries.sort_by(|left, right| {
+        left.file_name()
+            .as_encoded_bytes()
+            .cmp(right.file_name().as_encoded_bytes())
+    });
+    Ok(entries)
 }
 
 #[cfg(test)]

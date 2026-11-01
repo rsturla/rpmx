@@ -6,7 +6,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha512};
 
 use crate::template;
-use rpmx_base::error::{codes, Error, Result};
+use rpmx_base::error::{codes, Code, Error, Result};
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -156,6 +156,45 @@ pub fn local_path(root: Option<&Path>, name: &str) -> Option<std::path::PathBuf>
     Some(root.join(format!("{name}.yaml")))
 }
 
+/// The YAML text of one step, read and decoded in a single place.
+pub struct StepSource {
+    text: String,
+}
+
+impl StepSource {
+    pub fn from_text(text: impl Into<String>) -> Self {
+        Self { text: text.into() }
+    }
+
+    pub fn read(path: &Path, read_code: Code, utf8_code: Code) -> Result<Self> {
+        let bytes = std::fs::read(path).map_err(|error| {
+            Error::new(
+                read_code,
+                format!("cannot read {}: {error}", path.display()),
+            )
+        })?;
+        let text = String::from_utf8(bytes).map_err(|error| {
+            Error::new(
+                utf8_code,
+                format!("{} is not valid UTF-8: {error}", path.display()),
+            )
+        })?;
+        Ok(Self { text })
+    }
+
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+
+    pub fn into_text(self) -> String {
+        self.text
+    }
+
+    pub fn digest(&self) -> String {
+        format!("sha512:{:x}", Sha512::digest(self.text.as_bytes()))
+    }
+}
+
 pub fn resolve(
     name: &str,
     root: Option<&Path>,
@@ -165,29 +204,18 @@ pub fn resolve(
     let local = local_path(root, name).filter(|path| path.exists());
     let builtin = builtin_source(name);
 
-    let (text, builtin) = match (builtin, local) {
+    let (source, builtin) = match (builtin, local) {
         (Some(_), Some(_)) if !allow_builtin_override => {
             return Err(Error::new(
                 codes::STEP_016,
                 format!("local step '{name}' would shadow a built-in step"),
             ));
         }
-        (_, Some(path)) => {
-            let bytes = std::fs::read(&path).map_err(|error| {
-                Error::new(
-                    codes::STEP_011,
-                    format!("cannot read step '{}': {error}", path.display()),
-                )
-            })?;
-            let text = String::from_utf8(bytes).map_err(|error| {
-                Error::new(
-                    codes::STEP_012,
-                    format!("step '{}' is not valid UTF-8: {error}", path.display()),
-                )
-            })?;
-            (text, false)
-        }
-        (Some(source), None) => (source.to_string(), true),
+        (_, Some(path)) => (
+            StepSource::read(&path, codes::STEP_011, codes::STEP_012)?,
+            false,
+        ),
+        (Some(source), None) => (StepSource::from_text(source), true),
         (None, None) => {
             validate_name(name)?;
             let root = root.ok_or_else(|| {
@@ -197,27 +225,15 @@ pub fn resolve(
                 )
             })?;
             let path = root.join(format!("{name}.yaml"));
-            let bytes = std::fs::read(&path).map_err(|error| {
-                Error::new(
-                    codes::STEP_011,
-                    format!(
-                        "unknown step '{name}': cannot read {}: {error}",
-                        path.display()
-                    ),
-                )
-            })?;
-            let text = String::from_utf8(bytes).map_err(|error| {
-                Error::new(
-                    codes::STEP_012,
-                    format!("step '{}' is not valid UTF-8: {error}", path.display()),
-                )
-            })?;
-            (text, false)
+            (
+                StepSource::read(&path, codes::STEP_011, codes::STEP_012)?,
+                false,
+            )
         }
     };
 
-    let digest = format!("sha512:{:x}", Sha512::digest(text.as_bytes()));
-    let file: StepFile = serde_yaml_ng::from_str(&text).map_err(|error| {
+    let digest = source.digest();
+    let file: StepFile = serde_yaml_ng::from_str(source.text()).map_err(|error| {
         Error::new(
             codes::STEP_012,
             format!("step '{name}' is invalid: {error}"),

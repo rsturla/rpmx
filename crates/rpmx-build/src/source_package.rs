@@ -205,13 +205,8 @@ fn collect_local_steps(
             )
         })?;
         let path = root.join(format!("{}.yaml", step.uses));
-        let data = std::fs::read(&path).map_err(|error| {
-            Error::new(
-                codes::SRPM_004,
-                format!("cannot read {}: {error}", path.display()),
-            )
-        })?;
-        let actual = srpm::sha512_hex(&data);
+        let source = steps::StepSource::read(&path, codes::SRPM_004, codes::SRPM_005)?;
+        let actual = source.digest();
         if &actual != digest {
             return Err(Error::new(
                 codes::SRPM_009,
@@ -221,13 +216,7 @@ fn collect_local_steps(
                 ),
             ));
         }
-        let text = String::from_utf8(data).map_err(|error| {
-            Error::new(
-                codes::SRPM_005,
-                format!("step {} is not UTF-8: {error}", path.display()),
-            )
-        })?;
-        contents.insert(step.uses.clone(), text);
+        contents.insert(step.uses.clone(), source.into_text());
     }
 
     let mut files = Vec::new();
