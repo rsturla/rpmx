@@ -150,7 +150,11 @@ fn run_installed(
     let mut tools = std::collections::BTreeSet::new();
     for cell in &plan.cells {
         for test in &cell.tests {
-            let wanted = args.selected.is_empty() || args.selected.contains(&test.name);
+            let wanted = if args.selected.is_empty() {
+                test.stage == "installed"
+            } else {
+                args.selected.contains(&test.name)
+            };
             if !wanted {
                 continue;
             }
