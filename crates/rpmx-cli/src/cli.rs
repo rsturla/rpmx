@@ -23,6 +23,7 @@ impl Cli {
     pub fn command_name(&self) -> &'static str {
         match &self.command {
             Command::Explain(_) => "explain",
+            Command::Shell(_) => "shell",
             Command::Steps { .. } => "steps",
             Command::Doctor(_) => "doctor",
             Command::Init(_) => "init",
@@ -50,6 +51,7 @@ impl Cli {
             Command::Sign(args) => args.json,
             Command::Repo(args) => args.json,
             Command::Explain(args) => args.json,
+            Command::Shell(_) => false,
             Command::Steps { command } => command.json(),
             Command::Doctor(args) => args.json,
             Command::Init(_) => false,
@@ -141,6 +143,8 @@ pub struct PolicyArgs {
 pub enum Command {
     /// Explain a resolved policy, root, step list, matrix or dependency set.
     Explain(crate::commands::ExplainArgs),
+    /// Open a shell in the build sandbox.
+    Shell(crate::commands::ShellArgs),
     /// Inspect the built-in step library.
     Steps {
         #[command(subcommand)]

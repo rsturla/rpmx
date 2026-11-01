@@ -71,6 +71,33 @@ fn doctor_reports_checks_as_json() {
 }
 
 #[test]
+fn shell_enters_the_build_mount_layout() {
+    if std::process::Command::new("bwrap")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
+        eprintln!("bubblewrap is not installed; skipping");
+        return;
+    }
+    let workspace = tempfile::tempdir().expect("workspace");
+    let stage = tempfile::tempdir().expect("stage");
+    let output = rpmx(&[
+        "shell",
+        "--root",
+        "/",
+        "--workspace",
+        workspace.path().to_str().unwrap(),
+        "--stage",
+        stage.path().to_str().unwrap(),
+        "--command",
+        "pwd",
+    ]);
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "/tmp/build");
+}
+
+#[test]
 fn unknown_step_names_fail_with_a_hint() {
     let output = rpmx(&["steps", "show", "nope/nope"]);
     assert_eq!(output.status.code(), Some(2), "{output:?}");

@@ -19,6 +19,7 @@ pub mod rebuild;
 pub mod repo;
 pub mod report;
 pub mod root;
+pub mod shell;
 pub mod sign;
 mod signing;
 pub mod source;

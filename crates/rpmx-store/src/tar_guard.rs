@@ -289,12 +289,8 @@ pub fn unpack_staged_with(
         .rewind()
         .map_err(|error| Error::new(code, format!("cannot rewind {subject}: {error}")))?;
     let base = destination.join(subdir);
-    std::fs::create_dir_all(&base).map_err(|error| {
-        Error::new(
-            code,
-            format!("cannot create {}: {error}", base.display()),
-        )
-    })?;
+    std::fs::create_dir_all(&base)
+        .map_err(|error| Error::new(code, format!("cannot create {}: {error}", base.display())))?;
     let mut tar = tar::Archive::new(archive);
     let entries = tar
         .entries()

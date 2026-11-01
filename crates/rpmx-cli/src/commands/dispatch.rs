@@ -11,6 +11,7 @@ pub fn run(cli: Cli) -> Result<(), Error> {
     } = cli;
     match command {
         Command::Explain(args) => commands::explain::run(args, pipeline_dir.as_deref()),
+        Command::Shell(args) => commands::shell::run(args),
         Command::Steps { command } => match command {
             cli::StepsCommand::List(args) => commands::steps::list(args),
             cli::StepsCommand::Show(args) => commands::steps::show(args),

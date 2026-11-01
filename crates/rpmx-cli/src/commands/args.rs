@@ -190,6 +190,22 @@ pub struct LintArgs {
 }
 
 #[derive(Debug, clap::Args)]
+pub struct ShellArgs {
+    /// Assembled root to use as /.
+    #[arg(long)]
+    pub root: PathBuf,
+    /// Host workspace, mounted at /tmp/build.
+    #[arg(long)]
+    pub workspace: PathBuf,
+    /// Host stage, mounted at /tmp/stage.
+    #[arg(long)]
+    pub stage: PathBuf,
+    /// Run this command instead of an interactive shell.
+    #[arg(long, value_name = "COMMAND")]
+    pub command: Option<String>,
+}
+
+#[derive(Debug, clap::Args)]
 pub struct ExplainArgs {
     /// What to explain.
     #[arg(value_parser = ["policy", "root", "steps", "matrix", "requires", "files"])]
