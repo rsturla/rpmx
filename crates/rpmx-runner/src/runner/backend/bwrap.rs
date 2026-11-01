@@ -2,9 +2,9 @@ use std::num::NonZeroU64;
 use std::path::{Path, PathBuf};
 
 use super::process::{finish, spawn};
-use crate::arch::Arch;
-use crate::error::Result;
 use crate::runner::{Runner, RunnerConfig, RunnerRequest, Session};
+use rpmx_base::arch::Arch;
+use rpmx_base::error::Result;
 
 pub struct BwrapBackend<'a> {
     pub root: Option<&'a Path>,
@@ -61,10 +61,10 @@ impl Session for BwrapSession {
             "/tmp".to_string(),
             "--bind".to_string(),
             self.workspace.display().to_string(),
-            crate::guest::BUILD.to_string(),
+            rpmx_base::guest::BUILD.to_string(),
             "--bind".to_string(),
             self.stage.display().to_string(),
-            crate::guest::STAGE.to_string(),
+            rpmx_base::guest::STAGE.to_string(),
             "--chdir".to_string(),
             request.cwd.to_string(),
         ];

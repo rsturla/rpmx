@@ -2,9 +2,9 @@ use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::path::Path;
 
-use crate::error::{codes, Error, Result};
-use crate::plan::PlannedStep;
 use crate::sandbox::Sandbox;
+use rpmx_base::error::{codes, Error, Result};
+use rpmx_language::plan::PlannedStep;
 
 /// The package name part of a dependency string such as `gcc >= 12`.
 pub fn dependency_name(value: &str) -> &str {
@@ -59,7 +59,7 @@ pub fn check_build_tools(
         "-c".to_string(),
         format!(
             "for tool do command -v \"$tool\" >/dev/null 2>&1 || printf '%s\n' \"$tool\"; done > {}/.rpmx-missing-tools",
-            crate::guest::BUILD
+            rpmx_base::guest::BUILD
         ),
         "sh".to_string(),
     ];

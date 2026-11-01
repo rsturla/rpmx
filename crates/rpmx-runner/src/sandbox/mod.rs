@@ -2,10 +2,10 @@ use std::collections::BTreeMap;
 use std::num::{NonZeroU32, NonZeroU64};
 use std::path::Path;
 
-use crate::arch::Arch;
-use crate::error::{codes, Error, Result};
-use crate::plan::PlannedStep;
 use crate::runner::{unsupported, Runner, RunnerConfig, RunnerKind, RunnerRequest, Session};
+use rpmx_base::arch::Arch;
+use rpmx_base::error::{codes, Error, Result};
+use rpmx_language::plan::PlannedStep;
 
 /// Deterministic environment for every step. The host environment is never
 /// inherited: it can contain credentials and it differs between machines.
@@ -109,7 +109,7 @@ impl<'a> Sandbox<'a> {
             .cwd
             .as_deref()
             .map(|cwd| expand(cwd, self))
-            .unwrap_or_else(|| crate::guest::BUILD.to_string());
+            .unwrap_or_else(|| rpmx_base::guest::BUILD.to_string());
 
         let mut env = BTreeMap::new();
         for (key, value) in base_env(self) {
@@ -164,7 +164,7 @@ impl Drop for Sandbox<'_> {
 fn base_env(sandbox: &Sandbox<'_>) -> Vec<(&'static str, String)> {
     let mut env = vec![
         ("PATH", SANDBOX_PATH.to_string()),
-        ("HOME", crate::guest::BUILD.to_string()),
+        ("HOME", rpmx_base::guest::BUILD.to_string()),
         ("TMPDIR", "/tmp".to_string()),
         ("LANG", "C.UTF-8".to_string()),
         ("LC_ALL", "C.UTF-8".to_string()),
@@ -173,9 +173,9 @@ fn base_env(sandbox: &Sandbox<'_>) -> Vec<(&'static str, String)> {
             "SOURCE_DATE_EPOCH",
             sandbox.config.source_date_epoch.to_string(),
         ),
-        ("SRC", crate::guest::BUILD.to_string()),
-        ("BUILD", crate::guest::BUILD.to_string()),
-        ("STAGE", crate::guest::STAGE.to_string()),
+        ("SRC", rpmx_base::guest::BUILD.to_string()),
+        ("BUILD", rpmx_base::guest::BUILD.to_string()),
+        ("STAGE", rpmx_base::guest::STAGE.to_string()),
         ("JOBS", sandbox.config.jobs.to_string()),
         ("RPMX_HOST_ARCH", sandbox.config.host.to_string()),
         ("RPMX_TARGET_ARCH", sandbox.config.target.to_string()),
@@ -202,19 +202,19 @@ fn base_env(sandbox: &Sandbox<'_>) -> Vec<(&'static str, String)> {
 
 fn expand(value: &str, sandbox: &Sandbox<'_>) -> String {
     value
-        .replace("${source.dir}", crate::guest::BUILD)
-        .replace("${build.dir}", crate::guest::BUILD)
-        .replace("${stage}", crate::guest::STAGE)
-        .replace("${prefix}", crate::guest::PREFIX)
-        .replace("${libdir}", crate::guest::LIBDIR)
+        .replace("${source.dir}", rpmx_base::guest::BUILD)
+        .replace("${build.dir}", rpmx_base::guest::BUILD)
+        .replace("${stage}", rpmx_base::guest::STAGE)
+        .replace("${prefix}", rpmx_base::guest::PREFIX)
+        .replace("${libdir}", rpmx_base::guest::LIBDIR)
         .replace("${jobs}", &sandbox.config.jobs.to_string())
 }
 
 #[cfg(test)]
 mod tests {
     use super::{Sandbox, SandboxConfig};
-    use crate::arch::Arch;
     use crate::runner::RunnerKind;
+    use rpmx_base::arch::Arch;
     use std::num::{NonZeroU32, NonZeroU64};
     use std::path::Path;
 

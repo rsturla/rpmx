@@ -4,8 +4,8 @@ use std::process::{Command, ExitStatus, Stdio};
 use std::sync::mpsc::{self, Receiver};
 use std::time::{Duration, Instant};
 
-use crate::error::{codes, Error, Result};
 use crate::terminal::Sanitizer;
+use rpmx_base::error::{codes, Error, Result};
 
 pub(crate) struct Completion {
     status: ExitStatus,

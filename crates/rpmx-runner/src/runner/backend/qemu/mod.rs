@@ -3,9 +3,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-use crate::arch::Arch;
-use crate::error::{codes, Error, Result};
 use crate::runner::{Runner, RunnerConfig, RunnerRequest, Session};
+use rpmx_base::arch::Arch;
+use rpmx_base::error::{codes, Error, Result};
 
 mod disk;
 mod guest;
@@ -88,8 +88,8 @@ impl QemuSession {
             timeout: config.timeout,
         };
         session.wait_for_ssh()?;
-        session.copy_in(config.workspace, crate::guest::BUILD, "workspace")?;
-        session.copy_in(config.stage, crate::guest::STAGE, "stage")?;
+        session.copy_in(config.workspace, rpmx_base::guest::BUILD, "workspace")?;
+        session.copy_in(config.stage, rpmx_base::guest::STAGE, "stage")?;
         Ok(Box::new(session))
     }
 
@@ -272,8 +272,8 @@ impl Session for QemuSession {
     }
 
     fn sync_out(&mut self) -> Result<()> {
-        self.sync_path(crate::guest::BUILD, &self.workspace)?;
-        self.sync_path(crate::guest::STAGE, &self.stage)
+        self.sync_path(rpmx_base::guest::BUILD, &self.workspace)?;
+        self.sync_path(rpmx_base::guest::STAGE, &self.stage)
     }
 
     fn stop(&mut self) -> Result<()> {

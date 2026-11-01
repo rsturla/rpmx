@@ -2,11 +2,11 @@ use std::collections::BTreeMap;
 use std::num::{NonZeroU32, NonZeroU64};
 use std::path::Path;
 
-use crate::arch::Arch;
-use crate::error::{codes, Error, Result};
-use crate::plan::PlannedStep;
 use crate::runner::RunnerKind;
 use crate::sandbox::{Sandbox, SandboxConfig};
+use rpmx_base::arch::Arch;
+use rpmx_base::error::{codes, Error, Result};
+use rpmx_language::plan::PlannedStep;
 
 pub struct TestSandboxConfig<'a> {
     pub workspace: &'a Path,
@@ -24,7 +24,7 @@ pub struct TestSandboxConfig<'a> {
 /// separate test root.
 pub fn run_planned_tests(
     sandbox: &Sandbox<'_>,
-    tests: &[crate::plan::PlannedTest],
+    tests: &[rpmx_language::plan::PlannedTest],
     test_root: Option<&Path>,
     settings: TestSandboxConfig<'_>,
 ) -> Result<()> {
@@ -77,7 +77,7 @@ pub fn run_planned_tests(
     Ok(())
 }
 
-fn run_one_test(sandbox: &Sandbox<'_>, test: &crate::plan::PlannedTest) -> Result<()> {
+fn run_one_test(sandbox: &Sandbox<'_>, test: &rpmx_language::plan::PlannedTest) -> Result<()> {
     if let Some(argv) = &test.argv {
         let command = argv.first().ok_or_else(|| {
             Error::new(

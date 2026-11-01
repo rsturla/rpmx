@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::process::Command;
 
-use crate::error::{codes, Error, Result};
+use rpmx_base::error::{codes, Error, Result};
 
 pub(super) fn generate_ssh_key(key: &Path) -> Result<()> {
     let output = Command::new("ssh-keygen")

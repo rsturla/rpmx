@@ -3,9 +3,9 @@ use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::process::{finish, spawn, timed_out};
-use crate::arch::Arch;
-use crate::error::{codes, Error, Result};
 use crate::runner::{Runner, RunnerConfig, RunnerRequest, Session};
+use rpmx_base::arch::Arch;
+use rpmx_base::error::{codes, Error, Result};
 
 static CID_COUNTER: AtomicU64 = AtomicU64::new(0);
 

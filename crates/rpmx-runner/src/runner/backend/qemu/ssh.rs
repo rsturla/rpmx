@@ -4,9 +4,9 @@ use std::process::{Child, ExitStatus};
 use std::sync::mpsc::{self, Receiver};
 use std::time::Duration;
 
-use crate::error::{codes, Error, Result};
 use crate::runner::RunnerRequest;
 use crate::terminal::Sanitizer;
+use rpmx_base::error::{codes, Error, Result};
 
 /// Keep error diagnostics useful without letting a hostile or noisy guest
 /// grow host memory without bound. The last `STDERR_LIMIT` bytes are retained;
@@ -298,7 +298,7 @@ pub(super) fn stream_tar_out(
             ),
         ));
     }
-    crate::tar_guard::validate(
+    rpmx_store::tar_guard::validate(
         &mut archive,
         &format!("archive from {remote}"),
         codes::RUNNER_003,

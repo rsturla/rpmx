@@ -3,9 +3,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 
-use crate::arch::Arch;
-use crate::error::{codes, Error, Result};
 use crate::runner::RunnerConfig;
+use rpmx_base::arch::Arch;
+use rpmx_base::error::{codes, Error, Result};
 
 /// The guest serial console is diagnostic only; cap what it can write to the
 /// host so a noisy guest cannot fill the disk.

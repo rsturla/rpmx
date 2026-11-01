@@ -1840,6 +1840,7 @@ dependencies = [
  "rpm",
  "rpmx-base",
  "rpmx-language",
+ "rpmx-runner",
  "rpmx-store",
  "saphyr-parser",
  "serde",
@@ -1874,6 +1875,18 @@ dependencies = [
  "rpmx-core",
  "serde_json",
  "sha2",
+ "tempfile",
+ "zstd",
+]
+
+[[package]]
+name = "rpmx-runner"
+version = "0.0.0"
+dependencies = [
+ "rpmx-base",
+ "rpmx-language",
+ "rpmx-store",
+ "tar",
  "tempfile",
  "zstd",
 ]

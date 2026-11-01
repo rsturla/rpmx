@@ -1,0 +1,16 @@
+[package]
+name = "rpmx-runner"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+rpmx-base = { path = "../rpmx-base" }
+rpmx-language = { path = "../rpmx-language" }
+rpmx-store = { path = "../rpmx-store" }
+tar.workspace = true
+zstd = "0.14"
+tempfile = "3"
+
+[dev-dependencies]
+tempfile = "3"

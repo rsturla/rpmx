@@ -2,8 +2,8 @@ use std::collections::BTreeMap;
 use std::num::{NonZeroU32, NonZeroU64};
 use std::path::Path;
 
-use crate::arch::Arch;
-use crate::error::{codes, Error, Result};
+use rpmx_base::arch::Arch;
+use rpmx_base::error::{codes, Error, Result};
 
 mod backend;
 
@@ -160,14 +160,14 @@ pub(crate) fn unsupported(runner: &str, host: Arch, target: Arch) -> Error {
 #[cfg(test)]
 mod tests {
     use super::{RunnerKind, Selection};
-    use crate::arch::Arch;
+    use rpmx_base::arch::Arch;
     use std::path::Path;
 
     fn selected<'a>(
         kind: RunnerKind,
         root: Option<&'a Path>,
         image: Option<&'a str>,
-    ) -> Result<Selection<'a>, crate::error::Error> {
+    ) -> Result<Selection<'a>, rpmx_base::error::Error> {
         let host = Arch::X86_64;
         let target = if kind == RunnerKind::Auto {
             Arch::X86_64

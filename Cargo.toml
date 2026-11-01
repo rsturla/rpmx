@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/rpmx-base", "crates/rpmx-language", "crates/rpmx-store", "crates/rpmx-core", "crates/rpmx-rpm", "crates/rpmx-cli"]
+members = ["crates/rpmx-base", "crates/rpmx-language", "crates/rpmx-store", "crates/rpmx-runner", "crates/rpmx-core", "crates/rpmx-rpm", "crates/rpmx-cli"]
 
 [workspace.package]
 version = "0.0.0"
