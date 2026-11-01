@@ -131,6 +131,7 @@ pub fn run(args: LockArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
 }
 
 /// Verify that a recipe and plan still match the lock next to the recipe.
+#[allow(clippy::too_many_arguments)]
 pub fn verify(
     recipe: &Recipe,
     plan: &Plan,
@@ -197,6 +198,7 @@ pub fn verify(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn build(
     recipe: &Recipe,
     plan: &Plan,

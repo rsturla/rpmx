@@ -3,14 +3,17 @@ name = "rpmx-core"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+description = "Facade crate re-exporting the rpmx build pipeline."
+license.workspace = true
+authors.workspace = true
 
 [dependencies]
-rpmx-base = { path = "../rpmx-base" }
-rpmx-language = { path = "../rpmx-language" }
-rpmx-store = { path = "../rpmx-store" }
-rpmx-runner = { path = "../rpmx-runner" }
-rpmx-root = { path = "../rpmx-root" }
-rpmx-build = { path = "../rpmx-build" }
+rpmx-base = { version = "0.0.0", path = "../rpmx-base" }
+rpmx-language = { version = "0.0.0", path = "../rpmx-language" }
+rpmx-store = { version = "0.0.0", path = "../rpmx-store" }
+rpmx-runner = { version = "0.0.0", path = "../rpmx-runner" }
+rpmx-root = { version = "0.0.0", path = "../rpmx-root" }
+rpmx-build = { version = "0.0.0", path = "../rpmx-build" }
 
 [dev-dependencies]
 tempfile = "3"

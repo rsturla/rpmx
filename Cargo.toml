@@ -5,7 +5,9 @@ members = ["crates/rpmx-base", "crates/rpmx-language", "crates/rpmx-store", "cra
 [workspace.package]
 version = "0.0.0"
 edition = "2021"
-rust-version = "1.85"
+rust-version = "1.88"
+license = "Apache-2.0 OR MIT"
+authors = ["rpmx contributors"]
 
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }

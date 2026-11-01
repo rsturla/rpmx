@@ -488,10 +488,6 @@ tests:
             .replace("tools: [gcc, gcc]", "tools: [gcc]")
             .replace("  unused: \"x\"\n", "")
             .replace(
-                "  used: \"${package.version}\"",
-                "  used: \"${package.version}\"",
-            )
-            .replace(
                 "tests:\n  - name: broken\n    stage: build\n",
                 "tests:\n  - name: smoke\n    stage: build\n    argv: [\"true\"]\n",
             );

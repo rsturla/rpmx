@@ -29,7 +29,7 @@ The three things to remember:
 ## Requirements
 
 - Linux, x86_64 or aarch64 host.
-- Rust 1.85+ to build rpmx.
+- Rust 1.88+ to build rpmx (the vendored rpm crate requires it).
 - `bubblewrap` for native steps, or `podman` for root resolution and
   image-backed rebuilds.
 - `dnf5` in the builder image used for root resolution.

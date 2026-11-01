@@ -84,6 +84,9 @@ impl WorkDir {
     }
 }
 
+pub use policy::{reconcile_policy, resolve_policy, PlanPolicy, PolicyInput};
+pub use signing::{load_signing_key, signature_timestamp, signing_passphrase, source_date_epoch};
+
 #[cfg(test)]
 mod tests {
     use super::{default_jobs, default_output};
@@ -99,5 +102,3 @@ mod tests {
         assert!(default_jobs().get() >= 1);
     }
 }
-pub use policy::{reconcile_policy, resolve_policy, PlanPolicy, PolicyInput};
-pub use signing::{load_signing_key, signature_timestamp, signing_passphrase, source_date_epoch};

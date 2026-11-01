@@ -3,6 +3,9 @@ name = "rpmx-base"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+description = "Core types, errors, hashing and YAML primitives for rpmx."
+license.workspace = true
+authors.workspace = true
 
 [dependencies]
 serde.workspace = true

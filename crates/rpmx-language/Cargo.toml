@@ -3,9 +3,12 @@ name = "rpmx-language"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+description = "Recipe model, planner, templates and built-in step definitions for rpmx."
+license.workspace = true
+authors.workspace = true
 
 [dependencies]
-rpmx-base = { path = "../rpmx-base" }
+rpmx-base = { version = "0.0.0", path = "../rpmx-base" }
 serde.workspace = true
 serde_json.workspace = true
 serde_yaml_ng.workspace = true

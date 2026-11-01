@@ -3,6 +3,9 @@ name = "rpmx-rpm"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+description = "Native RPM and SRPM writing, signing and repository metadata for rpmx."
+license.workspace = true
+authors.workspace = true
 
 [dependencies]
 rpm.workspace = true
@@ -11,7 +14,7 @@ rand.workspace = true
 flate2 = "1"
 sha2.workspace = true
 zstd = "0.14"
-rpmx-core = { path = "../rpmx-core" }
-rpmx-base = { path = "../rpmx-base" }
+rpmx-core = { version = "0.0.0", path = "../rpmx-core" }
+rpmx-base = { version = "0.0.0", path = "../rpmx-base" }
 serde_json.workspace = true
 tempfile = "3"

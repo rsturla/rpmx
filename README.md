@@ -42,7 +42,7 @@ small; see [Known limitations](#known-limitations).
 ## Requirements
 
 - Linux
-- Rust 1.85 or newer
+- Rust 1.88 or newer
 - `bubblewrap` for host sandboxing, or `podman` for root resolution and
   container-backed builds
 - `dnf5` in the builder image used for root resolution
@@ -376,10 +376,21 @@ Usage:
 Contributing and design:
 
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — build/test commands and design rules.
+- [`RELEASING.md`](RELEASING.md) — the release and packaging checklist.
 - [`docs/contributing/`](docs/contributing/) — the design study, format
   choices, build model, sandbox contract and the UX audit against Melange.
+
+## Security
+
+`rpmx` is pre-release software with no production support window. Report
+sandbox, parsing, signature, digest or key-handling issues privately; see
+[`SECURITY.md`](SECURITY.md).
 
 ## License
 
 Dual-licensed under Apache-2.0 or MIT. See [`LICENSE-APACHE`](LICENSE-APACHE)
-and [`LICENSE-MIT`](LICENSE-MIT).
+and [`LICENSE-MIT`](LICENSE-MIT). Contributions are accepted under the same
+terms.
+
+The vendored `rpm-rs` crate and the Rust dependency license summary are in
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).

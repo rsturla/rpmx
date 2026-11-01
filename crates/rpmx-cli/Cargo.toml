@@ -3,14 +3,17 @@ name = "rpmx"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+description = "Build RPM packages from a strict YAML recipe."
+license.workspace = true
+authors.workspace = true
 
 [[bin]]
 name = "rpmx"
 path = "src/main.rs"
 
 [dependencies]
-rpmx-core = { path = "../rpmx-core" }
-rpmx-rpm = { path = "../rpmx-rpm" }
+rpmx-core = { version = "0.0.0", path = "../rpmx-core" }
+rpmx-rpm = { version = "0.0.0", path = "../rpmx-rpm" }
 serde.workspace = true
 clap.workspace = true
 serde_json.workspace = true

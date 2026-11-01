@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0 OR MIT
+# Authored for rpmx as a comparison artifact.
 # The same package as a conventional spec, for comparison.
 # This is deliberately a "reasonable modern spec", not a production Fedora
 # spec: it shows the macro/conditional/%files style that the recipe replaces.

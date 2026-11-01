@@ -61,7 +61,7 @@ pub fn profile_dist_tag(recipe: &Recipe, recipe_path: &Path) -> Result<Option<St
     };
     let recipe_dir = recipe_path.parent().unwrap_or_else(|| Path::new("."));
     let path = discover_profile(name, recipe_dir)?;
-    Ok(load_profile(&path)?.dist_tag()?)
+    load_profile(&path)?.dist_tag()
 }
 
 /// Build the merged root requirement without touching the network or cache.
@@ -126,6 +126,7 @@ pub fn requirement(
 ///
 /// Returns `None` when the caller supplied explicit root flags or asked for
 /// the host root; the existing explicit-root path handles those.
+#[allow(clippy::too_many_arguments)]
 pub fn ensure(
     recipe: &Recipe,
     plan: &Plan,
@@ -191,9 +192,8 @@ pub fn ensure(
     // delete each other's half-built root.
     let _publishing = CacheLock::acquire(&roots, key)?;
     if !refresh {
-        match load_cached(&lock_path, &root_path, arch) {
-            Ok(Some(root)) => return Ok(Some(root)),
-            Ok(None) | Err(_) => {}
+        if let Ok(Some(root)) = load_cached(&lock_path, &root_path, arch) {
+            return Ok(Some(root));
         }
     }
     if directory.exists() {

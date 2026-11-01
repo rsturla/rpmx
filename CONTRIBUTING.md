@@ -38,3 +38,14 @@ scripts/systemd-dnf-test.sh <v1-rpm-dir> <v2-rpm-dir>
 
 One logical change per commit. Say what changed and why. Do not commit build
 output, RPMs, caches, or generated SBOMs.
+
+## Licensing
+
+rpmx is dual-licensed under Apache-2.0 or MIT. By submitting a change you agree
+that it may be distributed under those terms. Do not add code, test assets or
+documentation that cannot be distributed under them. Preserve the license and
+attribution of vendored code; see [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
+
+The CI workflow runs formatting, clippy and the test suite. Before a release,
+also run `cargo deny check licenses advisories` and review
+[`RELEASING.md`](RELEASING.md).

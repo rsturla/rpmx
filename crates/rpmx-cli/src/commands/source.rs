@@ -112,10 +112,7 @@ pub fn execute(request: SourceRequest<'_>) -> Result<PathBuf, Error> {
     let root_lock = request.root_lock.or(automatic_lock);
     let root = request.root.or(automatic_root);
     if request.locked {
-        let active_lock = root_lock
-            .as_deref()
-            .map(rpmx_core::root::load_lock)
-            .transpose()?;
+        let active_lock = root_lock.map(rpmx_core::root::load_lock).transpose()?;
         crate::commands::lock::verify(
             &recipe,
             &plan,

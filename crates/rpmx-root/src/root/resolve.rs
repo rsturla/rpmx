@@ -451,11 +451,11 @@ fn resolve_auth(
 
 /// Redact both the raw secret and the escaped form written to the repo file.
 fn push_secret(secrets: &mut Vec<String>, secret: &str) {
-    if !secrets.iter().any(|existing| existing == secret) {
+    if !secrets.contains(&secret.to_string()) {
         secrets.push(secret.to_string());
     }
     let escaped = escape_dnf_value(secret);
-    if escaped != secret && !secrets.iter().any(|existing| *existing == escaped) {
+    if escaped != secret && !secrets.contains(&escaped) {
         secrets.push(escaped);
     }
 }

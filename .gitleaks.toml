@@ -1,0 +1,7 @@
+# Upstream rpm-rs test signing keys are public fixtures, not credentials.
+[allowlist]
+description = "Public test keys shipped by the vendored rpm-rs crate"
+paths = [
+  '''vendor/rpm/tests/assets/signing_keys/''',
+  '''spikes/01-native-srpm/vendor/rpm/tests/assets/signing_keys/''',
+]
