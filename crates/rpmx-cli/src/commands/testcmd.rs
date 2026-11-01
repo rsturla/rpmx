@@ -15,6 +15,9 @@ use crate::commands::{
 };
 
 pub fn run(args: TestArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
+    if let Some(path) = args.junit.as_deref() {
+        let _ = std::fs::remove_file(path);
+    }
     let resolved = resolve_policy(PolicyInput {
         profile: args.policy.profile.as_deref(),
         dist_tag: args.policy.dist_tag.as_deref(),

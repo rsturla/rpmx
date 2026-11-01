@@ -54,6 +54,9 @@ pub struct RebuildOutput {
 }
 
 pub fn run(args: RebuildArgs) -> Result<Vec<PathBuf>, Error> {
+    if let Some(path) = args.junit.as_deref() {
+        let _ = std::fs::remove_file(path);
+    }
     let resolved = crate::commands::resolve_policy(crate::commands::PolicyInput {
         profile: args.policy.profile.as_deref(),
         dist_tag: args.policy.dist_tag.as_deref(),

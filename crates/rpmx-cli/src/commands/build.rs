@@ -16,6 +16,9 @@ pub fn run(args: BuildArgs, pipeline_dir: Option<&Path>) -> Result<Vec<PathBuf>,
         build_release: args.policy.build_release,
     })?;
     let policy = resolved.plan_policy();
+    if let Some(path) = args.junit.as_deref() {
+        let _ = std::fs::remove_file(path);
+    }
     let profile = args.policy.profile.clone();
     let output = args
         .output
