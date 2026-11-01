@@ -145,32 +145,47 @@ fn write_junit(
     path: &Path,
     outcomes: &[(String, String, Option<String>, std::time::Duration)],
 ) -> std::io::Result<()> {
-    let failures = outcomes
-        .iter()
-        .filter(|(_, _, error, _)| error.is_some())
-        .count();
-    let mut xml = format!(
-        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<testsuite name=\"rpmx\" tests=\"{}\" failures=\"{}\">\n",
-        outcomes.len(),
-        failures
-    );
+    // A matrix runs several cells; append to the report instead of replacing
+    // the previous cell's results.
+    let existing = std::fs::read_to_string(path).unwrap_or_default();
+    let mut tests = existing.matches("<testcase ").count();
+    let mut failures = existing.matches("<failure ").count();
+    let mut body = existing;
+    if let Some(position) = body.rfind("</testsuite>") {
+        body.truncate(position);
+    } else {
+        body.clear();
+    }
+    if let Some(start) = body.find("<testsuite") {
+        if let Some(end) = body[start..].find('>') {
+            body.drain(..start + end + 1);
+        }
+    }
+    let mut cases = String::new();
     for (name, stage, error, duration) in outcomes {
-        xml.push_str(&format!(
+        tests += 1;
+        if error.is_some() {
+            failures += 1;
+        }
+        cases.push_str(&format!(
             "  <testcase name=\"{}\" classname=\"{}\" time=\"{:.3}\">",
             escape(name),
             escape(stage),
             duration.as_secs_f64()
         ));
         if let Some(error) = error {
-            xml.push_str(&format!(
+            cases.push_str(&format!(
                 "<failure message=\"{}\">{}</failure>",
                 escape(error),
                 escape(error)
             ));
         }
-        xml.push_str("</testcase>\n");
+        cases.push_str("</testcase>\n");
     }
-    xml.push_str("</testsuite>\n");
+    let xml = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<testsuite name=\"rpmx\" tests=\"{tests}\" failures=\"{failures}\">\n{}{cases}</testsuite>\n",
+        body.trim_start_matches('\n')
+    );
     std::fs::write(path, xml)
 }
 
@@ -215,5 +230,36 @@ mod tests {
         assert!(text.contains("failures=\"1\""), "{text}");
         assert!(text.contains("ok &lt;test&gt;"), "{text}");
         assert!(text.contains("a &amp; b"), "{text}");
+    }
+
+    #[test]
+    fn a_second_cell_appends_to_the_same_report() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let path = directory.path().join("report.xml");
+        write_junit(
+            &path,
+            &[(
+                "one".to_string(),
+                "build".to_string(),
+                None,
+                Duration::from_millis(1),
+            )],
+        )
+        .expect("first");
+        write_junit(
+            &path,
+            &[(
+                "two".to_string(),
+                "installed".to_string(),
+                None,
+                Duration::from_millis(2),
+            )],
+        )
+        .expect("second");
+        let text = std::fs::read_to_string(&path).expect("read");
+        assert!(text.contains("tests=\"2\""), "{text}");
+        assert!(text.contains("name=\"one\""), "{text}");
+        assert!(text.contains("name=\"two\""), "{text}");
+        assert_eq!(text.matches("</testsuite>").count(), 1, "{text}");
     }
 }
