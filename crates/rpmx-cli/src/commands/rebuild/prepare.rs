@@ -26,8 +26,9 @@ pub(super) struct RebuildState {
 }
 
 pub(super) fn prepare(
-    args: &RebuildArgs<'_>,
+    args: &RebuildArgs,
     signing: Option<&rpmx_rpm::sign::SigningKey>,
+    policy: PlanPolicy<'_>,
 ) -> Result<RebuildState, Error> {
     let work = tempfile::tempdir().map_err(|error| {
         Error::new(
@@ -35,7 +36,7 @@ pub(super) fn prepare(
             format!("cannot create work directory: {error}"),
         )
     })?;
-    let extracted = extract_srpm(args.file, work.path())?;
+    let extracted = extract_srpm(args.file.as_path(), work.path())?;
     // Read the authoritative lock before unpacking the snapshot. The snapshot
     // is user-controlled recipe data and must not be able to replace it.
     let package_lock = load_lock_file(&work.path().join("package.lock.json"))?;
@@ -85,24 +86,27 @@ pub(super) fn prepare(
         dist_tag: package_lock.dist_tag.as_deref(),
         build_release: package_lock.build_release,
     };
-    let policy = reconcile_policy(args.policy, locked_policy)?;
+    let policy = reconcile_policy(policy, locked_policy)?;
 
     let recipe_path = work.path().join("package.yaml");
     let (recipe, plan) = load_plan(
         &recipe_path,
-        args.arch,
+        &args.arch,
         Some(pipelines.as_path()),
         true,
         policy,
     )?;
-    let cells: Vec<_> = match args.cell {
+    let cells: Vec<_> = match args.cell.as_deref() {
         Some(id) => plan.cells.iter().filter(|cell| cell.id == id).collect(),
         None => plan.cells.iter().collect(),
     };
     if cells.is_empty() {
         return Err(Error::new(
             codes::BUILD_002,
-            format!("no such cell '{}'", args.cell.unwrap_or_default()),
+            format!(
+                "no such cell '{}'",
+                args.cell.as_deref().unwrap_or_default()
+            ),
         ));
     }
     if cells.len() > 1 {
@@ -137,7 +141,7 @@ pub(super) fn prepare(
     })?;
 
     let mut locked_packages: BTreeSet<String> = BTreeSet::new();
-    let mut builder_image: Option<String> = args.root_image.map(str::to_string);
+    let mut builder_image: Option<String> = args.root_image.clone();
     let embedded_lock = {
         let path = work.path().join("root.lock.json");
         if path.exists() {
@@ -146,7 +150,7 @@ pub(super) fn prepare(
             None
         }
     };
-    let requested_lock = match args.root_lock {
+    let requested_lock = match args.root_lock.as_deref() {
         Some(path) => Some(load_lock(path)?),
         None => None,
     };
@@ -171,7 +175,7 @@ pub(super) fn prepare(
                 "a root lock cannot be combined with --root-image",
             ));
         }
-        let root_path = args.root.ok_or_else(|| {
+        let root_path = args.root.as_deref().ok_or_else(|| {
             Error::new(
                 codes::ROOT_016,
                 "a root lock is available; pass --root with the assembled root directory",
@@ -183,7 +187,7 @@ pub(super) fn prepare(
                 locked_packages.insert(package.name.clone());
             }
         }
-        let selection = RootSelection::verify(lock, root_path, args.arch)?;
+        let selection = RootSelection::verify(lock, root_path, &args.arch)?;
         Some(selection.path)
     } else {
         if args.root.is_some() {

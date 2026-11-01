@@ -21,11 +21,11 @@ impl Cli {
             | Command::Fetch { json, .. }
             | Command::Source { json, .. }
             | Command::Srpm { json, .. }
-            | Command::Rebuild { json, .. }
             | Command::Keygen { json, .. }
             | Command::Sign { json, .. }
             | Command::Repo { json, .. } => *json,
             Command::Build(args) => args.json,
+            Command::Rebuild(args) => args.json,
             Command::Cache { command } => command.json(),
         }
     }
@@ -303,60 +303,7 @@ pub enum Command {
         json: bool,
     },
     /// Rebuild binary RPMs from a native source RPM.
-    Rebuild {
-        /// Source RPM to rebuild.
-        file: PathBuf,
-        #[command(flatten)]
-        policy: PolicyArgs,
-        /// Output directory.
-        #[arg(long, default_value = ".")]
-        output: PathBuf,
-        /// Architecture for outputs that do not declare one.
-        #[arg(long, default_value = rpmx_core::arch::native_arch())]
-        arch: String,
-        /// Runner: auto, bwrap or qemu.
-        #[arg(long, default_value = "auto", value_parser = ["auto", "bwrap", "qemu"])]
-        runner: String,
-        /// Build one matrix cell (required when the plan has several).
-        #[arg(long)]
-        cell: Option<String>,
-        /// Parallelism exposed as JOBS.
-        #[arg(long, default_value_t = 1)]
-        jobs: u32,
-        /// Wall-clock limit for each step in seconds (0 disables).
-        #[arg(long, default_value_t = 3600)]
-        step_timeout: u64,
-        /// Run steps inside this builder image instead of host bwrap.
-        #[arg(long, conflicts_with = "root_lock")]
-        root_image: Option<String>,
-        /// Root lock describing the build root.
-        #[arg(long)]
-        root_lock: Option<PathBuf>,
-        /// Assembled root directory.
-        #[arg(long)]
-        root: Option<PathBuf>,
-        /// Run build-stage tests after the build.
-        #[arg(long)]
-        run_tests: bool,
-        /// Override the build-level SPDX SBOM path.
-        #[arg(long)]
-        sbom: Option<PathBuf>,
-        /// Use a pinned test-root lock instead of resolving one.
-        #[arg(long, requires = "run_tests")]
-        test_root_lock: Option<PathBuf>,
-        /// Sign the built RPMs with this ASCII-armored OpenPGP secret key.
-        #[arg(long)]
-        signing_key: Option<PathBuf>,
-        /// Read the signing key passphrase from this environment variable.
-        #[arg(long, requires = "signing_key")]
-        signing_passphrase_env: Option<String>,
-        /// Signature creation time in Unix seconds (default: source date epoch, then now).
-        #[arg(long, requires = "signing_key")]
-        signing_timestamp: Option<u32>,
-        /// Emit machine-readable output.
-        #[arg(long)]
-        json: bool,
-    },
+    Rebuild(crate::commands::RebuildArgs),
     /// Write repository metadata for a directory of built RPMs.
     Repo {
         /// Directory containing the RPMs.

@@ -96,26 +96,63 @@ pub struct BuildArgs {
     pub json: bool,
 }
 
-pub struct RebuildArgs<'a> {
-    pub file: &'a Path,
-    pub output: &'a Path,
-    pub arch: &'a str,
-    pub runner: &'a str,
-    pub cell: Option<&'a str>,
-    pub policy: PlanPolicy<'a>,
+#[derive(Debug, clap::Args)]
+pub struct RebuildArgs {
+    /// Source RPM to rebuild.
+    pub file: PathBuf,
+    #[command(flatten)]
+    pub policy: crate::cli::PolicyArgs,
+    /// Output directory.
+    #[arg(long, default_value = ".")]
+    pub output: PathBuf,
+    /// Architecture for outputs that do not declare one.
+    #[arg(long, default_value = rpmx_core::arch::native_arch())]
+    pub arch: String,
+    /// Runner: auto, bwrap or qemu.
+    #[arg(long, default_value = "auto", value_parser = ["auto", "bwrap", "qemu"])]
+    pub runner: String,
+    /// Build one matrix cell (required when the plan has several).
+    #[arg(long)]
+    pub cell: Option<String>,
+    /// Parallelism exposed as JOBS.
+    #[arg(long, default_value_t = 1)]
     pub jobs: u32,
+    /// Wall-clock limit for each step in seconds (0 disables).
+    #[arg(long, default_value_t = 3600)]
     pub step_timeout: u64,
-    pub root_image: Option<&'a str>,
-    pub root_lock: Option<&'a Path>,
-    pub root: Option<&'a Path>,
+    /// Run steps inside this builder image instead of host bwrap.
+    #[arg(long, conflicts_with = "root_lock")]
+    pub root_image: Option<String>,
+    /// Root lock describing the build root.
+    #[arg(long)]
+    pub root_lock: Option<PathBuf>,
+    /// Assembled root directory.
+    #[arg(long)]
+    pub root: Option<PathBuf>,
+    /// Run build-stage tests after the build.
+    #[arg(long)]
     pub run_tests: bool,
-    pub sbom: Option<&'a Path>,
-    pub test_root_lock: Option<&'a Path>,
-    pub signing_key: Option<&'a Path>,
-    pub signing_passphrase_env: Option<&'a str>,
+    /// Override the build-level SPDX SBOM path.
+    #[arg(long)]
+    pub sbom: Option<PathBuf>,
+    /// Use a pinned test-root lock instead of resolving one.
+    #[arg(long, requires = "run_tests")]
+    pub test_root_lock: Option<PathBuf>,
+    /// Sign the built RPMs with this ASCII-armored OpenPGP secret key.
+    #[arg(long)]
+    pub signing_key: Option<PathBuf>,
+    /// Read the signing key passphrase from this environment variable.
+    #[arg(long, requires = "signing_key")]
+    pub signing_passphrase_env: Option<String>,
+    /// Signature creation time in Unix seconds (default: source date epoch, then now).
+    #[arg(long, requires = "signing_key")]
     pub signing_timestamp: Option<u32>,
-    pub quiet: bool,
+    /// Emit machine-readable output.
+    #[arg(long)]
     pub json: bool,
+    /// Suppress reporting when this command is used as a pipeline step.
+    #[arg(skip)]
+    pub quiet: bool,
 }
 
 pub struct FetchArgs<'a> {

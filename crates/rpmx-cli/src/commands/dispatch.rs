@@ -187,50 +187,7 @@ pub fn run(cli: Cli) -> Result<(), Error> {
             })
             .map(|_| ())
         }
-        Command::Rebuild {
-            file,
-            policy,
-            output,
-            arch,
-            runner,
-            cell,
-            jobs,
-            step_timeout,
-            root_image,
-            root_lock,
-            root,
-            run_tests,
-            sbom,
-            test_root_lock,
-            signing_key,
-            signing_passphrase_env,
-            signing_timestamp,
-            json,
-        } => {
-            let resolved = resolve_policy(policy)?;
-            commands::rebuild::run(commands::RebuildArgs {
-                file: &file,
-                output: &output,
-                arch: &arch,
-                runner: &runner,
-                cell: cell.as_deref(),
-                policy: resolved.plan_policy(),
-                jobs,
-                step_timeout,
-                root_image: root_image.as_deref(),
-                root_lock: root_lock.as_deref(),
-                root: root.as_deref(),
-                run_tests,
-                sbom: sbom.as_deref(),
-                test_root_lock: test_root_lock.as_deref(),
-                signing_key: signing_key.as_deref(),
-                signing_passphrase_env: signing_passphrase_env.as_deref(),
-                signing_timestamp,
-                quiet: false,
-                json,
-            })
-            .map(|_| ())
-        }
+        Command::Rebuild(args) => commands::rebuild::run(args).map(|_| ()),
         Command::Build(args) => commands::build::run(args, pipeline_dir.as_deref()).map(|_| ()),
         Command::Repo {
             rpms,

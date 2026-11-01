@@ -212,25 +212,29 @@ fn build_from_recipe(
 
         for srpm in written {
             rpms.extend(rebuild::run(RebuildArgs {
-                file: &srpm,
-                output: &output,
-                arch: &arch,
-                runner: &runner,
-                cell: Some(planned.id.as_str()),
-                policy,
+                file: srpm.clone(),
+                output: output.clone(),
+                arch: arch.clone(),
+                runner: runner.clone(),
+                cell: Some(planned.id.clone()),
+                policy: crate::cli::PolicyArgs {
+                    profile: None,
+                    dist_tag: policy.dist_tag.map(str::to_string),
+                    build_release: policy.build_release,
+                },
                 jobs,
                 step_timeout,
                 root_image: None,
-                root_lock: root_lock.as_deref(),
-                root: root.as_deref(),
+                root_lock: root_lock.clone(),
+                root: root.clone(),
                 run_tests,
-                sbom: sbom.as_deref(),
-                test_root_lock: test_root_lock.as_deref(),
-                signing_key: signing_key.as_deref(),
-                signing_passphrase_env: signing_passphrase_env.as_deref(),
+                sbom: sbom.clone(),
+                test_root_lock: test_root_lock.clone(),
+                signing_key: signing_key.clone(),
+                signing_passphrase_env: signing_passphrase_env.clone(),
                 signing_timestamp,
-                quiet: true,
                 json: false,
+                quiet: true,
             })?);
         }
     }

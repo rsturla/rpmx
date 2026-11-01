@@ -17,9 +17,18 @@ mod prepare;
 use crate::commands::RebuildArgs;
 use prepare::{prepare, RebuildState};
 
-pub fn run(args: RebuildArgs<'_>) -> Result<Vec<PathBuf>, Error> {
-    let signing = crate::commands::load_signing_key(args.signing_key, args.signing_passphrase_env)?;
-    let state = prepare(&args, signing.as_ref())?;
+pub fn run(args: RebuildArgs) -> Result<Vec<PathBuf>, Error> {
+    let resolved = crate::commands::resolve_policy(crate::commands::PolicyInput {
+        profile: args.policy.profile.as_deref(),
+        dist_tag: args.policy.dist_tag.as_deref(),
+        build_release: args.policy.build_release,
+    })?;
+    let policy = resolved.plan_policy();
+    let signing = crate::commands::load_signing_key(
+        args.signing_key.as_deref(),
+        args.signing_passphrase_env.as_deref(),
+    )?;
+    let state = prepare(&args, signing.as_ref(), policy)?;
     let RebuildState {
         work,
         extracted,
@@ -34,15 +43,15 @@ pub fn run(args: RebuildArgs<'_>) -> Result<Vec<PathBuf>, Error> {
         assembled_root,
         signature_timestamp,
     } = state;
-    let output = args.output;
+    let output = args.output.clone();
     let run_tests = args.run_tests;
-    let sbom = args.sbom;
+    let sbom = args.sbom.as_deref();
     let quiet = args.quiet;
     let json = args.json;
     let jobs = args.jobs;
     let step_timeout = args.step_timeout;
-    let runner = args.runner;
-    let arch = args.arch;
+    let runner = args.runner.as_str();
+    let arch = args.arch.as_str();
 
     let host_arch = rpmx_core::arch::Arch::current()?;
     let target_arch = rpmx_core::arch::Arch::parse(arch)?;
@@ -56,7 +65,7 @@ pub fn run(args: RebuildArgs<'_>) -> Result<Vec<PathBuf>, Error> {
         workspace: &build,
         stage: &stage,
         root: assembled_root.as_deref(),
-        image: args.root_image,
+        image: args.root_image.as_deref(),
         source_date_epoch: extracted.source_date_epoch,
         jobs,
         timeout: Some(step_timeout).filter(|seconds| *seconds > 0),
@@ -96,7 +105,7 @@ pub fn run(args: RebuildArgs<'_>) -> Result<Vec<PathBuf>, Error> {
         sandbox.run(step)?;
     }
 
-    std::fs::create_dir_all(output).map_err(|error| {
+    std::fs::create_dir_all(&output).map_err(|error| {
         Error::new(
             codes::BUILD_001,
             format!("cannot create {}: {error}", output.display()),
@@ -172,7 +181,7 @@ pub fn run(args: RebuildArgs<'_>) -> Result<Vec<PathBuf>, Error> {
                 license: false,
             });
         }
-        let path = emit::binary(&package, output, signing.as_ref(), signature_timestamp)?;
+        let path = emit::binary(&package, &output, signing.as_ref(), signature_timestamp)?;
         built.push((
             path.clone(),
             package.name.clone(),
@@ -236,7 +245,7 @@ pub fn run(args: RebuildArgs<'_>) -> Result<Vec<PathBuf>, Error> {
             })?;
             Some(prepare_test_root(TestRootOptions {
                 lock,
-                pinned: args.test_root_lock,
+                pinned: args.test_root_lock.as_deref(),
                 tools: &cell.test_tools,
                 rpms: &written,
                 image: builder_image.as_deref(),
