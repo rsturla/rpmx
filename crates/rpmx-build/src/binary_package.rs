@@ -2,11 +2,11 @@ use std::collections::BTreeSet;
 use std::path::Path;
 
 use crate::elf;
-use crate::error::{codes, Error, Result};
-use crate::model::Recipe;
 use crate::package::{self, OutputSpec};
 use crate::package_spec::{BinaryPackageDirectory, BinaryPackageFile, BinaryPackageSpec};
-use crate::plan::PlannedCell;
+use rpmx_base::error::{codes, Error, Result};
+use rpmx_language::model::Recipe;
+use rpmx_language::plan::PlannedCell;
 
 pub struct BinaryPackageOptions<'a> {
     pub recipe: &'a Recipe,
@@ -34,7 +34,7 @@ pub fn prepare_binary_packages(
                  add `uses: strip` and pass --debuginfo",
             ));
         }
-        outputs.push(crate::plan::PlannedOutput {
+        outputs.push(rpmx_language::plan::PlannedOutput {
             name: debug_name.clone(),
             summary: Some(format!(
                 "Debug information for {}",
@@ -224,7 +224,7 @@ pub fn prepare_binary_packages(
 }
 
 fn apply_file_metadata(
-    planned: &crate::plan::PlannedOutput,
+    planned: &rpmx_language::plan::PlannedOutput,
     files: &mut [BinaryPackageFile],
 ) -> Result<Vec<BinaryPackageDirectory>> {
     let attributes = planned

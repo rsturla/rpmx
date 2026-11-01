@@ -1,7 +1,7 @@
 use std::io::{Read, Write};
 use std::path::Path;
 
-use crate::error::{codes, Error, Result};
+use rpmx_base::error::{codes, Error, Result};
 
 pub(crate) fn proxy_get(
     agent: &ureq::Agent,

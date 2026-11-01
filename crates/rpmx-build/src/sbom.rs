@@ -2,9 +2,9 @@ use std::path::Path;
 
 use serde_json::{json, Value};
 
-use crate::error::{codes, Error, Result};
-use crate::hash::sha512_hex;
-use crate::root::RootLock;
+use rpmx_base::error::{codes, Error, Result};
+use rpmx_base::hash::sha512_hex;
+use rpmx_root::root::RootLock;
 
 pub const SBOM_DIR: &str = "/usr/share/sbom";
 
@@ -32,7 +32,7 @@ pub struct PackageSbom<'a> {
     pub recipe_digest: &'a str,
     pub source_date_epoch: u32,
     pub sources: &'a [SourceRef<'a>],
-    pub cpe: Option<&'a crate::model::Cpe>,
+    pub cpe: Option<&'a rpmx_language::model::Cpe>,
 }
 
 pub struct BuildSbom<'a> {
@@ -48,7 +48,7 @@ pub struct BuildSbom<'a> {
     pub root_lock: Option<&'a RootLock>,
     /// Fingerprint of the OpenPGP key used to sign the binaries, if any.
     pub signing_key: Option<&'a str>,
-    pub cpe: Option<&'a crate::model::Cpe>,
+    pub cpe: Option<&'a rpmx_language::model::Cpe>,
 }
 
 /// The SBOM backend. A Syft-based implementation can replace `NativeSpdx`

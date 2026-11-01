@@ -2,13 +2,13 @@ use std::io::{Read, Write};
 use std::num::{NonZeroU32, NonZeroU64};
 use std::path::{Path, PathBuf};
 
-use crate::error::{codes, Error, Result};
 use crate::fetch::{fetch_sources, FetchOptions};
-use crate::model::Recipe;
 use crate::package;
-use crate::plan::Plan;
-use crate::runner::RunnerKind;
-use crate::sandbox::{Sandbox, SandboxConfig};
+use rpmx_base::error::{codes, Error, Result};
+use rpmx_language::model::Recipe;
+use rpmx_language::plan::Plan;
+use rpmx_runner::runner::RunnerKind;
+use rpmx_runner::sandbox::{Sandbox, SandboxConfig};
 
 pub struct SourceOptions<'a> {
     pub recipe: &'a Recipe,
@@ -61,8 +61,8 @@ pub fn assemble(options: SourceOptions<'_>) -> Result<PathBuf> {
         )?;
     }
 
-    let host_arch = crate::arch::Arch::current()?;
-    let target_arch = crate::arch::Arch::parse(&options.plan.arch)?;
+    let host_arch = rpmx_base::arch::Arch::current()?;
+    let target_arch = rpmx_base::arch::Arch::parse(&options.plan.arch)?;
     let sandbox = Sandbox::new(SandboxConfig {
         runner: options.runner.parse::<RunnerKind>()?,
         host: host_arch,
@@ -106,7 +106,7 @@ pub fn assemble(options: SourceOptions<'_>) -> Result<PathBuf> {
 pub fn apply_patches(
     sandbox: &Sandbox<'_>,
     recipe_dir: &Path,
-    patches: &[crate::model::Patch],
+    patches: &[rpmx_language::model::Patch],
     workspace: &Path,
 ) -> Result<()> {
     if patches.is_empty() {
@@ -146,13 +146,13 @@ pub fn apply_patches(
                 format!("cannot stage patch '{}': {error}", patch.file),
             )
         })?;
-        let step = crate::plan::PlannedStep {
+        let step = rpmx_language::plan::PlannedStep {
             uses: format!("patch:{}", patch.file),
             command: Some("patch".to_string()),
             args: vec![
                 format!("-p{}", patch.strip),
                 "-i".to_string(),
-                format!("{}/.rpmx-patches/{name}", crate::guest::BUILD),
+                format!("{}/.rpmx-patches/{name}", rpmx_base::guest::BUILD),
             ],
             cwd: None,
             env: std::collections::BTreeMap::new(),
@@ -232,7 +232,7 @@ fn unpack_gzip(path: &Path, workspace: &Path) -> Result<()> {
             )
         })?;
     }
-    crate::tar_guard::validate(&mut staged, &subject, codes::SOURCE_031, None)?;
+    rpmx_store::tar_guard::validate(&mut staged, &subject, codes::SOURCE_031, None)?;
     tar::Archive::new(staged)
         .unpack(workspace)
         .map_err(|error| {

@@ -4,7 +4,7 @@
 //! the RPM writer. Keeping them in core avoids a field-by-field conversion
 //! between `prepare_*` and `rpmx-rpm`.
 
-use crate::model::Scriptlets;
+use rpmx_language::model::Scriptlets;
 
 #[derive(Debug, Clone)]
 pub struct BinaryPackageFile {

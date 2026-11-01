@@ -1,9 +1,9 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use crate::error::{codes, Error, Result};
-use crate::hash::sha512_file;
-use crate::model::{Locator, Recipe, Source};
+use rpmx_base::error::{codes, Error, Result};
+use rpmx_base::hash::sha512_file;
+use rpmx_language::model::{Locator, Recipe, Source};
 
 mod git;
 mod http;
@@ -41,7 +41,7 @@ pub fn fetch_sources(recipe: &Recipe, options: FetchOptions<'_>) -> Result<Vec<F
     let mut fetched = Vec::with_capacity(recipe.sources.len());
     for source in &recipe.sources {
         let hex = digest_hex(source)?;
-        let path = crate::cas::path(options.cache, &source.digest).map_err(|error| {
+        let path = rpmx_store::cas::path(options.cache, &source.digest).map_err(|error| {
             Error::new(
                 codes::FETCH_001,
                 format!(
@@ -96,7 +96,7 @@ pub fn fetch_sources(recipe: &Recipe, options: FetchOptions<'_>) -> Result<Vec<F
                 ),
             ));
         }
-        crate::cas::store_file(options.cache, staged.as_ref(), &source.digest).map_err(
+        rpmx_store::cas::store_file(options.cache, staged.as_ref(), &source.digest).map_err(
             |error| {
                 Error::new(
                     codes::FETCH_005,

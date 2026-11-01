@@ -1831,6 +1831,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "rpmx-build"
+version = "0.0.0"
+dependencies = [
+ "flate2",
+ "globset",
+ "goblin",
+ "rpmx-base",
+ "rpmx-language",
+ "rpmx-root",
+ "rpmx-runner",
+ "rpmx-store",
+ "serde",
+ "serde_json",
+ "serde_yaml_ng",
+ "sha2",
+ "tar",
+ "tempfile",
+ "ureq",
+ "zstd",
+]
+
+[[package]]
 name = "rpmx-core"
 version = "0.0.0"
 dependencies = [
@@ -1839,6 +1861,7 @@ dependencies = [
  "goblin",
  "rpm",
  "rpmx-base",
+ "rpmx-build",
  "rpmx-language",
  "rpmx-root",
  "rpmx-runner",

@@ -1,13 +1,13 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-use crate::error::{codes, Error, Result};
-use crate::model::Recipe;
 use crate::package_spec::{SourcePackageFile, SourcePackageSpec};
-use crate::plan::{Plan, PlannedStep};
-use crate::root::RootLock;
-use crate::srpm::{self, LockStep};
-use crate::steps;
+use rpmx_base::error::{codes, Error, Result};
+use rpmx_language::model::Recipe;
+use rpmx_language::plan::{Plan, PlannedStep};
+use rpmx_language::steps;
+use rpmx_root::root::RootLock;
+use rpmx_store::srpm::{self, LockStep};
 
 pub struct SourcePackageOptions<'a> {
     pub recipe: &'a Recipe,

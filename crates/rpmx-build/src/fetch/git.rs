@@ -1,7 +1,7 @@
 use std::path::Path;
 
-use crate::error::{codes, Error, Result};
-use crate::model::{Locator, Source};
+use rpmx_base::error::{codes, Error, Result};
+use rpmx_language::model::{Locator, Source};
 
 pub(crate) fn git_archive(
     source: &Source,

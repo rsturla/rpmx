@@ -2,7 +2,7 @@ use std::path::Path;
 
 use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 
-use crate::error::{codes, Error, Result};
+use rpmx_base::error::{codes, Error, Result};
 
 #[derive(Debug, Clone)]
 pub struct StagedFile {
