@@ -28,7 +28,7 @@ pub struct SandboxConfig<'a> {
     pub image: Option<&'a str>,
     pub source_date_epoch: u32,
     pub jobs: NonZeroU32,
-    pub timeout: Option<NonZeroU64>,
+    pub timeout: NonZeroU64,
     pub debuginfo: bool,
 }
 
@@ -215,7 +215,7 @@ mod tests {
     use super::{Sandbox, SandboxConfig};
     use crate::arch::Arch;
     use crate::runner::RunnerKind;
-    use std::num::NonZeroU32;
+    use std::num::{NonZeroU32, NonZeroU64};
     use std::path::Path;
 
     #[test]
@@ -230,7 +230,7 @@ mod tests {
             image: Some("image"),
             source_date_epoch: 1,
             jobs: NonZeroU32::new(1).expect("jobs"),
-            timeout: None,
+            timeout: NonZeroU64::new(3600).expect("timeout"),
             debuginfo: false,
         };
         let error = match Sandbox::new(config) {

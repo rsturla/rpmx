@@ -78,7 +78,7 @@ impl Runner for PodmanBackend<'_> {
 
 struct PodmanSession {
     name: String,
-    timeout: Option<NonZeroU64>,
+    timeout: NonZeroU64,
 }
 
 impl Session for PodmanSession {

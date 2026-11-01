@@ -46,7 +46,7 @@ struct QemuSession {
     ssh_key: PathBuf,
     port: u16,
     log: PathBuf,
-    timeout: Option<NonZeroU64>,
+    timeout: NonZeroU64,
 }
 
 impl QemuSession {
@@ -115,18 +115,12 @@ impl QemuSession {
     }
 
     fn ssh_command(&self, command: &[&str]) -> Command {
-        let mut process = match self.timeout {
-            Some(seconds) => {
-                let mut process = Command::new("timeout");
-                process
-                    .arg("--signal=TERM")
-                    .arg("--kill-after=5")
-                    .arg(seconds.get().to_string())
-                    .arg("ssh");
-                process
-            }
-            None => Command::new("ssh"),
-        };
+        let mut process = Command::new("timeout");
+        process
+            .arg("--signal=TERM")
+            .arg("--kill-after=5")
+            .arg(self.timeout.get().to_string())
+            .arg("ssh");
         process.args(self.ssh_args()).args(command);
         process
     }
@@ -399,6 +393,11 @@ mod tests {
             "stderr diagnostics grew to {} bytes",
             error.message.len()
         );
+        assert!(
+            error.message.contains("1999"),
+            "the retained diagnostics must keep the final line: {}",
+            error.message
+        );
     }
 
     #[test]
@@ -419,7 +418,9 @@ mod tests {
         let child = piped("head -c 1048576 /dev/zero");
         let error = stream_tar_out(child, "remote", &host, archive).expect_err("full disk");
         assert!(
-            error.message.contains("cannot read remote from qemu"),
+            error
+                .message
+                .contains("cannot write the archive for remote"),
             "{}",
             error.message
         );

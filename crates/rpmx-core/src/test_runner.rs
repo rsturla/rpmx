@@ -16,7 +16,7 @@ pub struct TestSandboxConfig<'a> {
     pub runner: RunnerKind,
     pub source_date_epoch: u32,
     pub jobs: NonZeroU32,
-    pub timeout: Option<NonZeroU64>,
+    pub timeout: NonZeroU64,
     pub debuginfo: bool,
 }
 

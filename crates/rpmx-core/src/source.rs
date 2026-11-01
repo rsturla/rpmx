@@ -73,7 +73,7 @@ pub fn assemble(options: SourceOptions<'_>) -> Result<PathBuf> {
         image: None,
         source_date_epoch: options.source_date_epoch,
         jobs: options.jobs,
-        timeout: Some(options.step_timeout),
+        timeout: options.step_timeout,
         debuginfo: false,
     })?;
 

@@ -19,7 +19,7 @@ fn config<'a>(workspace: &'a std::path::Path, stage: &'a std::path::Path) -> San
         image: None,
         source_date_epoch: 1_700_000_000,
         jobs: NonZeroU32::new(1).expect("jobs"),
-        timeout: None,
+        timeout: NonZeroU64::new(3600).expect("timeout"),
         debuginfo: false,
     }
 }
@@ -317,7 +317,7 @@ fn a_step_that_overruns_is_killed() {
     let stage = tempfile::tempdir().expect("stage");
     let started = std::time::Instant::now();
     let error = Sandbox::new(SandboxConfig {
-        timeout: Some(NonZeroU64::new(1).expect("timeout")),
+        timeout: NonZeroU64::new(1).expect("timeout"),
         ..config(work.path(), stage.path())
     })
     .expect("sandbox")

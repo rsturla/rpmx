@@ -18,7 +18,7 @@ pub struct RunnerConfig<'a> {
     pub workspace: &'a Path,
     pub stage: &'a Path,
     pub jobs: NonZeroU32,
-    pub timeout: Option<NonZeroU64>,
+    pub timeout: NonZeroU64,
 }
 
 pub struct RunnerRequest<'a> {

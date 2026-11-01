@@ -36,7 +36,7 @@ struct BwrapSession {
     root: PathBuf,
     workspace: PathBuf,
     stage: PathBuf,
-    timeout: Option<NonZeroU64>,
+    timeout: NonZeroU64,
 }
 
 impl Session for BwrapSession {
