@@ -1,6 +1,7 @@
 mod args;
 pub mod autoroot;
 pub mod build;
+pub mod bump;
 pub mod cache;
 pub mod dispatch;
 pub mod doctor;

@@ -190,6 +190,24 @@ pub struct LintArgs {
 }
 
 #[derive(Debug, clap::Args)]
+pub struct BumpArgs {
+    /// New upstream version.
+    pub version: String,
+    /// Recipe to update (default: ./package.yaml).
+    #[arg(default_value = "package.yaml")]
+    pub file: PathBuf,
+    /// Print the diff without writing the recipe.
+    #[arg(long)]
+    pub dry_run: bool,
+    /// Do not download sources to refresh their digests.
+    #[arg(long)]
+    pub no_fetch: bool,
+    /// Emit machine-readable output.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, clap::Args)]
 pub struct ShellArgs {
     /// Assembled root to use as /.
     #[arg(long)]

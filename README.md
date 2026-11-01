@@ -158,6 +158,7 @@ Autotools packages, Lua, jq, a noarch Python wheel, and a systemd service.
 | Command | Purpose |
 |---|---|
 | `rpmx init [DIR]` | Create a package that builds on the first try. |
+| `rpmx bump VERSION` | Update the version, source URLs and digests. |
 | `rpmx lint [FILE]` | Validate a recipe, report every rule, and expand its matrix. |
 | `rpmx lock [FILE]` | Write `package.lock.json`; `--check` verifies it. |
 | `rpmx plan [FILE]` | Show cells, outputs and expanded steps. |

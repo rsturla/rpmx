@@ -26,6 +26,7 @@ impl Cli {
             Command::Shell(_) => "shell",
             Command::Steps { .. } => "steps",
             Command::Doctor(_) => "doctor",
+            Command::Bump(_) => "bump",
             Command::Init(_) => "init",
             Command::Lint(_) => "lint",
             Command::Lock(_) => "lock",
@@ -54,6 +55,7 @@ impl Cli {
             Command::Shell(_) => false,
             Command::Steps { command } => command.json(),
             Command::Doctor(args) => args.json,
+            Command::Bump(args) => args.json,
             Command::Init(_) => false,
             Command::Lint(args) => args.json,
             Command::Lock(_) => false,
@@ -152,6 +154,8 @@ pub enum Command {
     },
     /// Check the host features rpmx depends on.
     Doctor(crate::commands::DoctorArgs),
+    /// Update a recipe to a new upstream version.
+    Bump(crate::commands::BumpArgs),
     /// Create a package that builds on the first try.
     Init(crate::commands::InitArgs),
     /// Validate a recipe and expand its matrix.

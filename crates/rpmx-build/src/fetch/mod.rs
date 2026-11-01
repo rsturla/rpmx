@@ -100,6 +100,48 @@ pub fn fetch_sources(recipe: &Recipe, options: FetchOptions<'_>) -> Result<Vec<F
     Ok(fetched)
 }
 
+/// Download a source and report the digest of what arrived.
+///
+/// `rpmx bump` uses this to update a recipe before the new digest is known.
+pub fn fetch_digest(source: &Source, base_dir: &Path, cache: &Path) -> Result<String> {
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .timeout_global(Some(Duration::from_secs(60)))
+        .build()
+        .into();
+    let temp_dir = cache.join("tmp");
+    std::fs::create_dir_all(&temp_dir).map_err(|error| {
+        Error::new(
+            codes::FETCH_005,
+            format!("cannot create {}: {error}", temp_dir.display()),
+        )
+    })?;
+    let mut last_error = None;
+    for locator in &source.locators {
+        match fetch_locator(&agent, source, locator, base_dir, cache, &temp_dir) {
+            Ok(staged) => {
+                return if source.digest.starts_with("sha256:") {
+                    sha256_file(staged.as_ref())
+                } else {
+                    sha512_file(staged.as_ref())
+                }
+                .map_err(|error| {
+                    Error::new(
+                        codes::FETCH_005,
+                        format!("cannot hash source '{}': {error}", source.name),
+                    )
+                });
+            }
+            Err(error) => last_error = Some(error),
+        }
+    }
+    Err(last_error.unwrap_or_else(|| {
+        Error::new(
+            codes::FETCH_002,
+            format!("source '{}' has no locators", source.name),
+        )
+    }))
+}
+
 fn verify_payload(source: &Source, staged: &tempfile::TempPath, context: &str) -> Result<()> {
     let actual = match source
         .digest

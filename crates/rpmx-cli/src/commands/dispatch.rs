@@ -17,6 +17,7 @@ pub fn run(cli: Cli) -> Result<(), Error> {
             cli::StepsCommand::Show(args) => commands::steps::show(args),
         },
         Command::Doctor(args) => commands::doctor::run(args),
+        Command::Bump(args) => commands::bump::run(args),
         Command::Init(args) => commands::init::run(args),
         Command::Lint(args) => commands::lint::run(args, pipeline_dir.as_deref()),
         Command::Lock(args) => commands::lock::run(args, pipeline_dir.as_deref()),
