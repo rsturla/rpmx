@@ -41,194 +41,379 @@ pub mod codes {
     use super::Code;
 
     macro_rules! define_codes {
-        ($($name:ident = $code:literal),* $(,)?) => {
-            $(pub const $name: Code = Code($code);)*
+        ($($(#[$meta:meta])* $name:ident = $code:literal),* $(,)?) => {
+            $(
+                $(#[$meta])*
+                pub const $name: Code = Code($code);
+            )*
             pub const ALL: &[Code] = &[$($name),*];
         };
     }
 
     define_codes! {
+        /// A go/bump step is missing its `deps` input, or the input is not a non-empty list.
         ASSEMBLY_011 = "RPMX-ASSEMBLY-011",
+        /// A go/bump dependency is not a map, or lacks a non-empty `module` and `version`.
         ASSEMBLY_012 = "RPMX-ASSEMBLY-012",
+        /// A go/bump step lists the same module more than once.
         ASSEMBLY_013 = "RPMX-ASSEMBLY-013",
+        /// A go/bump dependency uses a floating version instead of an exact one.
         ASSEMBLY_014 = "RPMX-ASSEMBLY-014",
+        /// A go/bump dependency does not explain why it is bumped.
         ASSEMBLY_015 = "RPMX-ASSEMBLY-015",
+        /// A go/bump step is not followed by go/vendor, so the SRPM would need the network.
         ASSEMBLY_016 = "RPMX-ASSEMBLY-016",
+        /// The go/bump dependency list cannot be serialised to YAML.
         ASSEMBLY_020 = "RPMX-ASSEMBLY-020",
+        /// The build or rebuild output directory cannot be created.
         BUILD_001 = "RPMX-BUILD-001",
+        /// A `--cell` value does not name a cell in the plan.
         BUILD_002 = "RPMX-BUILD-002",
+        /// A per-cell command was run on a multi-cell plan without selecting `--cell`.
         BUILD_003 = "RPMX-BUILD-003",
+        /// A built-in pipeline step has no executable command implemented.
         BUILD_004 = "RPMX-BUILD-004",
+        /// The build or rebuild work directory cannot be created.
         BUILD_005 = "RPMX-BUILD-005",
+        /// The build or rebuild staging and source directories or files cannot be created or written.
         BUILD_006 = "RPMX-BUILD-006",
+        /// Build-time test setup or execution failed (test root, stage, install, argv, or I/O).
         BUILD_007 = "RPMX-BUILD-007",
+        /// Cache garbage collection was refused without references, or the cache cannot be read.
         CACHE_001 = "RPMX-CACHE-001",
+        /// A cache entry could not be removed during garbage collection.
         CACHE_002 = "RPMX-CACHE-002",
+        /// The lint command could not serialise its JSON output.
         CLI_001 = "RPMX-CLI-001",
+        /// The plan command could not serialise its JSON output.
         CLI_002 = "RPMX-CLI-002",
+        /// The srpm command could not serialise its JSON output.
         CLI_003 = "RPMX-CLI-003",
+        /// The build command could not serialise its JSON output.
         CLI_004 = "RPMX-CLI-004",
+        /// The rebuild command could not serialise its JSON output.
         CLI_005 = "RPMX-CLI-005",
+        /// A command could not serialise its machine-readable output (JSON or YAML).
         CLI_006 = "RPMX-CLI-006",
+        /// An RPM or SRPM file cannot be opened as an RPM package.
         EXTRACT_001 = "RPMX-EXTRACT-001",
+        /// The RPM payload format cannot be read, or its compression is unsupported.
         EXTRACT_002 = "RPMX-EXTRACT-002",
+        /// A gzip- or zstd-compressed RPM payload cannot be decompressed.
         EXTRACT_003 = "RPMX-EXTRACT-003",
+        /// The RPM payload is not a valid newc cpio archive, or embedded SRPM metadata is invalid.
         EXTRACT_004 = "RPMX-EXTRACT-004",
+        /// An RPM payload entry has an unsafe path (empty, absolute, or containing `..`).
         EXTRACT_005 = "RPMX-EXTRACT-005",
+        /// An RPM payload or embedded SRPM metadata file cannot be read or written.
         EXTRACT_006 = "RPMX-EXTRACT-006",
+        /// A source cannot use the CAS because it has no valid sha512 digest.
         FETCH_001 = "RPMX-FETCH-001",
+        /// A source or locator is incomplete, or no locator could fetch the source.
         FETCH_002 = "RPMX-FETCH-002",
+        /// A git, HTTP, or filesystem operation failed while fetching a source.
         FETCH_003 = "RPMX-FETCH-003",
+        /// A fetched source's digest or git commit does not match the pinned value.
         FETCH_004 = "RPMX-FETCH-004",
+        /// A source cannot be published to or read from the cache, or the cache path is unknown.
         FETCH_005 = "RPMX-FETCH-005",
+        /// A source is absent from the cache while `--offline` is set.
         FETCH_006 = "RPMX-FETCH-006",
+        /// A source locator kind has no fetcher implementation.
         FETCH_007 = "RPMX-FETCH-007",
+        /// A recipe file cannot be read from disk.
         IO_001 = "RPMX-IO-001",
+        /// The matrix block declares no axes.
         MATRIX_001 = "RPMX-MATRIX-001",
+        /// A matrix axis has an empty value list.
         MATRIX_002 = "RPMX-MATRIX-002",
+        /// The matrix expands to more cells than `max-cells` allows.
         MATRIX_003 = "RPMX-MATRIX-003",
+        /// `matrix.exclude` removes every generated cell.
         MATRIX_004 = "RPMX-MATRIX-004",
+        /// Two matrix cells produce the same cell id.
         MATRIX_005 = "RPMX-MATRIX-005",
+        /// Two matrix cells produce the same slug.
         MATRIX_006 = "RPMX-MATRIX-006",
+        /// A map-valued axis entry has no scalar `value`.
         MATRIX_007 = "RPMX-MATRIX-007",
+        /// A map-valued axis entry's `value` is not a scalar.
         MATRIX_008 = "RPMX-MATRIX-008",
+        /// An axis value is neither a scalar nor a map with `value`.
         MATRIX_009 = "RPMX-MATRIX-009",
+        /// A `matrix.exclude` entry references an axis that does not exist.
         MATRIX_010 = "RPMX-MATRIX-010",
+        /// A `matrix.exclude` value for an axis is not a scalar.
         MATRIX_011 = "RPMX-MATRIX-011",
+        /// A recipe declares no outputs.
         OUTPUT_001 = "RPMX-OUTPUT-001",
+        /// An output name is empty.
         OUTPUT_002 = "RPMX-OUTPUT-002",
+        /// An output has no file selectors and is not marked as a metapackage.
         OUTPUT_003 = "RPMX-OUTPUT-003",
+        /// An output name expands to an empty string.
         OUTPUT_004 = "RPMX-OUTPUT-004",
+        /// Two outputs in one cell have the same name.
         OUTPUT_005 = "RPMX-OUTPUT-005",
+        /// A staged file is not claimed by any output selector.
         OUTPUT_010 = "RPMX-OUTPUT-010",
+        /// A staged file is claimed by more than one output.
         OUTPUT_011 = "RPMX-OUTPUT-011",
+        /// An output matches no staged files, or debuginfo was requested with no debug files.
         OUTPUT_012 = "RPMX-OUTPUT-012",
+        /// An output file selector is not a valid glob pattern.
         OUTPUT_013 = "RPMX-OUTPUT-013",
+        /// The compiled output selector set cannot be built.
         OUTPUT_014 = "RPMX-OUTPUT-014",
+        /// A directory or attribute path is not absolute, normalised, or non-root.
         OUTPUT_015 = "RPMX-OUTPUT-015",
+        /// Output file metadata is invalid (mode, capabilities, owner/group, or symlink attributes).
         OUTPUT_016 = "RPMX-OUTPUT-016",
+        /// An output declares the same path twice or as conflicting kinds.
         OUTPUT_017 = "RPMX-OUTPUT-017",
+        /// An output sets attributes for a path that no packaged file matches.
         OUTPUT_018 = "RPMX-OUTPUT-018",
+        /// Two cells produce the same source package.
         PLAN_001 = "RPMX-PLAN-001",
+        /// Two cells produce an output with the same name.
         PLAN_002 = "RPMX-PLAN-002",
+        /// `package.name` expands to an empty string.
         PLAN_003 = "RPMX-PLAN-003",
+        /// `package.release` expands to an empty string.
         PLAN_004 = "RPMX-PLAN-004",
+        /// Output declarations cannot be serialised for template expansion.
         PLAN_005 = "RPMX-PLAN-005",
+        /// Expanded output declarations cannot be deserialised.
         PLAN_006 = "RPMX-PLAN-006",
+        /// Test declarations cannot be serialised for template expansion.
         PLAN_007 = "RPMX-PLAN-007",
+        /// Expanded test declarations cannot be deserialised.
         PLAN_008 = "RPMX-PLAN-008",
+        /// Pipeline steps cannot be serialised for template expansion.
         PLAN_009 = "RPMX-PLAN-009",
+        /// Expanded pipeline steps cannot be deserialised.
         PLAN_010 = "RPMX-PLAN-010",
+        /// A package name, version, or release contains invalid characters.
         PLAN_011 = "RPMX-PLAN-011",
+        /// A dist tag contains characters that are not allowed.
         PLAN_012 = "RPMX-PLAN-012",
+        /// Repository files cannot be read, created, copied, or written.
         REPO_001 = "RPMX-REPO-001",
+        /// The repository input directory contains no RPM files.
         REPO_002 = "RPMX-REPO-002",
+        /// An RPM's metadata cannot be read while building repository metadata.
         REPO_003 = "RPMX-REPO-003",
+        /// Repository metadata cannot be gzip-compressed.
         REPO_004 = "RPMX-REPO-004",
+        /// Running or inspecting the resolver container via podman failed.
         ROOT_001 = "RPMX-ROOT-001",
+        /// A builder image is missing, unpullable, undigested, drifted, or the wrong architecture.
         ROOT_002 = "RPMX-ROOT-002",
+        /// Reserved. No call site currently emits this code.
         ROOT_003 = "RPMX-ROOT-003",
+        /// A root lock, manifest, or resolver state file cannot be read or written.
         ROOT_004 = "RPMX-ROOT-004",
+        /// Reserved. No call site currently emits this code.
         ROOT_005 = "RPMX-ROOT-005",
+        /// A profile, package manifest, or root lock is malformed, unsupported, or fails validation.
         ROOT_006 = "RPMX-ROOT-006",
+        /// dnf resolution or a repository metadata query failed.
         ROOT_007 = "RPMX-ROOT-007",
+        /// dnf resolved no packages.
         ROOT_008 = "RPMX-ROOT-008",
+        /// Root resolution failed: no packages, unknown architecture, multiarch, or ambiguous provenance.
         ROOT_009 = "RPMX-ROOT-009",
+        /// A downloaded package or its RPM header cannot be read.
         ROOT_010 = "RPMX-ROOT-010",
+        /// A CAS digest is invalid, or a CAS payload cannot be created, read, or verified.
         ROOT_011 = "RPMX-ROOT-011",
+        /// Build-root assembly failed during staging, install, directory setup, or cleanup.
         ROOT_012 = "RPMX-ROOT-012",
+        /// The assembled root cannot be queried, or its package set differs from the lock.
         ROOT_013 = "RPMX-ROOT-013",
+        /// A root tree cannot be read or walked while computing its digest.
         ROOT_014 = "RPMX-ROOT-014",
+        /// A root lock is missing an architecture, builder image, or packages, or has a malformed EVR.
         ROOT_015 = "RPMX-ROOT-015",
+        /// Root inputs are missing or inconsistent (`--root`, `--root-lock`, `--root-image`, arch).
         ROOT_016 = "RPMX-ROOT-016",
+        /// The assembled root digest does not match the root lock.
         ROOT_017 = "RPMX-ROOT-017",
+        /// Required build tools or host/test packages are missing from the selected root.
         ROOT_018 = "RPMX-ROOT-018",
+        /// A file, symlink, or directory cannot be added to an RPM or SRPM.
         RPM_001 = "RPMX-RPM-001",
+        /// The RPM library failed to build an SRPM.
         RPM_002 = "RPMX-RPM-002",
+        /// An SRPM cannot be written to disk.
         RPM_003 = "RPMX-RPM-003",
+        /// A file or directory has an invalid mode for packaging.
         RPM_004 = "RPMX-RPM-004",
+        /// The RPM library failed to build a binary RPM.
         RPM_011 = "RPMX-RPM-011",
+        /// Invalid file capabilities, or a rich dependency that is not supported yet.
         RPM_012 = "RPMX-RPM-012",
+        /// A dependency string cannot be parsed.
         RPM_013 = "RPMX-RPM-013",
+        /// An architecture or runner name is unknown.
         RUNNER_001 = "RPMX-RUNNER-001",
+        /// The selected runner cannot execute the target architecture, or qemu/binfmt is unavailable.
         RUNNER_002 = "RPMX-RUNNER-002",
+        /// The qemu runner backend failed (ssh, kernel, disk image, copy, or process setup).
         RUNNER_003 = "RPMX-RUNNER-003",
+        /// A sandbox or process cannot be started.
         SANDBOX_001 = "RPMX-SANDBOX-001",
+        /// A sandboxed step exited unsuccessfully.
         SANDBOX_002 = "RPMX-SANDBOX-002",
+        /// A step tries to set a reserved sandbox environment variable.
         SANDBOX_003 = "RPMX-SANDBOX-003",
+        /// A sandboxed step exceeded its timeout.
         SANDBOX_004 = "RPMX-SANDBOX-004",
+        /// An SBOM cannot be read, written, or serialised.
         SBOM_001 = "RPMX-SBOM-001",
+        /// The recipe schema version is not supported by this build.
         SCHEMA_001 = "RPMX-SCHEMA-001",
+        /// A CPE field is invalid (part, vendor, product, or another component).
         SCHEMA_002 = "RPMX-SCHEMA-002",
+        /// A signing key cannot be read, parsed, or resolved to exactly one certificate.
         SIGN_001 = "RPMX-SIGN-001",
+        /// Signing data or an RPM signature cannot be produced, read, or written.
         SIGN_002 = "RPMX-SIGN-002",
+        /// A signing key cannot be generated or serialised.
         SIGN_003 = "RPMX-SIGN-003",
+        /// Signing parameters or timestamps are invalid (key size, user ID, or key creation time).
         SIGN_004 = "RPMX-SIGN-004",
+        /// The signing passphrase environment variable is not set.
         SIGN_005 = "RPMX-SIGN-005",
+        /// A generated key file cannot be written or have its permissions set.
         SIGN_006 = "RPMX-SIGN-006",
+        /// A source uses a digest algorithm other than sha512.
         SOURCE_001 = "RPMX-SOURCE-001",
+        /// A source digest or git locator is malformed.
         SOURCE_002 = "RPMX-SOURCE-002",
+        /// The source snapshot directory does not exist.
         SOURCE_010 = "RPMX-SOURCE-010",
+        /// A source snapshot directory or entry cannot be read.
         SOURCE_011 = "RPMX-SOURCE-011",
+        /// A source snapshot contains a symlink, which is not allowed.
         SOURCE_012 = "RPMX-SOURCE-012",
+        /// A source snapshot entry is not a regular file.
         SOURCE_013 = "RPMX-SOURCE-013",
+        /// A source snapshot path cannot be made relative to the snapshot root.
         SOURCE_014 = "RPMX-SOURCE-014",
+        /// A source snapshot file cannot be read.
         SOURCE_015 = "RPMX-SOURCE-015",
+        /// A source snapshot path is not valid UTF-8.
         SOURCE_016 = "RPMX-SOURCE-016",
+        /// A source snapshot file's metadata cannot be read.
         SOURCE_017 = "RPMX-SOURCE-017",
+        /// An SRPM lock or manifest cannot be serialised to JSON.
         SOURCE_018 = "RPMX-SOURCE-018",
+        /// A source snapshot path is nested, but SRPM payloads must be flat.
         SOURCE_020 = "RPMX-SOURCE-020",
+        /// Source assembly cannot create its workspace, stage, or output directory.
         SOURCE_030 = "RPMX-SOURCE-030",
+        /// Patch staging, source materialisation, or snapshot unpacking failed.
         SOURCE_031 = "RPMX-SOURCE-031",
+        /// The source snapshot tarball cannot be created or written.
         SOURCE_032 = "RPMX-SOURCE-032",
+        /// The SRPM input file cannot be read.
         SRPM_001 = "RPMX-SRPM-001",
+        /// The SRPM output file cannot be created.
         SRPM_002 = "RPMX-SRPM-002",
+        /// A local pipeline step has no pipeline directory to load it from.
         SRPM_003 = "RPMX-SRPM-003",
+        /// A local step file cannot be read while packaging the SRPM.
         SRPM_004 = "RPMX-SRPM-004",
+        /// A local step file is not valid UTF-8.
         SRPM_005 = "RPMX-SRPM-005",
+        /// The package lock or an embedded root lock cannot be read, parsed, serialised, or has an unsupported schema.
         SRPM_006 = "RPMX-SRPM-006",
+        /// A source file uses a name reserved for SRPM metadata.
         SRPM_007 = "RPMX-SRPM-007",
+        /// A step's content changed after the plan was made.
         SRPM_009 = "RPMX-SRPM-009",
+        /// A locked built-in step is not embedded in this rpmx build.
         SRPM_010 = "RPMX-SRPM-010",
+        /// Rebuild found a step missing from or different from the package lock.
         SRPM_011 = "RPMX-SRPM-011",
+        /// A rebuild flag conflicts with the locked dist tag, build release, or package identity.
         SRPM_012 = "RPMX-SRPM-012",
+        /// The stage directory does not exist.
         STAGE_001 = "RPMX-STAGE-001",
+        /// A stage directory or entry cannot be read.
         STAGE_002 = "RPMX-STAGE-002",
+        /// A staged symlink has a non-UTF-8 target.
         STAGE_003 = "RPMX-STAGE-003",
+        /// A staged entry is not a regular file.
         STAGE_004 = "RPMX-STAGE-004",
+        /// A staged path cannot be made relative to the stage root.
         STAGE_005 = "RPMX-STAGE-005",
+        /// A staged file or symlink cannot be read.
         STAGE_006 = "RPMX-STAGE-006",
+        /// A staged file's metadata cannot be read.
         STAGE_007 = "RPMX-STAGE-007",
+        /// A step has no command, or does not specify exactly one of `uses`, `argv`, or `runs`.
         STEP_001 = "RPMX-STEP-001",
+        /// A step's `argv` list is empty.
         STEP_002 = "RPMX-STEP-002",
+        /// A step's `runs` script is empty.
         STEP_003 = "RPMX-STEP-003",
+        /// A step name is not a valid namespaced name.
         STEP_010 = "RPMX-STEP-010",
+        /// A step file cannot be read, or the named step cannot be found.
         STEP_011 = "RPMX-STEP-011",
+        /// A step file is not UTF-8 or does not parse as a valid step.
         STEP_012 = "RPMX-STEP-012",
+        /// A step file's declared name does not match the requested name.
         STEP_013 = "RPMX-STEP-013",
+        /// A step is given an input it does not declare.
         STEP_014 = "RPMX-STEP-014",
+        /// A required step input is missing, or an input reference is unknown.
         STEP_015 = "RPMX-STEP-015",
+        /// A local step shadows a built-in step, or an input value has the wrong type.
         STEP_016 = "RPMX-STEP-016",
+        /// A step has an empty `argv`, or specifies both or neither of `argv` and `runs`.
         STEP_017 = "RPMX-STEP-017",
+        /// A step requests an unknown template renderer.
         STEP_018 = "RPMX-STEP-018",
+        /// Variable definitions form a cycle.
         TEMPLATE_001 = "RPMX-TEMPLATE-001",
+        /// A template references an unknown variable.
         TEMPLATE_002 = "RPMX-TEMPLATE-002",
+        /// A variable value is not a scalar.
         TEMPLATE_003 = "RPMX-TEMPLATE-003",
+        /// A template expression is not terminated.
         TEMPLATE_004 = "RPMX-TEMPLATE-004",
+        /// A template expansion references an unknown variable.
         TEMPLATE_005 = "RPMX-TEMPLATE-005",
+        /// A template substitution resolves to a non-scalar value.
         TEMPLATE_006 = "RPMX-TEMPLATE-006",
+        /// A template expansion left an unresolved expression in the output.
         TEMPLATE_007 = "RPMX-TEMPLATE-007",
+        /// A test name expands to an empty string.
         TEST_001 = "RPMX-TEST-001",
+        /// Two tests in one cell have the same name.
         TEST_002 = "RPMX-TEST-002",
+        /// A source-assembly tool uses a digest algorithm other than sha512.
         TOOL_001 = "RPMX-TOOL-001",
+        /// A source-assembly tool has a malformed sha512 digest.
         TOOL_002 = "RPMX-TOOL-002",
+        /// A source-assembly tool is declared more than once.
         TOOL_003 = "RPMX-TOOL-003",
+        /// A source-assembly tool has an empty name or version.
         TOOL_004 = "RPMX-TOOL-004",
+        /// A source-assembly tool declares no locators.
         TOOL_005 = "RPMX-TOOL-005",
+        /// A source-assembly tool locator has an empty kind.
         TOOL_006 = "RPMX-TOOL-006",
+        /// A recipe is not valid YAML.
         YAML_001 = "RPMX-YAML-001",
+        /// A YAML document cannot be parsed.
         YAML_002 = "RPMX-YAML-002",
+        /// A YAML document uses aliases or anchors, which are not allowed.
         YAML_003 = "RPMX-YAML-003",
+        /// A YAML document uses a custom tag, which is not allowed.
         YAML_004 = "RPMX-YAML-004",
     }
 }
