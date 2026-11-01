@@ -4,7 +4,8 @@ use std::path::Path;
 use crate::arch::Arch;
 use crate::error::{codes, Error, Result};
 use crate::plan::PlannedStep;
-use crate::sandbox::{RunnerKind, Sandbox};
+use crate::runner::RunnerKind;
+use crate::sandbox::{Sandbox, SandboxConfig};
 
 pub struct TestSandboxConfig<'a> {
     pub workspace: &'a Path,
@@ -56,22 +57,19 @@ pub fn run_planned_tests(
             "installed-stage tests need a test root, which requires a root lock",
         )
     })?;
-    let test_backend =
-        settings
-            .runner
-            .select(settings.host_arch, settings.target_arch, Some(root), None)?;
-    let test_sandbox = Sandbox {
-        backend: test_backend,
+    let test_sandbox = Sandbox::new(SandboxConfig {
+        runner: settings.runner,
+        host: settings.host_arch,
+        target: settings.target_arch,
         workspace: settings.workspace,
         stage: settings.stage,
-        host_arch: settings.host_arch,
-        target_arch: settings.target_arch,
+        root: Some(root),
+        image: None,
         source_date_epoch: settings.source_date_epoch,
         jobs: settings.jobs,
         timeout: settings.timeout,
         debuginfo: settings.debuginfo,
-        session: std::cell::RefCell::new(None),
-    };
+    })?;
     for test in installed_tests {
         run_one_test(&test_sandbox, test)?;
     }

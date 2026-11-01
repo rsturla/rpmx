@@ -1,18 +1,18 @@
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use super::process::{finish, spawn, timed_out};
 use crate::arch::Arch;
 use crate::error::{codes, Error, Result};
-use crate::sandbox::process::{finish, spawn, timed_out};
-use crate::sandbox::{Runner, RunnerRequest, Session, SessionConfig};
+use crate::runner::{Runner, RunnerConfig, RunnerRequest, Session};
 
 static CID_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-pub struct PodmanRunner<'a> {
+pub struct PodmanBackend<'a> {
     pub image: &'a str,
 }
 
-impl Runner for PodmanRunner<'_> {
+impl Runner for PodmanBackend<'_> {
     fn name(&self) -> &'static str {
         "podman"
     }
@@ -21,7 +21,7 @@ impl Runner for PodmanRunner<'_> {
         host == target
     }
 
-    fn start(&self, config: &SessionConfig<'_>) -> Result<Box<dyn Session>> {
+    fn start(&self, config: &RunnerConfig<'_>) -> Result<Box<dyn Session>> {
         let name = format!(
             "rpmx-run-{}-{}",
             std::process::id(),

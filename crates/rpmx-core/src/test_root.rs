@@ -5,7 +5,7 @@ use crate::arch::Arch;
 use crate::error::{codes, Error, Result};
 use crate::profile::{Packages, Profile};
 use crate::root::{self, RootLock};
-use crate::sandbox::{emulation_available, RunnerKind};
+use crate::runner::{emulation_available, RunnerKind};
 
 pub struct TestRootOptions<'a> {
     pub lock: &'a RootLock,

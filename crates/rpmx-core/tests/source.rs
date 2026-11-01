@@ -90,7 +90,8 @@ fn snapshot_unpack_does_not_write_through_symlinks() {
 #[test]
 fn patches_are_applied_and_removed_from_the_workspace() {
     use rpmx_core::model::Patch;
-    use rpmx_core::sandbox::{Sandbox, SandboxBackend};
+    use rpmx_core::runner::RunnerKind;
+    use rpmx_core::sandbox::{Sandbox, SandboxConfig};
 
     if std::process::Command::new("bwrap")
         .arg("--version")
@@ -119,18 +120,20 @@ fn patches_are_applied_and_removed_from_the_workspace() {
     )
     .expect("patch");
 
-    let sandbox = Sandbox {
-        backend: SandboxBackend::Bwrap,
+    let sandbox = Sandbox::new(SandboxConfig {
+        runner: RunnerKind::Bwrap,
+        host: rpmx_core::arch::Arch::current().expect("host arch"),
+        target: rpmx_core::arch::Arch::current().expect("target arch"),
         workspace: work.path(),
         stage: stage.path(),
-        host_arch: rpmx_core::arch::Arch::current().expect("host arch"),
-        target_arch: rpmx_core::arch::Arch::current().expect("target arch"),
+        root: None,
+        image: None,
         source_date_epoch: 1_700_000_000,
         jobs: 1,
         timeout: None,
         debuginfo: false,
-        session: std::cell::RefCell::new(None),
-    };
+    })
+    .expect("sandbox");
     rpmx_core::source::apply_patches(
         &sandbox,
         recipe.path(),

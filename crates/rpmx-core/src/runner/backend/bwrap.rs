@@ -1,15 +1,15 @@
 use std::path::{Path, PathBuf};
 
+use super::process::{finish, spawn};
 use crate::arch::Arch;
 use crate::error::Result;
-use crate::sandbox::process::{finish, spawn};
-use crate::sandbox::{Runner, RunnerRequest, Session, SessionConfig};
+use crate::runner::{Runner, RunnerConfig, RunnerRequest, Session};
 
-pub struct BwrapRunner<'a> {
+pub struct BwrapBackend<'a> {
     pub root: Option<&'a Path>,
 }
 
-impl Runner for BwrapRunner<'_> {
+impl Runner for BwrapBackend<'_> {
     fn name(&self) -> &'static str {
         "bubblewrap"
     }
@@ -18,7 +18,7 @@ impl Runner for BwrapRunner<'_> {
         host == target
     }
 
-    fn start(&self, config: &SessionConfig<'_>) -> Result<Box<dyn Session>> {
+    fn start(&self, config: &RunnerConfig<'_>) -> Result<Box<dyn Session>> {
         Ok(Box::new(BwrapSession {
             root: self
                 .root

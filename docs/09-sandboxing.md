@@ -243,18 +243,32 @@ umask=022
 ## 5.1 Runner interface
 
 The sandbox expands templates and builds the deterministic environment; the
-runner only executes the resulting command. The interface is:
+runner only executes the resulting command. `SandboxConfig` carries the policy
+and the runner choice; the runner receives only `RunnerConfig`. The interface
+is:
 
 ```rust
-pub struct SessionConfig<'a> {
+pub struct SandboxConfig<'a> {
+    pub runner: RunnerKind,
     pub host: Arch,
     pub target: Arch,
     pub workspace: &'a Path,
     pub stage: &'a Path,
+    pub root: Option<&'a Path>,
+    pub image: Option<&'a str>,
     pub source_date_epoch: u32,
     pub jobs: u32,
     pub timeout: Option<u64>,
     pub debuginfo: bool,
+}
+
+pub struct RunnerConfig<'a> {
+    pub host: Arch,
+    pub target: Arch,
+    pub workspace: &'a Path,
+    pub stage: &'a Path,
+    pub jobs: u32,
+    pub timeout: Option<u64>,
 }
 
 pub struct RunnerRequest<'a> {
@@ -268,7 +282,7 @@ pub struct RunnerRequest<'a> {
 pub trait Runner {
     fn name(&self) -> &'static str;
     fn supports(&self, host: Arch, target: Arch) -> bool;
-    fn start(&self, config: &SessionConfig<'_>) -> Result<Box<dyn Session>>;
+    fn start(&self, config: &RunnerConfig<'_>) -> Result<Box<dyn Session>>;
 }
 
 pub trait Session {
@@ -277,6 +291,16 @@ pub trait Session {
     fn stop(&mut self) -> Result<()>;
 }
 ```
+
+`source_date_epoch` and `debuginfo` are policy fields: the sandbox applies them
+to the environment and never passes them to a backend. `Sandbox::new` resolves
+`RunnerKind` (`auto`, `bwrap` or `qemu`) into a runner and rejects contradictory
+selections eagerly (bubblewrap with a foreign target and an assembled root, or
+qemu without a root). The `supports` check itself is deferred to the first
+session start, so `Sandbox::with_runner` cannot fail on the runner and
+constructing a sandbox that never runs a step cannot fail that check. The
+concrete implementations (`BwrapBackend`, `PodmanBackend`, `QemuBackend`) live
+under `runner/backend/`; `sandbox` holds policy only.
 
 `bubblewrap` and `podman` support native execution only. `qemu-system` starts
 a full VM for a foreign target with a target kernel, initramfs and a writable

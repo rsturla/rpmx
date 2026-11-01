@@ -225,7 +225,7 @@ the session runs every step and is destroyed at the end:
 pub trait Runner {
     fn name(&self) -> &'static str;
     fn supports(&self, host: Arch, target: Arch) -> bool;
-    fn start(&self, config: &SessionConfig<'_>) -> Result<Box<dyn Session>>;
+    fn start(&self, config: &RunnerConfig<'_>) -> Result<Box<dyn Session>>;
 }
 
 pub trait Session {
@@ -278,7 +278,8 @@ explicit escape hatch.
 
 ## Known limitations
 
-- Weak and rich dependencies are not implemented.
+- Rich dependencies are not implemented; weak dependencies
+  (`recommends`, `suggests`, `supplements`, `enhances`) are.
 - SELinux labels, `%ghost`, `%lang`, multilib and arbitrary xattrs are not
   implemented. File capabilities are.
 - `-debugsource`, build-id debug links and per-subpackage debuginfo are not

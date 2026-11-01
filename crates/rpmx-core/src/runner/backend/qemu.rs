@@ -1,17 +1,18 @@
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Child, Command, Stdio};
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use crate::arch::Arch;
 use crate::error::{codes, Error, Result};
-use crate::sandbox::{Runner, RunnerRequest, Session, SessionConfig};
+use crate::runner::{Runner, RunnerConfig, RunnerRequest, Session};
 
-pub struct QemuRunner<'a> {
+pub struct QemuBackend<'a> {
     pub root: &'a Path,
 }
 
-impl Runner for QemuRunner<'_> {
+impl Runner for QemuBackend<'_> {
     fn name(&self) -> &'static str {
         "qemu-system"
     }
@@ -22,7 +23,7 @@ impl Runner for QemuRunner<'_> {
             .unwrap_or(false)
     }
 
-    fn start(&self, config: &SessionConfig<'_>) -> Result<Box<dyn Session>> {
+    fn start(&self, config: &RunnerConfig<'_>) -> Result<Box<dyn Session>> {
         QemuSession::prepare(self.root, config)
     }
 }
@@ -39,7 +40,7 @@ struct QemuSession {
 }
 
 impl QemuSession {
-    fn prepare(root: &Path, config: &SessionConfig<'_>) -> Result<Box<dyn Session>> {
+    fn prepare(root: &Path, config: &RunnerConfig<'_>) -> Result<Box<dyn Session>> {
         let qemu = qemu_binary(config.target)?;
         if !command_exists(&qemu) {
             return Err(Error::new(
@@ -103,7 +104,7 @@ impl QemuSession {
         ]
     }
 
-    fn ssh(&self, command: &[&str], stdin: Option<&[u8]>) -> Result<std::process::Output> {
+    fn ssh_command(&self, command: &[&str]) -> Command {
         let mut process = match self.timeout {
             Some(seconds) if seconds > 0 => {
                 let mut process = Command::new("timeout");
@@ -117,13 +118,55 @@ impl QemuSession {
             _ => Command::new("ssh"),
         };
         process.args(self.ssh_args()).args(command);
+        process
+    }
+
+    fn ssh_child(&self, command: &[&str]) -> Result<Child> {
+        let mut process = self.ssh_command(command);
+        process
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        process
+            .spawn()
+            .map_err(|error| Error::new(codes::RUNNER_003, format!("cannot run ssh: {error}")))
+    }
+
+    fn take_stderr(child: &mut Child) -> Option<JoinHandle<std::io::Result<Vec<u8>>>> {
+        child.stderr.take().map(|mut stderr| {
+            std::thread::spawn(move || {
+                let mut buffer = Vec::new();
+                stderr.read_to_end(&mut buffer)?;
+                Ok(buffer)
+            })
+        })
+    }
+
+    fn join_stderr(handle: Option<JoinHandle<std::io::Result<Vec<u8>>>>) -> Result<Vec<u8>> {
+        let Some(handle) = handle else {
+            return Ok(Vec::new());
+        };
+        let buffer = handle
+            .join()
+            .map_err(|_| Error::new(codes::RUNNER_003, "ssh stderr reader panicked"))?
+            .map_err(|error| {
+                Error::new(
+                    codes::RUNNER_003,
+                    format!("cannot read ssh stderr: {error}"),
+                )
+            })?;
+        Ok(buffer)
+    }
+
+    fn ssh(&self, command: &[&str], stdin: Option<&[u8]>) -> Result<std::process::Output> {
+        let mut process = self.ssh_command(command);
         process.stdin(if stdin.is_some() {
-            std::process::Stdio::piped()
+            Stdio::piped()
         } else {
-            std::process::Stdio::null()
+            Stdio::null()
         });
-        process.stdout(std::process::Stdio::piped());
-        process.stderr(std::process::Stdio::piped());
+        process.stdout(Stdio::piped());
+        process.stderr(Stdio::piped());
         let mut child = process
             .spawn()
             .map_err(|error| Error::new(codes::RUNNER_003, format!("cannot run ssh: {error}")))?;
@@ -639,7 +682,7 @@ fn free_port() -> Result<u16> {
 
 fn start_vm(
     qemu: &str,
-    config: &SessionConfig<'_>,
+    config: &RunnerConfig<'_>,
     kernel: &Path,
     initrd: &Path,
     disk: &Path,

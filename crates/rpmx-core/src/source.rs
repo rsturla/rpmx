@@ -6,7 +6,8 @@ use crate::fetch::{fetch_sources, FetchOptions};
 use crate::model::Recipe;
 use crate::package;
 use crate::plan::Plan;
-use crate::sandbox::Sandbox;
+use crate::runner::RunnerKind;
+use crate::sandbox::{Sandbox, SandboxConfig};
 
 pub struct SourceOptions<'a> {
     pub recipe: &'a Recipe,
@@ -61,22 +62,19 @@ pub fn assemble(options: SourceOptions<'_>) -> Result<PathBuf> {
 
     let host_arch = crate::arch::Arch::current()?;
     let target_arch = crate::arch::Arch::parse(&options.plan.arch)?;
-    let backend = options
-        .runner
-        .parse::<crate::sandbox::RunnerKind>()?
-        .select(host_arch, target_arch, options.root, None)?;
-    let sandbox = Sandbox {
-        backend,
+    let sandbox = Sandbox::new(SandboxConfig {
+        runner: options.runner.parse::<RunnerKind>()?,
+        host: host_arch,
+        target: target_arch,
         workspace: options.workspace,
         stage: options.stage,
-        host_arch,
-        target_arch,
+        root: options.root,
+        image: None,
         source_date_epoch: options.source_date_epoch,
         jobs: options.jobs,
         timeout: Some(options.step_timeout).filter(|seconds| *seconds > 0),
         debuginfo: false,
-        session: std::cell::RefCell::new(None),
-    };
+    })?;
 
     apply_patches(
         &sandbox,

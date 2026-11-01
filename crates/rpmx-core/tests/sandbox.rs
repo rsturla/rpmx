@@ -3,9 +3,25 @@ use std::process::Command;
 
 use rpmx_core::arch::Arch;
 use rpmx_core::plan::PlannedStep;
-use rpmx_core::sandbox::{
-    Runner, RunnerKind, RunnerRequest, Sandbox, SandboxBackend, Session, SessionConfig,
-};
+use rpmx_core::runner::{Runner, RunnerConfig, RunnerKind, RunnerRequest, Session};
+use rpmx_core::sandbox::{Sandbox, SandboxConfig};
+
+fn config<'a>(workspace: &'a std::path::Path, stage: &'a std::path::Path) -> SandboxConfig<'a> {
+    let host = Arch::current().expect("host arch");
+    SandboxConfig {
+        runner: RunnerKind::Bwrap,
+        host,
+        target: host,
+        workspace,
+        stage,
+        root: None,
+        image: None,
+        source_date_epoch: 1_700_000_000,
+        jobs: 1,
+        timeout: None,
+        debuginfo: false,
+    }
+}
 
 fn bwrap_available() -> bool {
     Command::new("bwrap")
@@ -34,19 +50,26 @@ fn step(command: &str, args: &[&str]) -> PlannedStep {
 fn run(step: &PlannedStep) -> Result<(), rpmx_core::Error> {
     let work = tempfile::tempdir().expect("work");
     let stage = tempfile::tempdir().expect("stage");
-    let sandbox = Sandbox {
-        backend: SandboxBackend::Bwrap,
-        workspace: work.path(),
-        stage: stage.path(),
-        host_arch: rpmx_core::arch::Arch::current().expect("host arch"),
-        target_arch: rpmx_core::arch::Arch::current().expect("target arch"),
-        source_date_epoch: 1_700_000_000,
-        jobs: 1,
-        timeout: None,
-        debuginfo: false,
-        session: std::cell::RefCell::new(None),
-    };
+    let sandbox = Sandbox::new(config(work.path(), stage.path()))?;
     sandbox.run(step)
+}
+
+#[test]
+fn constructing_a_foreign_sandbox_does_not_start_a_runner() {
+    let host = Arch::current().expect("host arch");
+    let target = if host == Arch::X86_64 {
+        Arch::Aarch64
+    } else {
+        Arch::X86_64
+    };
+    let work = tempfile::tempdir().expect("work");
+    let stage = tempfile::tempdir().expect("stage");
+
+    Sandbox::new(SandboxConfig {
+        target,
+        ..config(work.path(), stage.path())
+    })
+    .expect("constructing a sandbox that runs no step must not check the runner");
 }
 
 #[test]
@@ -59,20 +82,15 @@ fn native_runners_reject_a_foreign_target() {
     };
     let work = tempfile::tempdir().expect("work");
     let stage = tempfile::tempdir().expect("stage");
-    let error = Sandbox {
-        backend: SandboxBackend::Bwrap,
-        workspace: work.path(),
-        stage: stage.path(),
-        host_arch: host,
-        target_arch: target,
-        source_date_epoch: 1_700_000_000,
-        jobs: 1,
-        timeout: None,
-        debuginfo: false,
-        session: std::cell::RefCell::new(None),
-    }
-    .run(&step("true", &[]))
-    .expect_err("bwrap cannot execute foreign architecture binaries");
+    let sandbox = Sandbox::new(SandboxConfig {
+        target,
+        ..config(work.path(), stage.path())
+    })
+    .expect("sandbox");
+    let error = match sandbox.run(&step("true", &[])) {
+        Ok(()) => panic!("bwrap cannot execute foreign architecture binaries"),
+        Err(error) => error,
+    };
 
     assert_eq!(error.code, "RPMX-RUNNER-002");
     assert!(error.message.contains("use a runner"));
@@ -80,6 +98,7 @@ fn native_runners_reject_a_foreign_target() {
 
 struct ProbeRunner {
     seen: std::sync::Arc<std::sync::Mutex<Option<(Arch, Arch, String)>>>,
+    started: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 struct ProbeSession {
@@ -97,7 +116,9 @@ impl Runner for ProbeRunner {
         true
     }
 
-    fn start(&self, config: &SessionConfig<'_>) -> Result<Box<dyn Session>, rpmx_core::Error> {
+    fn start(&self, config: &RunnerConfig<'_>) -> Result<Box<dyn Session>, rpmx_core::Error> {
+        self.started
+            .store(true, std::sync::atomic::Ordering::SeqCst);
         Ok(Box::new(ProbeSession {
             seen: self.seen.clone(),
             host: config.host,
@@ -135,23 +156,22 @@ fn a_custom_runner_receives_the_arch_contract() {
     let stage = tempfile::tempdir().expect("stage");
     let probe = ProbeRunner {
         seen: std::sync::Arc::new(std::sync::Mutex::new(None)),
+        started: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
     };
-    Sandbox {
-        backend: SandboxBackend::Custom(&probe),
-        workspace: work.path(),
-        stage: stage.path(),
-        host_arch: Arch::X86_64,
-        target_arch: Arch::Aarch64,
-        source_date_epoch: 1_700_000_000,
-        jobs: 2,
-        timeout: None,
-        debuginfo: false,
-        session: std::cell::RefCell::new(None),
-    }
+    let seen = probe.seen.clone();
+    Sandbox::with_runner(
+        SandboxConfig {
+            host: Arch::X86_64,
+            target: Arch::Aarch64,
+            jobs: 2,
+            ..config(work.path(), stage.path())
+        },
+        Box::new(probe),
+    )
     .run(&step("true", &[]))
-    .expect("custom runner");
+    .expect("custom runner step");
 
-    let seen = probe.seen.lock().expect("probe lock").clone();
+    let seen = seen.lock().expect("probe lock").clone();
     assert_eq!(seen, Some((Arch::X86_64, Arch::Aarch64, "aarch64".into())));
 }
 
@@ -172,20 +192,10 @@ fn runs_an_inline_step_with_a_writable_stage() {
         ],
     );
 
-    Sandbox {
-        backend: SandboxBackend::Bwrap,
-        workspace: work.path(),
-        stage: stage.path(),
-        host_arch: rpmx_core::arch::Arch::current().expect("host arch"),
-        target_arch: rpmx_core::arch::Arch::current().expect("target arch"),
-        source_date_epoch: 1_700_000_000,
-        jobs: 1,
-        timeout: None,
-        debuginfo: false,
-        session: std::cell::RefCell::new(None),
-    }
-    .run(&step)
-    .expect("sandbox step");
+    Sandbox::new(config(work.path(), stage.path()))
+        .expect("sandbox")
+        .run(&step)
+        .expect("sandbox step");
 
     assert_eq!(
         std::fs::read(stage.path().join("usr/bin/demo")).expect("staged file"),
@@ -268,6 +278,30 @@ fn reserved_environment_variables_are_rejected() {
 }
 
 #[test]
+fn policy_rejects_reserved_environment_before_starting_a_runner() {
+    let started = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let probe = ProbeRunner {
+        seen: std::sync::Arc::new(std::sync::Mutex::new(None)),
+        started: started.clone(),
+    };
+    let work = tempfile::tempdir().expect("work");
+    let stage = tempfile::tempdir().expect("stage");
+    let mut step = step("true", &[]);
+    step.env
+        .insert("SOURCE_DATE_EPOCH".to_string(), "0".to_string());
+
+    let error = Sandbox::with_runner(config(work.path(), stage.path()), Box::new(probe))
+        .run(&step)
+        .expect_err("policy must reject a reserved variable");
+
+    assert_eq!(error.code, "RPMX-SANDBOX-003");
+    assert!(
+        !started.load(std::sync::atomic::Ordering::SeqCst),
+        "a rejected step must not start a runner session"
+    );
+}
+
+#[test]
 fn a_step_that_overruns_is_killed() {
     if !bwrap_available() {
         eprintln!("bwrap not installed; skipping sandbox test");
@@ -281,18 +315,11 @@ fn a_step_that_overruns_is_killed() {
     let work = tempfile::tempdir().expect("work");
     let stage = tempfile::tempdir().expect("stage");
     let started = std::time::Instant::now();
-    let error = Sandbox {
-        backend: SandboxBackend::Bwrap,
-        workspace: work.path(),
-        stage: stage.path(),
-        host_arch: rpmx_core::arch::Arch::current().expect("host arch"),
-        target_arch: rpmx_core::arch::Arch::current().expect("target arch"),
-        source_date_epoch: 1_700_000_000,
-        jobs: 1,
+    let error = Sandbox::new(SandboxConfig {
         timeout: Some(1),
-        debuginfo: false,
-        session: std::cell::RefCell::new(None),
-    }
+        ..config(work.path(), stage.path())
+    })
+    .expect("sandbox")
     .run(&step("sh", &["-c", "sleep 30"]))
     .expect_err("the step must be killed");
 
@@ -321,19 +348,12 @@ fn podman_session_has_no_network() {
     }
     let work = tempfile::tempdir().expect("work");
     let stage = tempfile::tempdir().expect("stage");
-    let host = Arch::current().expect("host arch");
-    let sandbox = Sandbox {
-        backend: SandboxBackend::Container(image),
-        workspace: work.path(),
-        stage: stage.path(),
-        host_arch: host,
-        target_arch: host,
-        source_date_epoch: 1_700_000_000,
-        jobs: 1,
-        timeout: None,
-        debuginfo: false,
-        session: std::cell::RefCell::new(None),
-    };
+    let sandbox = Sandbox::new(SandboxConfig {
+        runner: RunnerKind::Auto,
+        image: Some(image),
+        ..config(work.path(), stage.path())
+    })
+    .expect("podman sandbox");
     sandbox
         .run(&step(
             "sh",
@@ -350,42 +370,46 @@ fn runner_selection_is_centralized() {
     let host = Arch::current().expect("host arch");
     let root = std::path::Path::new("/root");
 
-    assert!(matches!(
+    assert_eq!(
         RunnerKind::Auto
-            .select(host, host, Some(root), None)
-            .expect("native auto"),
-        SandboxBackend::NativeRoot(_)
-    ));
-    assert!(matches!(
+            .resolve(host, host, Some(root), None)
+            .expect("native auto")
+            .name(),
+        "bubblewrap"
+    );
+    assert_eq!(
         RunnerKind::Bwrap
-            .select(host, host, Some(root), None)
-            .expect("native bwrap"),
-        SandboxBackend::NativeRoot(_)
-    ));
-    assert!(matches!(
+            .resolve(host, host, Some(root), None)
+            .expect("native bwrap")
+            .name(),
+        "bubblewrap"
+    );
+    assert_eq!(
         RunnerKind::Auto
-            .select(host, host, None, Some("image"))
-            .expect("container auto"),
-        SandboxBackend::Container(_)
-    ));
+            .resolve(host, host, None, Some("image"))
+            .expect("container auto")
+            .name(),
+        "podman"
+    );
 
     let foreign = if host == Arch::X86_64 {
         Arch::Aarch64
     } else {
         Arch::X86_64
     };
-    assert!(matches!(
+    assert_eq!(
         RunnerKind::Auto
-            .select(host, foreign, Some(root), None)
-            .expect("foreign auto"),
-        SandboxBackend::Qemu(_)
-    ));
-    let error = match RunnerKind::Bwrap.select(host, foreign, Some(root), None) {
+            .resolve(host, foreign, Some(root), None)
+            .expect("foreign auto")
+            .name(),
+        "qemu-system"
+    );
+    let error = match RunnerKind::Bwrap.resolve(host, foreign, Some(root), None) {
         Ok(_) => panic!("bwrap cannot cross"),
         Err(error) => error,
     };
     assert_eq!(error.code, "RPMX-RUNNER-002");
-    let error = match RunnerKind::Qemu.select(host, foreign, None, None) {
+    let error = match RunnerKind::Qemu.resolve(host, foreign, None, None) {
         Ok(_) => panic!("qemu needs a root"),
         Err(error) => error,
     };

@@ -46,7 +46,7 @@ pub fn assemble(lock: &RootLock, options: AssembleOptions<'_>) -> Result<std::pa
     let arch = normalize_arch(arch)?;
     let target = crate::arch::Arch::parse(arch)?;
     let host = crate::arch::Arch::current()?;
-    if host != target && !crate::sandbox::emulation_available(target) {
+    if host != target && !crate::runner::emulation_available(target) {
         return Err(Error::new(
             codes::RUNNER_002,
             format!(

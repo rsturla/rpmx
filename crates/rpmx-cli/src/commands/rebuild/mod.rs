@@ -5,7 +5,8 @@ use rpmx_core::binary_package::{prepare_binary_packages, BinaryPackageOptions};
 use rpmx_core::build_env::check_build_tools;
 use rpmx_core::error::codes;
 use rpmx_core::package_spec::BinaryPackageFile;
-use rpmx_core::sandbox::{RunnerKind, Sandbox};
+use rpmx_core::runner::RunnerKind;
+use rpmx_core::sandbox::{Sandbox, SandboxConfig};
 use rpmx_core::sbom::Generator;
 use rpmx_core::test_root::{prepare as prepare_test_root, TestRootOptions};
 use rpmx_core::test_runner::{run_planned_tests, TestSandboxConfig};
@@ -46,27 +47,21 @@ pub fn run(args: RebuildArgs<'_>) -> Result<Vec<PathBuf>, Error> {
     let host_arch = rpmx_core::arch::Arch::current()?;
     let target_arch = rpmx_core::arch::Arch::parse(arch)?;
     let runner_kind = runner.parse::<RunnerKind>()?;
-    let backend = runner_kind.select(
-        host_arch,
-        target_arch,
-        assembled_root.as_deref(),
-        args.root_image,
-    )?;
-
     let debuginfo = active_lock.as_ref().is_some_and(|lock| lock.debuginfo);
     let sbom_enabled = active_lock.as_ref().map(|lock| lock.sbom).unwrap_or(true);
-    let sandbox = Sandbox {
-        backend,
+    let sandbox = Sandbox::new(SandboxConfig {
+        runner: runner_kind,
+        host: host_arch,
+        target: target_arch,
         workspace: &build,
         stage: &stage,
-        host_arch,
-        target_arch,
+        root: assembled_root.as_deref(),
+        image: args.root_image,
         source_date_epoch: extracted.source_date_epoch,
         jobs,
         timeout: Some(step_timeout).filter(|seconds| *seconds > 0),
         debuginfo,
-        session: std::cell::RefCell::new(None),
-    };
+    })?;
 
     check_build_tools(
         &sandbox,

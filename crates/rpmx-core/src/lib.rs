@@ -15,6 +15,7 @@ pub mod pkgmanifest;
 pub mod plan;
 pub mod profile;
 pub mod root;
+pub mod runner;
 pub mod sandbox;
 pub mod sbom;
 pub mod source;
