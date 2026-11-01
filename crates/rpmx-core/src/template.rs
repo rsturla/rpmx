@@ -71,26 +71,9 @@ pub fn expand_string(input: &str, scope: &BTreeMap<String, Value>) -> Result<Str
 }
 
 pub fn expand_inputs(input: &str, inputs: &BTreeMap<String, Value>) -> Result<String> {
-    let mut out = String::with_capacity(input.len());
-    let mut index = 0;
-    const ESCAPED_DOLLAR: char = '\u{0}';
-
-    while index < input.len() {
-        let rest = &input[index..];
-        if rest.starts_with("$${") {
-            out.push(ESCAPED_DOLLAR);
-            out.push('{');
-            index += 3;
-            continue;
-        }
-        if let Some(body) = rest.strip_prefix("${") {
-            let end = body.find('}').ok_or_else(|| {
-                Error::new(
-                    codes::TEMPLATE_004,
-                    format!("unterminated template in '{input}'"),
-                )
-            })?;
-            let token = &body[..end];
+    expand_tokens_inner(
+        input,
+        &mut |token| {
             if let Some(name) = token.strip_prefix("inputs.") {
                 let value = inputs.get(token).ok_or_else(|| {
                     Error::new(
@@ -104,25 +87,16 @@ pub fn expand_inputs(input: &str, inputs: &BTreeMap<String, Value>) -> Result<St
                         for item in items {
                             parts.push(value_to_string(item, token)?);
                         }
-                        out.push_str(&parts.join(" "));
+                        Ok(parts.join(" "))
                     }
-                    other => out.push_str(&value_to_string(other, token)?),
+                    other => value_to_string(other, token),
                 }
             } else {
-                out.push_str("${");
-                out.push_str(token);
-                out.push('}');
+                Ok(format!("${{{token}}}"))
             }
-            index += 2 + end + 1;
-            continue;
-        }
-
-        let ch = rest.chars().next().expect("non-empty remainder");
-        out.push(ch);
-        index += ch.len_utf8();
-    }
-
-    Ok(out.replace(ESCAPED_DOLLAR, "$"))
+        },
+        false,
+    )
 }
 
 pub fn expand_json(value: &Value, scope: &BTreeMap<String, Value>) -> Result<Value> {
@@ -147,6 +121,14 @@ pub fn expand_json(value: &Value, scope: &BTreeMap<String, Value>) -> Result<Val
 }
 
 fn expand_tokens(input: &str, resolve: &mut impl FnMut(&str) -> Result<String>) -> Result<String> {
+    expand_tokens_inner(input, resolve, true)
+}
+
+fn expand_tokens_inner(
+    input: &str,
+    resolve: &mut impl FnMut(&str) -> Result<String>,
+    reject_unresolved: bool,
+) -> Result<String> {
     let mut out = String::with_capacity(input.len());
     let mut index = 0;
     const ESCAPED_DOLLAR: char = '\u{0}';
@@ -177,7 +159,7 @@ fn expand_tokens(input: &str, resolve: &mut impl FnMut(&str) -> Result<String>) 
         index += ch.len_utf8();
     }
 
-    if out.contains("${") {
+    if reject_unresolved && out.contains("${") {
         return Err(Error::new(
             codes::TEMPLATE_007,
             format!("template in '{input}' produced an unresolved '${{...}}' value"),
