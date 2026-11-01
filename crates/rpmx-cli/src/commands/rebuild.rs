@@ -23,6 +23,7 @@ pub fn run(args: RebuildArgs<'_>) -> Result<Vec<PathBuf>, Error> {
         file,
         output,
         arch,
+        runner,
         cell,
         policy,
         jobs,
@@ -56,9 +57,16 @@ pub fn run(args: RebuildArgs<'_>) -> Result<Vec<PathBuf>, Error> {
         extracted.source_date_epoch,
         signing.as_ref(),
     )?;
+    let build = work.path().join("build");
+    std::fs::create_dir_all(&build).map_err(|error| {
+        Error::new(
+            codes::BUILD_005,
+            format!("cannot create {}: {error}", build.display()),
+        )
+    })?;
     let snapshot = work.path().join("RPMX-SOURCE.tar.gz");
     if snapshot.exists() {
-        rpmx_core::source::unpack_snapshot(&snapshot, work.path())?;
+        rpmx_core::source::unpack_snapshot(&snapshot, &build)?;
     }
 
     let pipelines = work.path().join("pipelines");
@@ -236,23 +244,48 @@ pub fn run(args: RebuildArgs<'_>) -> Result<Vec<PathBuf>, Error> {
 
     let host_arch = rpmx_core::arch::Arch::current()?;
     let target_arch = rpmx_core::arch::Arch::parse(arch)?;
-    let backend = if let Some(root_path) = assembled_root.as_deref() {
-        if host_arch == target_arch {
-            SandboxBackend::Root(root_path)
-        } else {
-            SandboxBackend::Emulated(root_path)
+    let backend = match runner {
+        "qemu" => {
+            let root_path = assembled_root.as_deref().ok_or_else(|| {
+                Error::new(codes::ROOT_016, "the qemu runner needs an assembled root")
+            })?;
+            SandboxBackend::Qemu(root_path)
         }
-    } else if let Some(image) = root_image {
-        SandboxBackend::Container(image)
-    } else {
-        unreachable!("root selection checked above")
+        "bwrap" => {
+            let root_path = assembled_root.as_deref().ok_or_else(|| {
+                Error::new(
+                    codes::ROOT_016,
+                    "the bubblewrap runner needs an assembled root",
+                )
+            })?;
+            if host_arch != target_arch {
+                return Err(Error::new(
+                    codes::RUNNER_002,
+                    "bubblewrap cannot run a foreign target; use --runner qemu",
+                ));
+            }
+            SandboxBackend::Root(root_path)
+        }
+        _ => {
+            if let Some(root_path) = assembled_root.as_deref() {
+                if host_arch == target_arch {
+                    SandboxBackend::Root(root_path)
+                } else {
+                    SandboxBackend::Qemu(root_path)
+                }
+            } else if let Some(image) = root_image {
+                SandboxBackend::Container(image)
+            } else {
+                unreachable!("root selection checked above")
+            }
+        }
     };
 
     let debuginfo = active_lock.as_ref().is_some_and(|lock| lock.debuginfo);
     let sbom_enabled = active_lock.as_ref().map(|lock| lock.sbom).unwrap_or(true);
     let sandbox = Sandbox {
         backend,
-        workspace: work.path(),
+        workspace: &build,
         stage: &stage,
         host_arch,
         target_arch,
@@ -260,11 +293,12 @@ pub fn run(args: RebuildArgs<'_>) -> Result<Vec<PathBuf>, Error> {
         jobs,
         timeout: Some(step_timeout).filter(|seconds| *seconds > 0),
         debuginfo,
+        session: std::cell::RefCell::new(None),
     };
 
     check_build_tools(
         &sandbox,
-        work.path(),
+        &build,
         &cells[0].tools,
         &cells[0].host,
         &cells[0].target,
@@ -301,6 +335,8 @@ pub fn run(args: RebuildArgs<'_>) -> Result<Vec<PathBuf>, Error> {
             format!("cannot create {}: {error}", output.display()),
         )
     })?;
+
+    sandbox.sync()?;
 
     let packages = prepare_binary_packages(BinaryPackageOptions {
         recipe: &recipe,
@@ -492,6 +528,7 @@ pub fn run(args: RebuildArgs<'_>) -> Result<Vec<PathBuf>, Error> {
                 &written,
                 builder_image.as_deref(),
                 work.path(),
+                runner,
             )?)
         } else {
             None
@@ -502,10 +539,11 @@ pub fn run(args: RebuildArgs<'_>) -> Result<Vec<PathBuf>, Error> {
             &cells[0].tests,
             test_root,
             TestSandbox {
-                workspace: work.path(),
+                workspace: &build,
                 stage: &stage,
                 host_arch: rpmx_core::arch::Arch::current()?,
                 target_arch: rpmx_core::arch::Arch::parse(arch)?,
+                runner,
                 source_date_epoch: extracted.source_date_epoch,
                 jobs,
                 timeout: Some(step_timeout).filter(|seconds| *seconds > 0),
@@ -641,6 +679,7 @@ struct TestSandbox<'a> {
     stage: &'a Path,
     host_arch: rpmx_core::arch::Arch,
     target_arch: rpmx_core::arch::Arch,
+    runner: &'a str,
     source_date_epoch: u32,
     jobs: u32,
     timeout: Option<u64>,
@@ -683,10 +722,17 @@ fn run_planned_tests(
             "installed-stage tests need a test root, which requires a root lock",
         )
     })?;
-    let test_backend = if settings.host_arch == settings.target_arch {
-        SandboxBackend::Root(root)
-    } else {
-        SandboxBackend::Emulated(root)
+    let test_backend = match settings.runner {
+        "qemu" => SandboxBackend::Qemu(root),
+        "bwrap" if settings.host_arch == settings.target_arch => SandboxBackend::Root(root),
+        "bwrap" => {
+            return Err(Error::new(
+                codes::RUNNER_002,
+                "bubblewrap cannot run foreign installed tests; use --runner qemu",
+            ));
+        }
+        _ if settings.host_arch == settings.target_arch => SandboxBackend::Root(root),
+        _ => SandboxBackend::Qemu(root),
     };
     let test_sandbox = Sandbox {
         backend: test_backend,
@@ -698,6 +744,7 @@ fn run_planned_tests(
         jobs: settings.jobs,
         timeout: settings.timeout,
         debuginfo: settings.debuginfo,
+        session: std::cell::RefCell::new(None),
     };
     for test in installed_tests {
         run_one_test(&test_sandbox, test)?;
@@ -742,6 +789,7 @@ fn prepare_test_root(
     rpms: &[PathBuf],
     builder_image: Option<&str>,
     work: &Path,
+    runner: &str,
 ) -> Result<(PathBuf, String), Error> {
     let target = rpmx_core::arch::Arch::parse(
         lock.archs
@@ -749,8 +797,8 @@ fn prepare_test_root(
             .ok_or_else(|| Error::new(codes::BUILD_007, "the test root has no architecture"))?,
     )?;
     let host = rpmx_core::arch::Arch::current()?;
-    let foreign = host != target;
-    if foreign && !rpmx_core::sandbox::emulation_available(target) {
+    let foreign = host != target || runner == "qemu";
+    if host != target && !rpmx_core::sandbox::emulation_available(target) {
         return Err(Error::new(
             codes::RUNNER_002,
             format!(
@@ -769,6 +817,26 @@ fn prepare_test_root(
     })?;
 
     let mut install = vec!["bash".to_string(), "coreutils".to_string()];
+    if foreign {
+        // A QEMU-backed test root must boot itself, so it needs a kernel,
+        // initramfs, 9p modules and the mount helpers used by the guest init.
+        install.extend(
+            [
+                "kernel-core",
+                "kernel-modules-core",
+                "kernel-modules",
+                "dracut",
+                "kmod",
+                "util-linux",
+                "systemd",
+                "systemd-networkd",
+                "openssh-server",
+                "tar",
+            ]
+            .iter()
+            .map(|package| package.to_string()),
+        );
+    }
     for tool in test_tools {
         let name = tool.split_whitespace().next().unwrap_or(tool);
         if !name.is_empty() && !install.iter().any(|package| package == name) {
@@ -833,9 +901,7 @@ fn prepare_test_root(
         "--cap-add=CHOWN,DAC_OVERRIDE,FOWNER,FSETID,SETGID,SETUID,SYS_CHROOT",
         "--security-opt=no-new-privileges",
     ]);
-    if foreign {
-        command.arg("--arch").arg(target.to_string());
-    }
+    command.arg("--arch").arg(target.to_string());
     let output = command
         .arg("-v")
         .arg(format!("{}:/root:Z", root.display()))
@@ -845,7 +911,7 @@ fn prepare_test_root(
         .args([
             "sh",
             "-c",
-            "rpm --root /root -i --replacefiles --replacepkgs --oldpackage /rpms/*.rpm",
+            "rpm --root /root -i --replacefiles --replacepkgs --oldpackage --noscripts /rpms/*.rpm",
         ])
         .output()
         .map_err(|error| {

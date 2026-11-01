@@ -226,6 +226,9 @@ pub enum Command {
         /// Target architecture used for templates.
         #[arg(long, default_value = rpmx_core::arch::native_arch())]
         arch: String,
+        /// Runner: auto, bwrap or qemu.
+        #[arg(long, default_value = "auto", value_parser = ["auto", "bwrap", "qemu"])]
+        runner: String,
         #[command(flatten)]
         policy: PolicyArgs,
         /// CAS directory (default: $XDG_CACHE_HOME/rpmx/cas).
@@ -311,6 +314,9 @@ pub enum Command {
         /// Architecture for outputs that do not declare one.
         #[arg(long, default_value = rpmx_core::arch::native_arch())]
         arch: String,
+        /// Runner: auto, bwrap or qemu.
+        #[arg(long, default_value = "auto", value_parser = ["auto", "bwrap", "qemu"])]
+        runner: String,
         /// Build one matrix cell (required when the plan has several).
         #[arg(long)]
         cell: Option<String>,
@@ -441,6 +447,9 @@ pub enum Command {
         /// Architecture for outputs that do not declare one.
         #[arg(long, default_value = rpmx_core::arch::native_arch())]
         arch: String,
+        /// Runner: auto, bwrap or qemu.
+        #[arg(long, default_value = "auto", value_parser = ["auto", "bwrap", "qemu"])]
+        runner: String,
         /// Reproducible timestamp in Unix seconds (default: package.source-date-epoch).
         #[arg(long)]
         source_date_epoch: Option<u32>,

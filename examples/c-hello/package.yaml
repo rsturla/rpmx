@@ -37,6 +37,17 @@ source-assembly:
         	install -D -m 0755 c-hello $(DESTDIR)/usr/bin/c-hello
         	ln -sf c-hello $(DESTDIR)/usr/bin/c-hello-alias
         MAKE
+        # The source-assembly sandbox must have no network egress. A qemu
+        # guest has a NIC for ssh, so check reachability rather than interfaces.
+        python3 - <<'PY'
+        import socket
+        try:
+            socket.create_connection(("1.1.1.1", 80), timeout=2)
+        except OSError:
+            pass
+        else:
+            raise SystemExit("network is reachable")
+        PY
 
 build:
   dependencies:
@@ -62,6 +73,19 @@ tests:
   - name: smoke
     stage: build
     argv: ["./c-hello"]
+  - name: no-network
+    stage: build
+    pipeline:
+      - runs: |
+          python3 - <<'PY'
+          import socket
+          try:
+              socket.create_connection(("1.1.1.1", 80), timeout=2)
+          except OSError:
+              pass
+          else:
+              raise SystemExit("network is reachable")
+          PY
   - name: installed
     stage: installed
     argv: ["c-hello"]

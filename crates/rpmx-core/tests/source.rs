@@ -129,6 +129,7 @@ fn patches_are_applied_and_removed_from_the_workspace() {
         jobs: 1,
         timeout: None,
         debuginfo: false,
+        session: std::cell::RefCell::new(None),
     };
     rpmx_core::source::apply_patches(
         &sandbox,

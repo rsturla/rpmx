@@ -15,6 +15,7 @@ pub fn run(args: SourceArgs<'_>) -> Result<std::path::PathBuf, Error> {
         offline,
         output,
         arch,
+        runner,
         source_date_epoch,
         jobs,
         step_timeout,
@@ -127,6 +128,7 @@ pub fn run(args: SourceArgs<'_>) -> Result<std::path::PathBuf, Error> {
         jobs,
         step_timeout,
         root: selected_root.as_deref(),
+        runner,
         recipe_dir: file.parent().unwrap_or_else(|| std::path::Path::new(".")),
     })?;
 

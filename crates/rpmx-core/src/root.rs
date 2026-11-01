@@ -328,7 +328,9 @@ fn podman_run(image: &str, work: &Path, args: &[String]) -> Result<std::process:
     process
         .arg("run")
         .arg("--rm")
-        .arg("--pull=never")
+        .arg("--pull=missing")
+        .arg("--arch")
+        .arg(crate::arch::Arch::current()?.to_string())
         .arg("-v")
         .arg(format!("{}:/work:Z", work.display()))
         .arg("-w")
@@ -758,6 +760,10 @@ pub fn assemble(lock: &RootLock, options: AssembleOptions<'_>) -> Result<std::pa
             format!("cannot create {}: {error}", options.root.display()),
         )
     })?;
+    // `setup` can be installed before `filesystem`; its sysusers trigger
+    // creates /lib64 as a real directory, which then makes filesystem's
+    // usrmerge symlink fail. Seed the layout before the transaction.
+    create_usrmerge_layout(options.root)?;
 
     let mut args = vec![
         "dnf".to_string(),
@@ -774,9 +780,11 @@ pub fn assemble(lock: &RootLock, options: AssembleOptions<'_>) -> Result<std::pa
             u8::from(lock.options.weak_deps)
         ),
     ];
+    let mut tsflags = vec!["nocaps"];
     if !lock.options.docs {
-        args.push("--setopt=tsflags=nodocs".to_string());
+        tsflags.insert(0, "nodocs");
     }
+    args.push(format!("--setopt=tsflags={}", tsflags.join(",")));
     args.push("install".to_string());
     args.extend(files);
 
@@ -824,7 +832,7 @@ fn prepare_assembly(work: &Path, root: &Path) -> Result<()> {
         std::fs::create_dir_all(work.join(directory)).map_err(|error| {
             Error::new(
                 codes::ROOT_012,
-                format!("cannot create assembly directory {}: {error}", directory),
+                format!("cannot create assembly directory {directory}: {error}"),
             )
         })?;
     }
@@ -851,6 +859,61 @@ fn prepare_assembly(work: &Path, root: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Seed the usrmerge layout before a fresh rpm transaction. Fedora's
+/// `filesystem` package creates these in `%pretrans`, but `setup` may be
+/// ordered first and its sysusers trigger otherwise creates `/lib64` as a
+/// real directory.
+fn create_usrmerge_layout(root: &Path) -> Result<()> {
+    for directory in [
+        "usr/bin",
+        "usr/lib",
+        "usr/lib64",
+        "usr/local/bin",
+        "usr/lib/debug/usr",
+    ] {
+        std::fs::create_dir_all(root.join(directory)).map_err(|error| {
+            Error::new(
+                codes::ROOT_012,
+                format!("cannot create {}: {error}", root.join(directory).display()),
+            )
+        })?;
+    }
+    for (link, target) in [
+        ("bin", "usr/bin"),
+        ("sbin", "usr/sbin"),
+        ("lib", "usr/lib"),
+        ("lib64", "usr/lib64"),
+        ("usr/sbin", "bin"),
+        ("usr/local/sbin", "bin"),
+        ("usr/lib/debug/usr/sbin", "bin"),
+        ("usr/lib/debug/bin", "usr/bin"),
+        ("usr/lib/debug/lib", "usr/lib"),
+        ("usr/lib/debug/lib64", "usr/lib64"),
+        ("var/run", "../run"),
+        ("var/lock", "../run/lock"),
+    ] {
+        let path = root.join(link);
+        if path.exists() || path.symlink_metadata().is_ok() {
+            continue;
+        }
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| {
+                Error::new(
+                    codes::ROOT_012,
+                    format!("cannot create {}: {error}", parent.display()),
+                )
+            })?;
+        }
+        std::os::unix::fs::symlink(target, &path).map_err(|error| {
+            Error::new(
+                codes::ROOT_012,
+                format!("cannot create {}: {error}", path.display()),
+            )
+        })?;
+    }
+    Ok(())
+}
+
 fn podman_run_assembly(
     image: &str,
     work: &Path,
@@ -859,15 +922,12 @@ fn podman_run_assembly(
     args: &[String],
 ) -> Result<std::process::Output> {
     let mut process = Command::new("podman");
-    let foreign = target != crate::arch::Arch::current()?;
-    process.arg("run").arg("--rm").arg(if foreign {
-        "--pull=missing"
-    } else {
-        "--pull=never"
-    });
-    if foreign {
-        process.arg("--arch").arg(target.to_string());
-    }
+    process
+        .arg("run")
+        .arg("--rm")
+        .arg("--pull=missing")
+        .arg("--arch")
+        .arg(target.to_string());
     process
         .arg("--network=none")
         .arg("--read-only")
@@ -875,8 +935,9 @@ fn podman_run_assembly(
         .arg("/tmp:rw,size=512m")
         .arg("--pids-limit=1024")
         .arg("--cap-drop=all")
-        .arg("--cap-add=CHOWN,DAC_OVERRIDE,FOWNER,FSETID,SETGID,SETUID,SYS_CHROOT")
+        .arg("--cap-add=CHOWN,DAC_OVERRIDE,FOWNER,FSETID,SETGID,SETUID,SYS_CHROOT,SYS_ADMIN,MKNOD")
         .arg("--security-opt=no-new-privileges")
+        .arg("--security-opt=seccomp=unconfined")
         .arg("-v")
         .arg(format!("{}:/work:Z", work.display()))
         .arg("-v")
@@ -910,15 +971,12 @@ fn verify_installed(
     }
 
     let mut process = Command::new("podman");
-    let foreign = target != crate::arch::Arch::current()?;
-    process.arg("run").arg("--rm").arg(if foreign {
-        "--pull=missing"
-    } else {
-        "--pull=never"
-    });
-    if foreign {
-        process.arg("--arch").arg(target.to_string());
-    }
+    process
+        .arg("run")
+        .arg("--rm")
+        .arg("--pull=missing")
+        .arg("--arch")
+        .arg(target.to_string());
     process
         .arg("--network=none")
         .arg("--read-only")

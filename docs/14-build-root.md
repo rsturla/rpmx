@@ -138,7 +138,9 @@ builder:
 - The builder image is accepted only when its digest matches the lock.
 - The assembled package set is compared against the lock before the root is
   accepted.
-- Root is mounted read-only in the build sandbox.
+- For bwrap and podman, the root is mounted read-only in the build sandbox.
+  For QEMU, the root is a disposable writable disk copy: build steps can modify
+  it, but those changes cannot escape the VM and do not persist.
 
 ## 7. Offline assembly
 
@@ -157,8 +159,11 @@ lock did not record.
 
 The container is read-only with a writable root mount, a `/tmp` tmpfs and only
 the capabilities rpm scriptlets need: `CHOWN`, `DAC_OVERRIDE`, `FOWNER`,
-`FSETID`, `SETGID`, `SETUID` and `SYS_CHROOT`. Dropping all capabilities breaks
-the transaction.
+`FSETID`, `SETGID`, `SETUID`, `SYS_CHROOT`, `SETFCAP`, `SYS_ADMIN` and
+`MKNOD`. `SYS_ADMIN` and `MKNOD` are used by systemd and dracut scriptlets;
+`tsflags=nocaps` keeps rpm from writing file capabilities into an unprivileged
+install root. Dropping back to the smaller capability set makes the transaction
+fail.
 
 The local files are not OpenPGP-checked (dnf reports that), but every payload
 was verified against its SHA-512 in the CAS before staging, and the installed
@@ -277,7 +282,8 @@ consume arbitrary third-party manifests.
 3. Module streams: profiles reject non-empty `modules` until the lock has a
    place for the module and stream.
 4. SELinux labels and xattrs: not covered by `root_digest`.
-5. Cross-arch: native-only in V1; `--forcearch`/QEMU policy later.
+5. Cross-arch: build steps use a full qemu-system VM; root assembly and
+   test-root installation use podman `--arch` through host binfmt.
 6. Repository keys: resolve uses `gpgcheck=1` when a `gpgkey` is declared.
    Local-payload assembly relies on CAS checksums, not OpenPGP.
 7. Root cleanup: an assembled root contains mode-000 and non-writable

@@ -1,12 +1,9 @@
 use std::collections::BTreeMap;
-use std::path::Path;
 use std::process::Command;
 
 use rpmx_core::arch::Arch;
 use rpmx_core::plan::PlannedStep;
-use rpmx_core::sandbox::{
-    emulation_available, EmulatedRunner, Runner, RunnerRequest, Sandbox, SandboxBackend,
-};
+use rpmx_core::sandbox::{Runner, RunnerRequest, Sandbox, SandboxBackend, Session, SessionConfig};
 
 fn bwrap_available() -> bool {
     Command::new("bwrap")
@@ -35,7 +32,7 @@ fn step(command: &str, args: &[&str]) -> PlannedStep {
 fn run(step: &PlannedStep) -> Result<(), rpmx_core::Error> {
     let work = tempfile::tempdir().expect("work");
     let stage = tempfile::tempdir().expect("stage");
-    Sandbox {
+    let sandbox = Sandbox {
         backend: SandboxBackend::Bwrap,
         workspace: work.path(),
         stage: stage.path(),
@@ -45,27 +42,9 @@ fn run(step: &PlannedStep) -> Result<(), rpmx_core::Error> {
         jobs: 1,
         timeout: None,
         debuginfo: false,
-    }
-    .run(step)
-}
-
-#[test]
-fn emulated_runner_follows_the_host_binfmt_handler() {
-    let host = Arch::current().expect("host arch");
-    let target = if host == Arch::X86_64 {
-        Arch::Aarch64
-    } else {
-        Arch::X86_64
+        session: std::cell::RefCell::new(None),
     };
-    let runner = EmulatedRunner {
-        root: Path::new("/"),
-    };
-    assert_eq!(
-        runner.supports(host, target),
-        emulation_available(target),
-        "emulated support must track the host binfmt registration"
-    );
-    assert!(!runner.supports(host, host));
+    sandbox.run(step)
 }
 
 #[test]
@@ -88,16 +67,23 @@ fn native_runners_reject_a_foreign_target() {
         jobs: 1,
         timeout: None,
         debuginfo: false,
+        session: std::cell::RefCell::new(None),
     }
     .run(&step("true", &[]))
     .expect_err("bwrap cannot execute foreign architecture binaries");
 
     assert_eq!(error.code, "RPMX-RUNNER-002");
-    assert!(error.message.contains("emulated or cross runner"));
+    assert!(error.message.contains("use a runner"));
 }
 
 struct ProbeRunner {
-    seen: std::sync::Mutex<Option<(Arch, Arch, String)>>,
+    seen: std::sync::Arc<std::sync::Mutex<Option<(Arch, Arch, String)>>>,
+}
+
+struct ProbeSession {
+    seen: std::sync::Arc<std::sync::Mutex<Option<(Arch, Arch, String)>>>,
+    host: Arch,
+    target: Arch,
 }
 
 impl Runner for ProbeRunner {
@@ -109,16 +95,34 @@ impl Runner for ProbeRunner {
         true
     }
 
-    fn run(&self, request: &RunnerRequest<'_>) -> Result<(), rpmx_core::Error> {
+    fn start(&self, config: &SessionConfig<'_>) -> Result<Box<dyn Session>, rpmx_core::Error> {
+        Ok(Box::new(ProbeSession {
+            seen: self.seen.clone(),
+            host: config.host,
+            target: config.target,
+        }))
+    }
+}
+
+impl Session for ProbeSession {
+    fn run(&mut self, request: &RunnerRequest<'_>) -> Result<(), rpmx_core::Error> {
         *self.seen.lock().expect("probe lock") = Some((
-            request.host,
-            request.target,
+            self.host,
+            self.target,
             request
                 .env
                 .get("RPMX_TARGET_ARCH")
                 .cloned()
                 .unwrap_or_default(),
         ));
+        Ok(())
+    }
+
+    fn sync_out(&mut self) -> Result<(), rpmx_core::Error> {
+        Ok(())
+    }
+
+    fn stop(&mut self) -> Result<(), rpmx_core::Error> {
         Ok(())
     }
 }
@@ -128,7 +132,7 @@ fn a_custom_runner_receives_the_arch_contract() {
     let work = tempfile::tempdir().expect("work");
     let stage = tempfile::tempdir().expect("stage");
     let probe = ProbeRunner {
-        seen: std::sync::Mutex::new(None),
+        seen: std::sync::Arc::new(std::sync::Mutex::new(None)),
     };
     Sandbox {
         backend: SandboxBackend::Custom(&probe),
@@ -140,6 +144,7 @@ fn a_custom_runner_receives_the_arch_contract() {
         jobs: 2,
         timeout: None,
         debuginfo: false,
+        session: std::cell::RefCell::new(None),
     }
     .run(&step("true", &[]))
     .expect("custom runner");
@@ -175,6 +180,7 @@ fn runs_an_inline_step_with_a_writable_stage() {
         jobs: 1,
         timeout: None,
         debuginfo: false,
+        session: std::cell::RefCell::new(None),
     }
     .run(&step)
     .expect("sandbox step");
@@ -283,6 +289,7 @@ fn a_step_that_overruns_is_killed() {
         jobs: 1,
         timeout: Some(1),
         debuginfo: false,
+        session: std::cell::RefCell::new(None),
     }
     .run(&step("sh", &["-c", "sleep 30"]))
     .expect_err("the step must be killed");
@@ -293,4 +300,45 @@ fn a_step_that_overruns_is_killed() {
         "timeout took {:?}",
         started.elapsed()
     );
+}
+
+#[test]
+fn podman_session_has_no_network() {
+    if Command::new("podman").arg("--version").output().is_err() {
+        eprintln!("podman not installed; skipping podman session test");
+        return;
+    }
+    let image = "registry.fedoraproject.org/fedora:44";
+    let exists = Command::new("podman")
+        .args(["image", "exists", image])
+        .status()
+        .is_ok_and(|status| status.success());
+    if !exists {
+        eprintln!("{image} is not local; skipping podman session test");
+        return;
+    }
+    let work = tempfile::tempdir().expect("work");
+    let stage = tempfile::tempdir().expect("stage");
+    let host = Arch::current().expect("host arch");
+    let sandbox = Sandbox {
+        backend: SandboxBackend::Container(image),
+        workspace: work.path(),
+        stage: stage.path(),
+        host_arch: host,
+        target_arch: host,
+        source_date_epoch: 1_700_000_000,
+        jobs: 1,
+        timeout: None,
+        debuginfo: false,
+        session: std::cell::RefCell::new(None),
+    };
+    sandbox
+        .run(&step(
+            "sh",
+            &[
+                "-c",
+                "test -z \"$(ls /sys/class/net 2>/dev/null | grep -v '^lo$')\"",
+            ],
+        ))
+        .expect("podman container must have no network interfaces");
 }

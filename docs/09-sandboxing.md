@@ -26,6 +26,10 @@ Every native build must satisfy these properties:
 | **Auditable configuration** | The sandbox config digest goes into the provenance attestation. |
 | **Fail closed** | If the sandbox cannot be established, the build fails; `--no-sandbox` is explicit and recorded. |
 
+The QEMU backend is the one deliberate exception to the interface wording in
+the network row: it has a single host-only NIC so the harness can reach SSH.
+`restrict=on` gives the guest no route to the host network or the internet.
+
 ## 3. Backends
 
 | Backend | Isolation | Rootless | Resource limits | OCI rootfs | Complexity | Good for |
@@ -185,7 +189,10 @@ available and reachable, which installed tests need; external egress is blocked.
 
 - `bwrap`: use `--unshare-all` (or at least `--unshare-net`); never `--share-net`.
 - `podman`: `--network none`.
-- QEMU: no NIC (`-net none` or equivalent); no slirp.
+- QEMU: one host-only NIC with `restrict=on` and a hostfwd rule for port 22.
+  It exists solely so the harness can drive the guest. It provides no route to
+  the host network or the internet. The no-network test therefore checks
+  reachability, not interface count.
 - No DNS; do not mount host `/etc/resolv.conf`.
 - No proxy environment variables in the build.
 - Fetch is a separate phase and may reach only the acquisition proxy.
@@ -239,34 +246,55 @@ The sandbox expands templates and builds the deterministic environment; the
 runner only executes the resulting command. The interface is:
 
 ```rust
-pub struct RunnerRequest<'a> {
+pub struct SessionConfig<'a> {
     pub host: Arch,
     pub target: Arch,
     pub workspace: &'a Path,
     pub stage: &'a Path,
+    pub source_date_epoch: u32,
+    pub jobs: u32,
+    pub timeout: Option<u64>,
+    pub debuginfo: bool,
+}
+
+pub struct RunnerRequest<'a> {
     pub command: &'a str,
     pub args: &'a [String],
     pub cwd: &'a str,
     pub env: &'a BTreeMap<String, String>,
-    pub timeout: Option<u64>,
     pub label: &'a str,
 }
 
 pub trait Runner {
     fn name(&self) -> &'static str;
     fn supports(&self, host: Arch, target: Arch) -> bool;
-    fn run(&self, request: &RunnerRequest<'_>) -> Result<()>;
+    fn start(&self, config: &SessionConfig<'_>) -> Result<Box<dyn Session>>;
+}
+
+pub trait Session {
+    fn run(&mut self, request: &RunnerRequest<'_>) -> Result<()>;
+    fn sync_out(&mut self) -> Result<()>;
+    fn stop(&mut self) -> Result<()>;
 }
 ```
 
-`bubblewrap` supports native execution only. The container runner passes
-`--arch` to podman for foreign targets, and the emulated runner uses
-`qemu-user` binfmt with the assembled target root. Both report
-`supports(host, target)` only when the host has a matching enabled binfmt
-handler. The sandbox checks `supports` before spawning
-anything, so an unsupported combination is `RPMX-RUNNER-002`, not a mysterious
-target binary failure. Root assembly and test-root preparation use the same
-host/target contract.
+`bubblewrap` and `podman` support native execution only. `qemu-system` starts
+a full VM for a foreign target with a target kernel, initramfs and a writable
+copy of the assembled root disk. Nothing is shared with the host: the
+workspace and stage are copied in over SSH, and outputs are tarred back over
+the same connection. The guest has one host-only NIC (`restrict=on`) used only
+for the SSH port forward; it cannot reach the host network or the internet.
+The sandbox checks `supports` before starting anything, so an unsupported
+combination is `RPMX-RUNNER-002`, not a mysterious target binary failure.
+Root assembly and test-root preparation use podman's `--arch` and the host
+binfmt handler; build steps do not.
+
+A bootable QEMU root needs a kernel, its modules, `dracut`,
+`systemd-networkd`, `openssh-server` and `tar`. Because root assembly runs package
+scriptlets, the kernel transaction generates `modules.dep` and the initramfs.
+`rpmx` injects the SSH key, a DHCP `.network` unit and the SSH config into the
+disk image, then runs every step through `ssh` and copies the workspace and
+stage back with `tar`.
 
 ## 6. Stage-by-stage coverage
 

@@ -14,6 +14,8 @@ does not promise a stable schema or CLI yet.
 - `rpmx repo` repository metadata and signed `repomd.xml`.
 - One-command `rpmx build` from recipe to SRPM to binary RPMs.
 - Host/target architecture separation and native-architecture defaults.
-- A `Runner` interface with native bubblewrap/container runners and a
-  qemu-user binfmt emulated runner for foreign targets. Root assembly, SRPM
-  embedding and installed tests follow the same host/target contract.
+- A session-based `Runner` interface with bubblewrap, podman and qemu-system
+  backends. Foreign builds use a full VM with a host-only SSH control NIC and
+  tar-based workspace transfer; root assembly and test-root installation use
+  podman --arch. Root assembly, SRPM embedding and installed tests follow the
+  same host/target contract.
