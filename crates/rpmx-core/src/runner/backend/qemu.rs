@@ -1,4 +1,4 @@
-use std::io::{Read, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::thread::JoinHandle;
@@ -232,32 +232,8 @@ impl QemuSession {
     }
 
     fn copy_in(&self, source: &Path, destination: &str) -> Result<()> {
-        let mut archive = Vec::new();
-        {
-            let mut builder = tar::Builder::new(&mut archive);
-            builder.follow_symlinks(false);
-            builder.append_dir_all(".", source).map_err(|error| {
-                Error::new(
-                    codes::RUNNER_003,
-                    format!("cannot archive {}: {error}", source.display()),
-                )
-            })?;
-            builder.finish().map_err(|error| {
-                Error::new(codes::RUNNER_003, format!("cannot finish archive: {error}"))
-            })?;
-        }
         let command = format!("mkdir -p {destination} && tar -C {destination} -xf -");
-        let output = self.ssh(&[command.as_str()], Some(&archive))?;
-        if !output.status.success() {
-            return Err(Error::new(
-                codes::RUNNER_003,
-                format!(
-                    "cannot copy workspace into qemu: {}",
-                    String::from_utf8_lossy(&output.stderr).trim()
-                ),
-            ));
-        }
-        Ok(())
+        stream_tar_in(self.ssh_child(&[command.as_str()])?, source)
     }
 
     fn sync_path(&self, remote: &str, host: &Path) -> Result<()> {
@@ -267,25 +243,119 @@ impl QemuSession {
                 format!("cannot create {}: {error}", host.display()),
             )
         })?;
-        let command = format!("tar -C {remote} -cf - .");
-        let output = self.ssh(&[command.as_str()], None)?;
-        if !output.status.success() {
-            return Err(Error::new(
-                codes::RUNNER_003,
-                format!(
-                    "cannot read {remote} from qemu: {}",
-                    String::from_utf8_lossy(&output.stderr).trim()
-                ),
-            ));
-        }
-        let mut archive = tar::Archive::new(std::io::Cursor::new(output.stdout));
-        archive.unpack(host).map_err(|error| {
+        let archive = tempfile::tempfile_in(host).map_err(|error| {
             Error::new(
                 codes::RUNNER_003,
-                format!("cannot unpack {remote} into {}: {error}", host.display()),
+                format!(
+                    "cannot create a temporary archive in {}: {error}",
+                    host.display()
+                ),
             )
-        })
+        })?;
+        let command = format!("tar -C {remote} -cf - .");
+        stream_tar_out(self.ssh_child(&[command.as_str()])?, remote, host, archive)
     }
+}
+
+fn stream_tar_in(mut child: Child, source: &Path) -> Result<()> {
+    let stderr_reader = QemuSession::take_stderr(&mut child);
+    // `tar -x` is normally silent, but drain stdout anyway so a chatty remote
+    // command cannot block on a full pipe while we are writing the archive.
+    let stdout_reader = child.stdout.take().map(|mut stdout| {
+        std::thread::spawn(move || {
+            let _ = std::io::copy(&mut stdout, &mut std::io::sink());
+        })
+    });
+    let mut stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| Error::new(codes::RUNNER_003, "ssh stdin is not available for copy-in"))?;
+    let archive = (|| -> std::io::Result<()> {
+        let mut builder = tar::Builder::new(&mut stdin);
+        builder.follow_symlinks(false);
+        builder.append_dir_all(".", source)?;
+        builder.finish()
+    })();
+    drop(stdin);
+    if archive.is_err() {
+        let _ = child.kill();
+    }
+    let status = child
+        .wait()
+        .map_err(|error| Error::new(codes::RUNNER_003, format!("ssh failed: {error}")))?;
+    let stderr = QemuSession::join_stderr(stderr_reader)?;
+    if let Some(reader) = stdout_reader {
+        let _ = reader.join();
+    }
+    if !status.success() {
+        let detail = String::from_utf8_lossy(&stderr);
+        let suffix = match &archive {
+            Ok(()) => String::new(),
+            Err(error) => format!("; archive error: {error}"),
+        };
+        return Err(Error::new(
+            codes::RUNNER_003,
+            format!("cannot copy workspace into qemu: {}{suffix}", detail.trim()),
+        ));
+    }
+    archive.map_err(|error| {
+        Error::new(
+            codes::RUNNER_003,
+            format!("cannot archive {}: {error}", source.display()),
+        )
+    })?;
+    Ok(())
+}
+
+fn stream_tar_out(
+    mut child: Child,
+    remote: &str,
+    host: &Path,
+    mut archive: std::fs::File,
+) -> Result<()> {
+    let stderr_reader = QemuSession::take_stderr(&mut child);
+    let mut stdout = child.stdout.take().ok_or_else(|| {
+        Error::new(
+            codes::RUNNER_003,
+            "ssh stdout is not available for sync-out",
+        )
+    })?;
+    let copy = std::io::copy(&mut stdout, &mut archive);
+    drop(stdout);
+    if copy.is_err() {
+        let _ = child.kill();
+    }
+    let status = child
+        .wait()
+        .map_err(|error| Error::new(codes::RUNNER_003, format!("ssh failed: {error}")))?;
+    let stderr = QemuSession::join_stderr(stderr_reader)?;
+    copy.map_err(|error| {
+        Error::new(
+            codes::RUNNER_003,
+            format!("cannot read {remote} from qemu: {error}"),
+        )
+    })?;
+    if !status.success() {
+        return Err(Error::new(
+            codes::RUNNER_003,
+            format!(
+                "cannot read {remote} from qemu: {}",
+                String::from_utf8_lossy(&stderr).trim()
+            ),
+        ));
+    }
+    archive.seek(SeekFrom::Start(0)).map_err(|error| {
+        Error::new(
+            codes::RUNNER_003,
+            format!("cannot rewind the archive from {remote}: {error}"),
+        )
+    })?;
+    tar::Archive::new(archive).unpack(host).map_err(|error| {
+        Error::new(
+            codes::RUNNER_003,
+            format!("cannot unpack {remote} into {}: {error}", host.display()),
+        )
+    })
 }
 
 impl Session for QemuSession {
@@ -544,7 +614,6 @@ fn unpack_kernel(kernel: &Path, scratch: &Path) -> Result<PathBuf> {
             format!("cannot read kernel {}: {error}", kernel.display()),
         )
     })?;
-    use std::io::Read;
     let read = file.read(&mut header).map_err(|error| {
         Error::new(
             codes::RUNNER_003,
@@ -781,4 +850,113 @@ fn shell_quote(value: &str) -> String {
     }
     out.push('\'');
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{shell_quote, stream_tar_in, stream_tar_out};
+    use std::process::{Command, Stdio};
+
+    fn piped(command: &str) -> std::process::Child {
+        Command::new("sh")
+            .arg("-c")
+            .arg(command)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn test transport")
+    }
+
+    #[test]
+    fn streamed_copy_in_preserves_the_workspace() {
+        let root = tempfile::tempdir().expect("work");
+        let source = root.path().join("source");
+        let destination = root.path().join("destination");
+        std::fs::create_dir_all(source.join("nested")).expect("source dir");
+        std::fs::write(source.join("nested/payload.bin"), vec![0xab; 1024 * 1024])
+            .expect("payload");
+
+        let quoted = shell_quote(&destination.display().to_string());
+        let child = piped(&format!("mkdir -p {quoted} && tar -C {quoted} -xf -"));
+        stream_tar_in(child, &source).expect("stream copy-in");
+
+        let copied = std::fs::read(destination.join("nested/payload.bin")).expect("copied payload");
+        assert_eq!(copied.len(), 1024 * 1024);
+        assert!(copied.iter().all(|byte| *byte == 0xab));
+    }
+
+    #[test]
+    fn streamed_sync_out_preserves_the_workspace() {
+        let root = tempfile::tempdir().expect("work");
+        let remote = root.path().join("remote");
+        let host = root.path().join("host");
+        std::fs::create_dir_all(remote.join("nested")).expect("remote dir");
+        std::fs::write(remote.join("nested/payload.txt"), b"streamed\n").expect("payload");
+        std::fs::create_dir_all(&host).expect("host dir");
+
+        let quoted = shell_quote(&remote.display().to_string());
+        let child = piped(&format!("tar -C {quoted} -cf - ."));
+        let archive = tempfile::tempfile_in(&host).expect("archive");
+        stream_tar_out(child, "remote", &host, archive).expect("stream sync-out");
+
+        assert_eq!(
+            std::fs::read(host.join("nested/payload.txt")).expect("copied payload"),
+            b"streamed\n"
+        );
+    }
+
+    #[test]
+    fn streamed_copy_in_reports_remote_failure() {
+        let root = tempfile::tempdir().expect("work");
+        let source = root.path().join("source");
+        std::fs::create_dir_all(&source).expect("source dir");
+        std::fs::write(source.join("file.txt"), b"x").expect("payload");
+
+        let child = piped("cat >/dev/null; echo boom >&2; exit 1");
+        let error = stream_tar_in(child, &source).expect_err("remote failure");
+        assert!(error.message.contains("boom"), "{}", error.message);
+    }
+
+    #[test]
+    fn streamed_sync_out_reports_remote_failure() {
+        let root = tempfile::tempdir().expect("work");
+        let host = root.path().join("host");
+        std::fs::create_dir_all(&host).expect("host dir");
+
+        let child = piped("echo boom >&2; exit 1");
+        let archive = tempfile::tempfile_in(&host).expect("archive");
+        let error = stream_tar_out(child, "remote", &host, archive).expect_err("remote failure");
+        assert!(error.message.contains("boom"), "{}", error.message);
+    }
+    #[test]
+    fn failed_sync_out_does_not_modify_the_host() {
+        let root = tempfile::tempdir().expect("work");
+        let host = root.path().join("host");
+        std::fs::create_dir_all(&host).expect("host dir");
+        std::fs::write(host.join("existing.txt"), b"old").expect("host file");
+
+        let archive_path = root.path().join("payload.tar");
+        let file = std::fs::File::create(&archive_path).expect("archive");
+        let mut builder = tar::Builder::new(file);
+        let mut header = tar::Header::new_gnu();
+        header.set_path("existing.txt").expect("path");
+        header.set_size(3);
+        header.set_mode(0o644);
+        header.set_cksum();
+        builder.append(&header, &b"new"[..]).expect("append");
+        builder.finish().expect("finish");
+
+        let child = piped(&format!(
+            "cat {}; exit 1",
+            shell_quote(&archive_path.display().to_string())
+        ));
+        let archive = tempfile::tempfile_in(&host).expect("archive");
+        let error = stream_tar_out(child, "remote", &host, archive).expect_err("remote failure");
+        assert_eq!(error.code, "RPMX-RUNNER-003");
+        assert_eq!(
+            std::fs::read(host.join("existing.txt")).expect("host file"),
+            b"old"
+        );
+    }
 }
