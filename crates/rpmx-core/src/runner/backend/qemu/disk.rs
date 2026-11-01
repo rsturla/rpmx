@@ -1,4 +1,4 @@
-use std::io::{Read, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
@@ -10,6 +10,9 @@ use crate::runner::RunnerConfig;
 /// The guest serial console is diagnostic only; cap what it can write to the
 /// host so a noisy guest cannot fill the disk.
 const LOG_LIMIT: usize = 1024 * 1024;
+
+/// A decompressed kernel image larger than this is not legitimate.
+const MAX_KERNEL_BYTES: u64 = 512 * 1024 * 1024;
 
 struct CappedLog {
     file: std::fs::File,
@@ -106,6 +109,10 @@ pub(super) fn find_kernel(root: &Path) -> Result<PathBuf> {
 }
 
 pub(super) fn unpack_kernel(kernel: &Path, scratch: &Path) -> Result<PathBuf> {
+    unpack_kernel_with_limit(kernel, scratch, MAX_KERNEL_BYTES)
+}
+
+fn unpack_kernel_with_limit(kernel: &Path, scratch: &Path, limit: u64) -> Result<PathBuf> {
     let mut header = [0u8; 32];
     let mut file = std::fs::File::open(kernel).map_err(|error| {
         Error::new(
@@ -122,8 +129,8 @@ pub(super) fn unpack_kernel(kernel: &Path, scratch: &Path) -> Result<PathBuf> {
     if read < 32 || &header[0..2] != b"MZ" || &header[4..8] != b"zimg" {
         return Ok(kernel.to_path_buf());
     }
-    let offset = u32::from_le_bytes(header[8..12].try_into().unwrap()) as usize;
-    let size = u32::from_le_bytes(header[12..16].try_into().unwrap()) as usize;
+    let offset = u64::from(u32::from_le_bytes(header[8..12].try_into().unwrap()));
+    let size = u64::from(u32::from_le_bytes(header[12..16].try_into().unwrap()));
     let compression = String::from_utf8_lossy(&header[24..28]);
     if compression != "zstd" {
         return Err(Error::new(
@@ -134,34 +141,63 @@ pub(super) fn unpack_kernel(kernel: &Path, scratch: &Path) -> Result<PathBuf> {
             ),
         ));
     }
-    let bytes = std::fs::read(kernel).map_err(|error| {
-        Error::new(
-            codes::RUNNER_003,
-            format!("cannot read kernel {}: {error}", kernel.display()),
-        )
-    })?;
     let end = offset
         .checked_add(size)
         .ok_or_else(|| Error::new(codes::RUNNER_003, "EFI zboot kernel size overflows"))?;
-    if end > bytes.len() {
+    let length = file
+        .metadata()
+        .map_err(|error| {
+            Error::new(
+                codes::RUNNER_003,
+                format!("cannot stat kernel {}: {error}", kernel.display()),
+            )
+        })?
+        .len();
+    if end > length {
         return Err(Error::new(
             codes::RUNNER_003,
             "EFI zboot kernel payload extends past the file",
         ));
     }
-    let image = zstd::stream::decode_all(&bytes[offset..end]).map_err(|error| {
+    file.seek(SeekFrom::Start(offset)).map_err(|error| {
         Error::new(
             codes::RUNNER_003,
-            format!("cannot decompress kernel {}: {error}", kernel.display()),
+            format!("cannot seek kernel {}: {error}", kernel.display()),
+        )
+    })?;
+    let decoder = zstd::stream::read::Decoder::new(file.take(size)).map_err(|error| {
+        Error::new(
+            codes::RUNNER_003,
+            format!(
+                "cannot open compressed kernel {}: {error}",
+                kernel.display()
+            ),
         )
     })?;
     let path = scratch.join("Image");
-    std::fs::write(&path, image).map_err(|error| {
+    let mut output = std::fs::File::create(&path).map_err(|error| {
         Error::new(
             codes::RUNNER_003,
             format!("cannot write {}: {error}", path.display()),
         )
     })?;
+    let copied = std::io::copy(&mut decoder.take(limit + 1), &mut output).map_err(|error| {
+        Error::new(
+            codes::RUNNER_003,
+            format!("cannot decompress kernel {}: {error}", kernel.display()),
+        )
+    })?;
+    if copied > limit {
+        drop(output);
+        let _ = std::fs::remove_file(&path);
+        return Err(Error::new(
+            codes::RUNNER_003,
+            format!(
+                "decompressed kernel {} exceeds the {limit}-byte limit",
+                kernel.display()
+            ),
+        ));
+    }
     Ok(path)
 }
 
@@ -320,6 +356,50 @@ pub(super) fn start_vm(
 #[cfg(test)]
 mod tests {
     use super::CappedLog;
+
+    #[test]
+    fn efi_zboot_kernel_is_streamed_and_unpacked() {
+        use std::io::Write;
+
+        let dir = tempfile::tempdir().expect("work");
+        let kernel = dir.path().join("vmlinuz");
+        let payload = zstd::stream::encode_all(&b"kernel image"[..], 0).expect("compress");
+        let mut header = [0u8; 32];
+        header[0..2].copy_from_slice(b"MZ");
+        header[4..8].copy_from_slice(b"zimg");
+        header[8..12].copy_from_slice(&32u32.to_le_bytes());
+        header[12..16].copy_from_slice(&(payload.len() as u32).to_le_bytes());
+        header[24..28].copy_from_slice(b"zstd");
+        let mut file = std::fs::File::create(&kernel).expect("kernel");
+        file.write_all(&header).expect("header");
+        file.write_all(&payload).expect("payload");
+
+        let image = super::unpack_kernel(&kernel, dir.path()).expect("unpack kernel");
+        assert_eq!(std::fs::read(image).expect("image"), b"kernel image");
+    }
+
+    #[test]
+    fn oversized_efi_zboot_kernel_is_rejected_and_removed() {
+        use std::io::Write;
+
+        let dir = tempfile::tempdir().expect("work");
+        let kernel = dir.path().join("vmlinuz");
+        let payload = zstd::stream::encode_all(&b"kernel image"[..], 0).expect("compress");
+        let mut header = [0u8; 32];
+        header[0..2].copy_from_slice(b"MZ");
+        header[4..8].copy_from_slice(b"zimg");
+        header[8..12].copy_from_slice(&32u32.to_le_bytes());
+        header[12..16].copy_from_slice(&(payload.len() as u32).to_le_bytes());
+        header[24..28].copy_from_slice(b"zstd");
+        let mut file = std::fs::File::create(&kernel).expect("kernel");
+        file.write_all(&header).expect("header");
+        file.write_all(&payload).expect("payload");
+
+        let error =
+            super::unpack_kernel_with_limit(&kernel, dir.path(), 4).expect_err("kernel cap");
+        assert!(error.message.contains("exceeds"), "{}", error.message);
+        assert!(!dir.path().join("Image").exists());
+    }
 
     #[test]
     fn capped_log_discards_bytes_after_the_limit() {

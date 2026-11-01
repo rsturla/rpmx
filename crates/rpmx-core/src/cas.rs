@@ -51,6 +51,28 @@ pub fn store(cache: &Path, bytes: &[u8]) -> Result<String> {
     Ok(digest)
 }
 
+/// Move an already-verified file into the CAS. The caller must have checked
+/// that its content matches `digest`.
+pub fn store_file(cache: &Path, source: &Path, digest: &str) -> Result<()> {
+    let target = path(cache, digest)?;
+    if target.exists() {
+        return Ok(());
+    }
+    let parent = target.parent().expect("CAS path has a parent");
+    std::fs::create_dir_all(parent).map_err(|error| {
+        Error::new(
+            codes::ROOT_011,
+            format!("cannot create {}: {error}", parent.display()),
+        )
+    })?;
+    std::fs::rename(source, &target).map_err(|error| {
+        Error::new(
+            codes::ROOT_011,
+            format!("cannot publish {}: {error}", target.display()),
+        )
+    })
+}
+
 pub struct GcOptions<'a> {
     /// Digests that must stay, usually read from root locks and recipes.
     pub keep: &'a BTreeSet<String>,

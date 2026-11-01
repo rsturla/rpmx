@@ -29,6 +29,31 @@ outputs:
 }
 
 #[test]
+fn file_locator_rejects_a_non_regular_file() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::create_dir(dir.path().join("source.txt")).expect("directory");
+    let yaml = recipe(
+        &format!("sha512:{}", "0".repeat(128)),
+        "      - kind: file\n        path: source.txt",
+    );
+    let recipe = parse_recipe(&yaml).expect("recipe");
+    let cache = dir.path().join("cache");
+
+    let error = fetch_sources(
+        &recipe,
+        FetchOptions {
+            cache: &cache,
+            proxy: None,
+            offline: false,
+            base_dir: dir.path(),
+        },
+    )
+    .expect_err("directory locator");
+    assert_eq!(error.code, "RPMX-FETCH-005");
+    assert!(error.message.contains("regular file"), "{}", error.message);
+}
+
+#[test]
 fn file_locator_populates_the_cache() {
     let dir = tempfile::tempdir().expect("tempdir");
     let bytes = b"source bytes";

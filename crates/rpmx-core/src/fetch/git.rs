@@ -3,7 +3,12 @@ use std::path::Path;
 use crate::error::{codes, Error, Result};
 use crate::model::{Locator, Source};
 
-pub(crate) fn git_archive(source: &Source, locator: &Locator, cache: &Path) -> Result<Vec<u8>> {
+pub(crate) fn git_archive(
+    source: &Source,
+    locator: &Locator,
+    cache: &Path,
+    temp_dir: &Path,
+) -> Result<tempfile::TempPath> {
     let url = locator.url.as_deref().ok_or_else(|| {
         Error::new(
             codes::FETCH_002,
@@ -56,7 +61,7 @@ pub(crate) fn git_archive(source: &Source, locator: &Locator, cache: &Path) -> R
                 ),
             ));
         }
-        build_git_tar(&scratch, &source.name)
+        build_git_tar(&scratch, &source.name, temp_dir)
     })();
     std::fs::remove_dir_all(&scratch).ok();
     result
@@ -104,7 +109,7 @@ fn git_output(directory: &Path, args: &[&str]) -> Result<String> {
     }
 }
 
-fn build_git_tar(root: &Path, prefix: &str) -> Result<Vec<u8>> {
+fn build_git_tar(root: &Path, prefix: &str, temp_dir: &Path) -> Result<tempfile::TempPath> {
     use std::os::unix::fs::PermissionsExt;
     if prefix.is_empty() || prefix.contains('/') || prefix == "." || prefix == ".." {
         return Err(Error::new(
@@ -116,9 +121,15 @@ fn build_git_tar(root: &Path, prefix: &str) -> Result<Vec<u8>> {
     collect_git_entries(root, root, &mut entries)?;
     entries.sort();
 
+    let output = tempfile::NamedTempFile::new_in(temp_dir).map_err(|error| {
+        Error::new(
+            codes::FETCH_003,
+            format!("cannot create a staging file for git source '{prefix}': {error}"),
+        )
+    })?;
     let encoder = flate2::GzBuilder::new()
         .mtime(0)
-        .write(Vec::new(), flate2::Compression::default());
+        .write(output, flate2::Compression::default());
     let mut tar = tar::Builder::new(encoder);
     for relative in entries {
         let path = root.join(&relative);
@@ -160,16 +171,16 @@ fn build_git_tar(root: &Path, prefix: &str) -> Result<Vec<u8>> {
                     Error::new(codes::FETCH_003, format!("cannot archive {name}: {error}"))
                 })?;
         } else if metadata.is_file() {
-            let data = std::fs::read(&path).map_err(|error| {
+            let mut file = std::fs::File::open(&path).map_err(|error| {
                 Error::new(
                     codes::FETCH_003,
                     format!("cannot read {}: {error}", path.display()),
                 )
             })?;
             header.set_entry_type(tar::EntryType::Regular);
-            header.set_size(data.len() as u64);
+            header.set_size(metadata.len());
             header.set_cksum();
-            tar.append_data(&mut header, &name, data.as_slice())
+            tar.append_data(&mut header, &name, &mut file)
                 .map_err(|error| {
                     Error::new(codes::FETCH_003, format!("cannot archive {name}: {error}"))
                 })?;
@@ -178,9 +189,10 @@ fn build_git_tar(root: &Path, prefix: &str) -> Result<Vec<u8>> {
     let encoder = tar
         .into_inner()
         .map_err(|error| Error::new(codes::FETCH_003, format!("cannot finish tar: {error}")))?;
-    encoder
+    let output = encoder
         .finish()
-        .map_err(|error| Error::new(codes::FETCH_003, format!("cannot finish gzip: {error}")))
+        .map_err(|error| Error::new(codes::FETCH_003, format!("cannot finish gzip: {error}")))?;
+    Ok(output.into_temp_path())
 }
 
 fn collect_git_entries(root: &Path, directory: &Path, entries: &mut Vec<String>) -> Result<()> {

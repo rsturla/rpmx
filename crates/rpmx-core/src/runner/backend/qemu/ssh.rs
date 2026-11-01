@@ -1,21 +1,21 @@
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::{Read, Write};
 use std::path::Path;
 use std::process::{Child, ExitStatus};
-use std::thread::JoinHandle;
+use std::sync::mpsc::{self, Receiver};
+use std::time::Duration;
 
 use crate::error::{codes, Error, Result};
 use crate::runner::RunnerRequest;
+use crate::terminal::Sanitizer;
 
 /// Keep error diagnostics useful without letting a hostile or noisy guest
 /// grow host memory without bound. The last `STDERR_LIMIT` bytes are retained;
 /// everything older is drained and discarded.
 const STDERR_LIMIT: usize = 64 * 1024;
-/// Hard ceiling for a guest archive staged on the host. This bounds disk and
-/// the memory the tar crate may use for extension headers.
-const MAX_TRANSFER_BYTES: u64 = 8 * 1024 * 1024 * 1024;
-/// GNU long-name/link and PAX extension headers are read fully into memory by
-/// the tar crate; keep that allocation small.
-const MAX_EXTENSION_BYTES: u64 = 1024 * 1024;
+
+/// The guest is untrusted output, not an operator-sized input. Cap what a
+/// sync-out can stage even though SRPM/RPM/source sizes are uncapped.
+pub(crate) const MAX_GUEST_TRANSFER_BYTES: u64 = 8 * 1024 * 1024 * 1024;
 
 fn retain_tail(buffer: &mut Vec<u8>, bytes: &[u8]) {
     buffer.extend_from_slice(bytes);
@@ -25,82 +25,111 @@ fn retain_tail(buffer: &mut Vec<u8>, bytes: &[u8]) {
     }
 }
 
-fn take_stderr(child: &mut Child) -> Option<JoinHandle<std::io::Result<Vec<u8>>>> {
+fn take_stderr(child: &mut Child) -> Option<Receiver<std::io::Result<Vec<u8>>>> {
     child.stderr.take().map(|mut stderr| {
+        let (done, finished) = mpsc::channel();
         std::thread::spawn(move || {
             let mut buffer = Vec::new();
+            let mut clean = Vec::new();
+            let mut sanitizer = Sanitizer::default();
             let mut chunk = [0u8; 8192];
-            loop {
-                let read = stderr.read(&mut chunk)?;
-                if read == 0 {
-                    break;
+            let result = loop {
+                match stderr.read(&mut chunk) {
+                    Ok(0) => break Ok(buffer),
+                    Ok(read) => {
+                        clean.clear();
+                        sanitizer.push(&chunk[..read], &mut clean);
+                        retain_tail(&mut buffer, &clean);
+                    }
+                    Err(error) => break Err(error),
                 }
-                retain_tail(&mut buffer, &chunk[..read]);
-            }
-            Ok(buffer)
-        })
+            };
+            let _ = done.send(result);
+        });
+        finished
     })
 }
 
 pub(super) fn take_stderr_with_echo(
     child: &mut Child,
-) -> Option<JoinHandle<std::io::Result<Vec<u8>>>> {
+) -> Option<Receiver<std::io::Result<Vec<u8>>>> {
     child.stderr.take().map(|mut stderr| {
+        let (done, finished) = mpsc::channel();
         std::thread::spawn(move || {
             let mut buffer = Vec::new();
+            let mut clean = Vec::new();
+            let mut sanitizer = Sanitizer::default();
             let mut chunk = [0u8; 8192];
-            loop {
-                let read = stderr.read(&mut chunk)?;
-                if read == 0 {
-                    break;
+            let result = loop {
+                match stderr.read(&mut chunk) {
+                    Ok(0) => break Ok(buffer),
+                    Ok(read) => {
+                        clean.clear();
+                        sanitizer.push(&chunk[..read], &mut clean);
+                        let _ = std::io::stderr().write_all(&clean);
+                        retain_tail(&mut buffer, &clean);
+                    }
+                    Err(error) => break Err(error),
                 }
-                let _ = std::io::stderr().write_all(&chunk[..read]);
-                retain_tail(&mut buffer, &chunk[..read]);
-            }
-            Ok(buffer)
-        })
+            };
+            let _ = done.send(result);
+        });
+        finished
     })
 }
 
-pub(super) fn take_stdout_echo(child: &mut Child) -> Option<JoinHandle<std::io::Result<()>>> {
+pub(super) fn take_stdout_echo(child: &mut Child) -> Option<Receiver<std::io::Result<()>>> {
     child.stdout.take().map(|mut stdout| {
+        let (done, finished) = mpsc::channel();
         std::thread::spawn(move || {
             let mut out = std::io::stdout().lock();
             let mut error = None;
+            let mut clean = Vec::new();
+            let mut sanitizer = Sanitizer::default();
             let mut chunk = [0u8; 8192];
             loop {
-                let read = stdout.read(&mut chunk)?;
-                if read == 0 {
-                    break;
-                }
-                if let Err(write) = out.write_all(&chunk[..read]) {
-                    error.get_or_insert(write);
+                match stdout.read(&mut chunk) {
+                    Ok(0) => break,
+                    Ok(read) => {
+                        clean.clear();
+                        sanitizer.push(&chunk[..read], &mut clean);
+                        if let Err(write) = out.write_all(&clean) {
+                            error.get_or_insert(write);
+                        }
+                    }
+                    Err(read) => {
+                        error.get_or_insert(read);
+                        break;
+                    }
                 }
             }
             if let Err(flush) = out.flush() {
                 error.get_or_insert(flush);
             }
-            match error {
+            let result = match error {
                 Some(error) => Err(error),
                 None => Ok(()),
-            }
-        })
+            };
+            let _ = done.send(result);
+        });
+        finished
     })
 }
 
-pub(super) fn join_stderr(handle: Option<JoinHandle<std::io::Result<Vec<u8>>>>) -> Result<Vec<u8>> {
+pub(super) fn join_stderr(handle: Option<Receiver<std::io::Result<Vec<u8>>>>) -> Result<Vec<u8>> {
     let Some(handle) = handle else {
         return Ok(Vec::new());
     };
-    handle
-        .join()
-        .map_err(|_| Error::new(codes::RUNNER_003, "ssh stderr reader panicked"))?
-        .map_err(|error| {
-            Error::new(
-                codes::RUNNER_003,
-                format!("cannot read ssh stderr: {error}"),
-            )
-        })
+    match handle.recv_timeout(Duration::from_secs(2)) {
+        Ok(Ok(buffer)) => Ok(buffer),
+        Ok(Err(error)) => Err(Error::new(
+            codes::RUNNER_003,
+            format!("cannot read ssh stderr: {error}"),
+        )),
+        // A daemonized guest process may keep the pipe open after the timeout
+        // killed ssh. Report without diagnostics rather than hanging.
+        Err(_) => Ok(Vec::new()),
+    }
 }
 
 fn exit_reason(status: ExitStatus) -> String {
@@ -146,9 +175,7 @@ pub(super) fn stream_tar_in(mut child: Child, source: &Path, label: &str) -> Res
         .wait()
         .map_err(|error| Error::new(codes::RUNNER_003, format!("ssh failed: {error}")))?;
     let stderr = join_stderr(stderr_reader)?;
-    if let Some(reader) = stdout_reader {
-        let _ = reader.join();
-    }
+    drop(stdout_reader);
     if let Err(error) = &archive {
         let remote = if stderr.is_empty() {
             String::new()
@@ -179,65 +206,13 @@ pub(super) fn stream_tar_in(mut child: Child, source: &Path, label: &str) -> Res
     Ok(())
 }
 
-fn read_tar_header(reader: &mut std::fs::File, header: &mut [u8; 512]) -> std::io::Result<bool> {
-    let mut filled = 0;
-    while filled < header.len() {
-        let read = reader.read(&mut header[filled..])?;
-        if read == 0 {
-            if filled == 0 {
-                return Ok(false);
-            }
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::UnexpectedEof,
-                "truncated tar header",
-            ));
-        }
-        filled += read;
-    }
-    Ok(true)
-}
-
-fn parse_tar_size(field: &[u8], remote: &str) -> Result<u64> {
-    if field.first().is_some_and(|byte| byte & 0x80 != 0) {
-        let mut value = u64::from(field[0] & 0x7f);
-        for byte in &field[1..] {
-            value = value
-                .checked_shl(8)
-                .and_then(|value| value.checked_add(u64::from(*byte)))
-                .ok_or_else(|| {
-                    Error::new(
-                        codes::RUNNER_003,
-                        format!("archive from {remote} has an overflowing entry size"),
-                    )
-                })?;
-        }
-        return Ok(value);
-    }
-    let text = std::str::from_utf8(field).map_err(|error| {
-        Error::new(
-            codes::RUNNER_003,
-            format!("archive from {remote} has a non-UTF-8 entry size: {error}"),
-        )
-    })?;
-    let text = text.trim_matches(|character: char| character == '\0' || character == ' ');
-    if text.is_empty() {
-        return Ok(0);
-    }
-    u64::from_str_radix(text, 8).map_err(|error| {
-        Error::new(
-            codes::RUNNER_003,
-            format!("archive from {remote} has an invalid entry size: {error}"),
-        )
-    })
-}
-
 fn copy_archive(
     reader: &mut impl Read,
     archive: &mut std::fs::File,
     remote: &str,
     host: &Path,
 ) -> Result<()> {
-    copy_archive_with_limit(reader, archive, remote, host, MAX_TRANSFER_BYTES)
+    copy_archive_with_limit(reader, archive, remote, host, MAX_GUEST_TRANSFER_BYTES)
 }
 
 fn copy_archive_with_limit(
@@ -263,7 +238,7 @@ fn copy_archive_with_limit(
         if total > limit {
             return Err(Error::new(
                 codes::RUNNER_003,
-                format!("archive from {remote} exceeds the {limit}-byte transfer limit"),
+                format!("archive from {remote} exceeds the {limit}-byte guest transfer limit"),
             ));
         }
         archive.write_all(&chunk[..read]).map_err(|error| {
@@ -276,67 +251,6 @@ fn copy_archive_with_limit(
             )
         })?;
     }
-}
-
-fn validate_archive(archive: &mut std::fs::File, remote: &str) -> Result<()> {
-    archive.seek(SeekFrom::Start(0)).map_err(|error| {
-        Error::new(
-            codes::RUNNER_003,
-            format!("cannot rewind the archive from {remote}: {error}"),
-        )
-    })?;
-    let mut header = [0u8; 512];
-    loop {
-        if !read_tar_header(archive, &mut header).map_err(|error| {
-            Error::new(
-                codes::RUNNER_003,
-                format!("cannot read the archive from {remote}: {error}"),
-            )
-        })? {
-            break;
-        }
-        if header.iter().all(|byte| *byte == 0) {
-            break;
-        }
-        let size = parse_tar_size(&header[124..136], remote)?;
-        if size > MAX_TRANSFER_BYTES {
-            return Err(Error::new(
-                codes::RUNNER_003,
-                format!(
-                    "archive from {remote} declares a {size}-byte entry; the transfer limit is {MAX_TRANSFER_BYTES} bytes"
-                ),
-            ));
-        }
-        let typeflag = header[156];
-        if matches!(typeflag, b'L' | b'K' | b'x' | b'g') && size > MAX_EXTENSION_BYTES {
-            return Err(Error::new(
-                codes::RUNNER_003,
-                format!(
-                    "archive from {remote} has a {size}-byte tar extension header; the limit is {MAX_EXTENSION_BYTES} bytes"
-                ),
-            ));
-        }
-        let skip = size.div_ceil(512).saturating_mul(512);
-        let skip = i64::try_from(skip).map_err(|_| {
-            Error::new(
-                codes::RUNNER_003,
-                format!("archive from {remote} has an entry too large to skip"),
-            )
-        })?;
-        archive.seek(SeekFrom::Current(skip)).map_err(|error| {
-            Error::new(
-                codes::RUNNER_003,
-                format!("cannot scan the archive from {remote}: {error}"),
-            )
-        })?;
-    }
-    archive.seek(SeekFrom::Start(0)).map_err(|error| {
-        Error::new(
-            codes::RUNNER_003,
-            format!("cannot rewind the archive from {remote}: {error}"),
-        )
-    })?;
-    Ok(())
 }
 
 pub(super) fn stream_tar_out(
@@ -361,9 +275,18 @@ pub(super) fn stream_tar_out(
         .map_err(|error| Error::new(codes::RUNNER_003, format!("ssh failed: {error}")))?;
     let stderr = join_stderr(stderr_reader)?;
     if let Err(error) = copy {
-        if status.success() || stderr.is_empty() {
+        if status.success() {
             return Err(error);
         }
+        let remote = if stderr.is_empty() {
+            format!(" ({})", exit_reason(status))
+        } else {
+            format!(" ({}): {}", exit_reason(status), remote_detail(&stderr))
+        };
+        return Err(Error::new(
+            codes::RUNNER_003,
+            format!("{}{remote}", error.message),
+        ));
     }
     if !status.success() {
         return Err(Error::new(
@@ -375,7 +298,12 @@ pub(super) fn stream_tar_out(
             ),
         ));
     }
-    validate_archive(&mut archive, remote)?;
+    crate::tar_guard::validate(
+        &mut archive,
+        &format!("archive from {remote}"),
+        codes::RUNNER_003,
+        Some(MAX_GUEST_TRANSFER_BYTES),
+    )?;
     tar::Archive::new(archive).unpack(host).map_err(|error| {
         Error::new(
             codes::RUNNER_003,
@@ -410,9 +338,7 @@ pub(super) fn stream_command_output(
         .wait()
         .map_err(|error| Error::new(codes::RUNNER_003, format!("ssh failed: {error}")))?;
     let stderr = join_stderr(stderr)?;
-    if let Some(reader) = stdout {
-        let _ = reader.join();
-    }
+    drop(stdout);
     if let Some(error) = write_error {
         if status.success() {
             return Err(Error::new(
@@ -472,15 +398,7 @@ mod tests {
     }
 
     #[test]
-    fn step_stderr_is_captured_for_the_error_message() {
-        let child = piped("printf 'warning\\n' >&2");
-        let (status, stderr) = stream_command_output(child, None).expect("stream output");
-        assert!(status.success());
-        assert_eq!(stderr, b"warning\n");
-    }
-
-    #[test]
-    fn archive_transfer_is_capped() {
+    fn guest_archive_transfer_is_capped() {
         let root = tempfile::tempdir().expect("work");
         let path = root.path().join("archive");
         let mut archive = std::fs::File::create(&path).expect("archive");
@@ -489,38 +407,18 @@ mod tests {
             super::copy_archive_with_limit(&mut reader, &mut archive, "remote", root.path(), 8)
                 .expect_err("transfer cap");
         assert!(
-            error.message.contains("transfer limit"),
+            error.message.contains("guest transfer limit"),
             "{}",
             error.message
         );
     }
 
     #[test]
-    fn oversized_tar_extension_headers_are_rejected() {
-        use std::io::{Seek, SeekFrom, Write};
-
-        let root = tempfile::tempdir().expect("work");
-        let path = root.path().join("archive");
-        let mut archive = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(&path)
-            .expect("archive");
-        let mut header = [0u8; 512];
-        header[156] = b'L';
-        let size = format!("{:011o}\0", 2 * 1024 * 1024);
-        header[124..136].copy_from_slice(size.as_bytes());
-        archive.write_all(&header).expect("header");
-        archive.seek(SeekFrom::Start(0)).expect("rewind");
-
-        let error = super::validate_archive(&mut archive, "remote").expect_err("extension cap");
-        assert!(
-            error.message.contains("extension header"),
-            "{}",
-            error.message
-        );
+    fn step_stderr_is_captured_for_the_error_message() {
+        let child = piped("printf 'warning\\n' >&2");
+        let (status, stderr) = stream_command_output(child, None).expect("stream output");
+        assert!(status.success());
+        assert_eq!(stderr, b"warning\n");
     }
 
     #[test]

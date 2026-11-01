@@ -114,15 +114,19 @@ impl QemuSession {
         ]
     }
 
-    fn ssh_command(&self, command: &[&str]) -> Command {
+    fn ssh_command_with_timeout(&self, command: &[&str], timeout: NonZeroU64) -> Command {
         let mut process = Command::new("timeout");
         process
             .arg("--signal=TERM")
             .arg("--kill-after=5")
-            .arg(self.timeout.get().to_string())
+            .arg(timeout.get().to_string())
             .arg("ssh");
         process.args(self.ssh_args()).args(command);
         process
+    }
+
+    fn ssh_command(&self, command: &[&str]) -> Command {
+        self.ssh_command_with_timeout(command, self.timeout)
     }
 
     fn ssh_child(&self, command: &[&str]) -> Result<Child> {
@@ -143,7 +147,16 @@ impl QemuSession {
         command: &[&str],
         stdin: Option<&[u8]>,
     ) -> Result<(std::process::ExitStatus, Vec<u8>)> {
-        let mut process = self.ssh_command(command);
+        self.ssh_run_with_timeout(command, stdin, self.timeout)
+    }
+
+    fn ssh_run_with_timeout(
+        &self,
+        command: &[&str],
+        stdin: Option<&[u8]>,
+        timeout: NonZeroU64,
+    ) -> Result<(std::process::ExitStatus, Vec<u8>)> {
+        let mut process = self.ssh_command_with_timeout(command, timeout);
         process.stdin(if stdin.is_some() {
             Stdio::piped()
         } else {
@@ -179,7 +192,8 @@ impl QemuSession {
                     ),
                 ));
             }
-            if let Ok((status, _)) = self.ssh_run(&["true"], None) {
+            let probe_timeout = NonZeroU64::new(15).expect("non-zero probe timeout");
+            if let Ok((status, _)) = self.ssh_run_with_timeout(&["true"], None, probe_timeout) {
                 if status.success() {
                     return Ok(());
                 }
@@ -473,7 +487,9 @@ mod tests {
         let error =
             stream_tar_out(child, "remote", root.path(), archive).expect_err("write failure");
         assert!(
-            error.message.contains("cannot read remote"),
+            error
+                .message
+                .contains("cannot write the archive for remote"),
             "{}",
             error.message
         );

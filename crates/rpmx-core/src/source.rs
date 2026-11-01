@@ -1,4 +1,4 @@
-use std::io::Write;
+use std::io::{Read, Write};
 use std::num::{NonZeroU32, NonZeroU64};
 use std::path::{Path, PathBuf};
 
@@ -179,21 +179,7 @@ pub fn apply_patches(
 fn materialize(path: &Path, name: &str, archive: bool, workspace: &Path) -> Result<()> {
     let target = workspace.join(name);
     if archive {
-        let file = std::fs::File::open(path).map_err(|error| {
-            Error::new(
-                codes::SOURCE_031,
-                format!("cannot open {}: {error}", path.display()),
-            )
-        })?;
-        let decoder = flate2::read::GzDecoder::new(file);
-        let mut archive = tar::Archive::new(decoder);
-        archive.unpack(workspace).map_err(|error| {
-            Error::new(
-                codes::SOURCE_031,
-                format!("cannot unpack {}: {error}", path.display()),
-            )
-        })?;
-        return Ok(());
+        return unpack_gzip(path, workspace);
     }
     std::fs::copy(path, &target).map_err(|error| {
         Error::new(
@@ -202,6 +188,59 @@ fn materialize(path: &Path, name: &str, archive: bool, workspace: &Path) -> Resu
         )
     })?;
     Ok(())
+}
+
+/// Decompress into an anonymous staging file with a hard byte cap, validate the
+/// tar walk, then unpack. The archive is recipe- or SRPM-controlled, so it must
+/// not be handed to the tar crate directly.
+fn unpack_gzip(path: &Path, workspace: &Path) -> Result<()> {
+    std::fs::create_dir_all(workspace).map_err(|error| {
+        Error::new(
+            codes::SOURCE_031,
+            format!("cannot create {}: {error}", workspace.display()),
+        )
+    })?;
+    let file = std::fs::File::open(path).map_err(|error| {
+        Error::new(
+            codes::SOURCE_031,
+            format!("cannot open {}: {error}", path.display()),
+        )
+    })?;
+    let mut decoder = flate2::read::GzDecoder::new(file);
+    let mut staged = tempfile::tempfile_in(workspace).map_err(|error| {
+        Error::new(
+            codes::SOURCE_031,
+            format!("cannot stage {}: {error}", path.display()),
+        )
+    })?;
+    let subject = format!("archive {}", path.display());
+    let mut chunk = [0u8; 64 * 1024];
+    loop {
+        let read = decoder.read(&mut chunk).map_err(|error| {
+            Error::new(
+                codes::SOURCE_031,
+                format!("cannot decompress {}: {error}", path.display()),
+            )
+        })?;
+        if read == 0 {
+            break;
+        }
+        staged.write_all(&chunk[..read]).map_err(|error| {
+            Error::new(
+                codes::SOURCE_031,
+                format!("cannot stage {}: {error}", path.display()),
+            )
+        })?;
+    }
+    crate::tar_guard::validate(&mut staged, &subject, codes::SOURCE_031, None)?;
+    tar::Archive::new(staged)
+        .unpack(workspace)
+        .map_err(|error| {
+            Error::new(
+                codes::SOURCE_031,
+                format!("cannot unpack {}: {error}", path.display()),
+            )
+        })
 }
 
 pub fn pack_snapshot(workspace: &Path, snapshot: &Path, source_date_epoch: u32) -> Result<()> {
@@ -272,18 +311,5 @@ pub fn pack_snapshot(workspace: &Path, snapshot: &Path, source_date_epoch: u32) 
 }
 
 pub fn unpack_snapshot(snapshot: &Path, workspace: &Path) -> Result<()> {
-    let file = std::fs::File::open(snapshot).map_err(|error| {
-        Error::new(
-            codes::SOURCE_031,
-            format!("cannot open {}: {error}", snapshot.display()),
-        )
-    })?;
-    let decoder = flate2::read::GzDecoder::new(file);
-    let mut archive = tar::Archive::new(decoder);
-    archive.unpack(workspace).map_err(|error| {
-        Error::new(
-            codes::SOURCE_031,
-            format!("cannot unpack {}: {error}", snapshot.display()),
-        )
-    })
+    unpack_gzip(snapshot, workspace)
 }

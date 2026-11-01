@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crate::error::{codes, Error, Result};
-use crate::hash::sha512_hex;
+use crate::hash::sha512_file;
 use crate::model::{Locator, Recipe, Source};
 
 mod git;
@@ -29,6 +29,14 @@ pub fn fetch_sources(recipe: &Recipe, options: FetchOptions<'_>) -> Result<Vec<F
         .timeout_global(Some(Duration::from_secs(60)))
         .build()
         .into();
+
+    let temp_dir = options.cache.join("tmp");
+    std::fs::create_dir_all(&temp_dir).map_err(|error| {
+        Error::new(
+            codes::FETCH_005,
+            format!("cannot create {}: {error}", temp_dir.display()),
+        )
+    })?;
 
     let mut fetched = Vec::with_capacity(recipe.sources.len());
     for source in &recipe.sources {
@@ -61,17 +69,24 @@ pub fn fetch_sources(recipe: &Recipe, options: FetchOptions<'_>) -> Result<Vec<F
             ));
         }
 
-        let bytes = if let Some(proxy) = options.proxy {
-            match http::proxy_get(&agent, proxy, hex) {
-                Ok(Some(bytes)) => bytes,
-                Ok(None) => fetch_from_locators(&agent, source, options.base_dir, options.cache)?,
+        let staged = if let Some(proxy) = options.proxy {
+            match http::proxy_get(&agent, proxy, hex, &temp_dir) {
+                Ok(Some(staged)) => staged,
+                Ok(None) => {
+                    fetch_from_locators(&agent, source, options.base_dir, options.cache, &temp_dir)?
+                }
                 Err(error) => return Err(error),
             }
         } else {
-            fetch_from_locators(&agent, source, options.base_dir, options.cache)?
+            fetch_from_locators(&agent, source, options.base_dir, options.cache, &temp_dir)?
         };
 
-        let actual = sha512_hex(&bytes);
+        let actual = sha512_file(staged.as_ref()).map_err(|error| {
+            Error::new(
+                codes::FETCH_005,
+                format!("cannot hash source '{}': {error}", source.name),
+            )
+        })?;
         if actual != source.digest {
             return Err(Error::new(
                 codes::FETCH_004,
@@ -81,12 +96,14 @@ pub fn fetch_sources(recipe: &Recipe, options: FetchOptions<'_>) -> Result<Vec<F
                 ),
             ));
         }
-        crate::cas::store(options.cache, &bytes).map_err(|error| {
-            Error::new(
-                codes::FETCH_005,
-                format!("cannot publish source '{}': {}", source.name, error.message),
-            )
-        })?;
+        crate::cas::store_file(options.cache, staged.as_ref(), &source.digest).map_err(
+            |error| {
+                Error::new(
+                    codes::FETCH_005,
+                    format!("cannot publish source '{}': {}", source.name, error.message),
+                )
+            },
+        )?;
         fetched.push(FetchedSource {
             name: source.name.clone(),
             digest: source.digest.clone(),
@@ -122,7 +139,8 @@ fn fetch_from_locators(
     source: &Source,
     base_dir: &Path,
     cache: &Path,
-) -> Result<Vec<u8>> {
+    temp_dir: &Path,
+) -> Result<tempfile::TempPath> {
     if source.locators.is_empty() {
         return Err(Error::new(
             codes::FETCH_002,
@@ -131,11 +149,16 @@ fn fetch_from_locators(
     }
     let mut last_error = None;
     for locator in &source.locators {
-        match fetch_locator(agent, source, locator, base_dir, cache) {
-            Ok(bytes) => {
-                let actual = sha512_hex(&bytes);
+        match fetch_locator(agent, source, locator, base_dir, cache, temp_dir) {
+            Ok(staged) => {
+                let actual = sha512_file(staged.as_ref()).map_err(|error| {
+                    Error::new(
+                        codes::FETCH_005,
+                        format!("cannot hash source '{}': {error}", source.name),
+                    )
+                })?;
                 if actual == source.digest {
-                    return Ok(bytes);
+                    return Ok(staged);
                 }
                 last_error = Some(Error::new(
                     codes::FETCH_004,
@@ -162,9 +185,10 @@ fn fetch_locator(
     locator: &Locator,
     base_dir: &Path,
     cache: &Path,
-) -> Result<Vec<u8>> {
+    temp_dir: &Path,
+) -> Result<tempfile::TempPath> {
     match locator.kind.as_str() {
-        "git" => git::git_archive(source, locator, cache),
+        "git" => git::git_archive(source, locator, cache, temp_dir),
         "file" => {
             let raw = locator
                 .path
@@ -182,12 +206,25 @@ fn fetch_locator(
             } else {
                 base_dir.join(raw)
             };
-            std::fs::read(&path).map_err(|error| {
+            let metadata = std::fs::metadata(&path).map_err(|error| {
                 Error::new(
                     codes::FETCH_005,
-                    format!("cannot read {}: {error}", path.display()),
+                    format!("cannot stat {}: {error}", path.display()),
                 )
-            })
+            })?;
+            if !metadata.is_file() {
+                return Err(Error::new(
+                    codes::FETCH_005,
+                    format!("file locator {} is not a regular file", path.display()),
+                ));
+            }
+            let file = std::fs::File::open(&path).map_err(|error| {
+                Error::new(
+                    codes::FETCH_005,
+                    format!("cannot open {}: {error}", path.display()),
+                )
+            })?;
+            http::stage_reader(file, temp_dir, &format!("file {}", path.display()))
         }
         "https" => {
             let url = locator.url.as_deref().ok_or_else(|| {
@@ -199,7 +236,7 @@ fn fetch_locator(
             let mut response = agent.get(url).call().map_err(|error| {
                 Error::new(codes::FETCH_003, format!("GET {url} failed: {error}"))
             })?;
-            http::read_body(response.body_mut())
+            http::download_body(response.body_mut(), temp_dir)
         }
         "go-module" => {
             let proxy = locator.proxy.as_deref().ok_or_else(|| {
@@ -229,7 +266,7 @@ fn fetch_locator(
             let mut response = agent.get(&url).call().map_err(|error| {
                 Error::new(codes::FETCH_003, format!("GET {url} failed: {error}"))
             })?;
-            http::read_body(response.body_mut())
+            http::download_body(response.body_mut(), temp_dir)
         }
         other => Err(Error::new(
             codes::FETCH_007,

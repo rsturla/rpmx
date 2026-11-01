@@ -89,6 +89,37 @@ fn snapshot_unpack_does_not_write_through_symlinks() {
 }
 
 #[test]
+fn snapshot_with_an_oversized_extension_header_is_rejected() {
+    use std::io::Write;
+
+    let archive = tempfile::tempdir().expect("archive");
+    let snapshot = archive.path().join("snapshot.tar.gz");
+    let file = std::fs::File::create(&snapshot).expect("snapshot");
+    let mut gz = flate2::GzBuilder::new().write(file, flate2::Compression::default());
+    let mut header = [0u8; 512];
+    header[156] = b'L';
+    header[257..263].copy_from_slice(b"ustar\0");
+    header[263..265].copy_from_slice(b"00");
+    let size = format!("{:011o}\0", 2 * 1024 * 1024);
+    header[124..136].copy_from_slice(size.as_bytes());
+    gz.write_all(&header).expect("header");
+    gz.finish().expect("gzip");
+
+    let restore = tempfile::tempdir().expect("restore");
+    let error = unpack_snapshot(&snapshot, restore.path()).expect_err("extension header cap");
+    assert_eq!(error.code, "RPMX-SOURCE-031");
+    assert!(
+        error.message.contains("extension header"),
+        "{}",
+        error.message
+    );
+    assert!(
+        restore.path().read_dir().expect("restore").next().is_none(),
+        "a rejected archive must not write into the workspace"
+    );
+}
+
+#[test]
 fn patches_are_applied_and_removed_from_the_workspace() {
     use rpmx_core::model::Patch;
     use rpmx_core::runner::RunnerKind;

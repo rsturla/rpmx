@@ -1,9 +1,13 @@
 use std::collections::BTreeMap;
+use std::io::Read;
 use std::path::Path;
 
-use crate::error::{codes, Error, Result};
+use crate::error::{codes, Code, Error, Result};
 pub use crate::hash::sha512_hex;
 use serde::{Deserialize, Serialize};
+
+/// Bundle documents are JSON metadata; a few MiB is already generous.
+const MAX_BUNDLE_BYTES: u64 = 8 * 1024 * 1024;
 
 #[derive(Debug, Clone)]
 pub struct SnapshotFile {
@@ -21,17 +25,45 @@ pub struct ExtractedBundle {
     pub source_date_epoch: u32,
 }
 
+fn read_text_capped(path: &Path, code: Code) -> Result<String> {
+    read_text_with_limit(path, MAX_BUNDLE_BYTES, code)
+}
+
+fn read_text_with_limit(path: &Path, limit: u64, code: Code) -> Result<String> {
+    let file = std::fs::File::open(path)
+        .map_err(|error| Error::new(code, format!("cannot open {}: {error}", path.display())))?;
+    let metadata = file
+        .metadata()
+        .map_err(|error| Error::new(code, format!("cannot stat {}: {error}", path.display())))?;
+    if !metadata.is_file() {
+        return Err(Error::new(
+            code,
+            format!("{} is not a regular file", path.display()),
+        ));
+    }
+    let mut bytes = Vec::new();
+    file.take(limit + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| Error::new(code, format!("cannot read {}: {error}", path.display())))?;
+    if bytes.len() as u64 > limit {
+        return Err(Error::new(
+            code,
+            format!(
+                "{} exceeds the {limit}-byte bundle-file limit",
+                path.display()
+            ),
+        ));
+    }
+    String::from_utf8(bytes)
+        .map_err(|_| Error::new(code, format!("{} is not UTF-8", path.display())))
+}
+
 /// Read the rpmx documents from an already-extracted SRPM directory.
 pub fn read_bundle(directory: &Path, files: Vec<String>) -> Result<ExtractedBundle> {
     let mut steps = BTreeMap::new();
     let steps_path = directory.join("RPMX-STEPS.json");
     if steps_path.exists() {
-        let text = std::fs::read_to_string(&steps_path).map_err(|error| {
-            Error::new(
-                codes::EXTRACT_006,
-                format!("cannot read {}: {error}", steps_path.display()),
-            )
-        })?;
+        let text = read_text_capped(&steps_path, codes::EXTRACT_006)?;
         steps = serde_json::from_str(&text).map_err(|error| {
             Error::new(
                 codes::EXTRACT_004,
@@ -43,12 +75,7 @@ pub fn read_bundle(directory: &Path, files: Vec<String>) -> Result<ExtractedBund
     let mut lock_steps = BTreeMap::new();
     let lock_path = directory.join("package.lock.json");
     if lock_path.exists() {
-        let text = std::fs::read_to_string(&lock_path).map_err(|error| {
-            Error::new(
-                codes::EXTRACT_006,
-                format!("cannot read {}: {error}", lock_path.display()),
-            )
-        })?;
+        let text = read_text_capped(&lock_path, codes::EXTRACT_006)?;
         let lock: serde_json::Value = serde_json::from_str(&text).map_err(|error| {
             Error::new(
                 codes::EXTRACT_004,
@@ -75,12 +102,7 @@ pub fn read_bundle(directory: &Path, files: Vec<String>) -> Result<ExtractedBund
     let mut source_date_epoch = 0;
     let manifest_path = directory.join("RPMX-MANIFEST.json");
     if manifest_path.exists() {
-        let text = std::fs::read_to_string(&manifest_path).map_err(|error| {
-            Error::new(
-                codes::EXTRACT_006,
-                format!("cannot read {}: {error}", manifest_path.display()),
-            )
-        })?;
+        let text = read_text_capped(&manifest_path, codes::EXTRACT_006)?;
         let manifest: serde_json::Value = serde_json::from_str(&text).map_err(|error| {
             Error::new(
                 codes::EXTRACT_004,
@@ -353,12 +375,7 @@ pub fn lock_json(
 
 /// Load the release identity recorded inside an SRPM.
 pub fn load_lock_file(path: &Path) -> Result<PackageLock> {
-    let text = std::fs::read_to_string(path).map_err(|error| {
-        Error::new(
-            codes::SRPM_006,
-            format!("cannot read {}: {error}", path.display()),
-        )
-    })?;
+    let text = read_text_capped(path, codes::SRPM_006)?;
     let lock: PackageLock = serde_json::from_str(&text)
         .map_err(|error| Error::new(codes::SRPM_006, format!("invalid package lock: {error}")))?;
     if lock.schema != 1 {
@@ -418,4 +435,39 @@ fn json(value: impl Serialize) -> Result<String> {
         .map_err(|error| Error::new(codes::SOURCE_018, error.to_string()))?;
     text.push('\n');
     Ok(text)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::read_text_with_limit;
+    use crate::error::codes;
+
+    #[test]
+    fn bundle_text_over_the_limit_is_rejected() {
+        let dir = tempfile::tempdir().expect("work");
+        let path = dir.path().join("bundle.json");
+        std::fs::write(&path, b"0123456789").expect("bundle");
+        let error = read_text_with_limit(&path, 4, codes::EXTRACT_004).expect_err("limit");
+        assert_eq!(error.code, "RPMX-EXTRACT-004");
+    }
+
+    #[test]
+    fn bundle_text_rejects_a_non_regular_file() {
+        let dir = tempfile::tempdir().expect("work");
+        let path = dir.path().join("bundle.json");
+        std::fs::create_dir(&path).expect("directory");
+        let error = read_text_with_limit(&path, 4, codes::EXTRACT_004).expect_err("directory");
+        assert_eq!(error.code, "RPMX-EXTRACT-004");
+    }
+
+    #[test]
+    fn bundle_text_at_the_limit_is_allowed() {
+        let dir = tempfile::tempdir().expect("work");
+        let path = dir.path().join("bundle.json");
+        std::fs::write(&path, b"0123").expect("bundle");
+        assert_eq!(
+            read_text_with_limit(&path, 4, codes::EXTRACT_004).expect("within limit"),
+            "0123"
+        );
+    }
 }
