@@ -105,6 +105,14 @@ impl<'a> Sandbox<'a> {
             .iter()
             .map(|arg| expand(arg, self))
             .collect::<Vec<_>>();
+        let mut args = args;
+        if crate::output::debug()
+            && command == "sh"
+            && args.first().map(String::as_str) == Some("-c")
+            && args.len() > 1
+        {
+            args[1] = format!("set -x\n{}", args[1]);
+        }
         let cwd = step
             .cwd
             .as_deref()
@@ -147,6 +155,9 @@ impl<'a> Sandbox<'a> {
         }
         // Step headers and outcomes go to stderr so stdout stays a clean
         // artifact list (or a JSON document).
+        if crate::output::debug() {
+            eprintln!("rpmx: run {rendered}");
+        }
         eprintln!("rpmx: step {label}");
         let started = std::time::Instant::now();
         let result = session

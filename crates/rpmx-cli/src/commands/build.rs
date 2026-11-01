@@ -93,7 +93,11 @@ fn package_stage(
         }
     }
 
-    report(args.json, &written, &[], &[])
+    report(args.json, &written, &[], &[])?;
+    if !args.no_index {
+        crate::commands::repo::index(output, signing.as_ref(), source_date_epoch)?;
+    }
+    Ok(written)
 }
 
 /// Run the full SRPM-first pipeline: source snapshot, SRPM, binary RPMs.
@@ -123,6 +127,7 @@ fn build_from_recipe(
         run_tests,
         test,
         junit,
+        no_index,
         sbom,
         test_root_lock,
         signing,
@@ -206,7 +211,16 @@ fn build_from_recipe(
         pipeline_dir,
     };
     let built = pipeline.execute(&selected)?;
-    report(json, &built.rpms, &built.srpms, &built.evidence)
+    report(json, &built.rpms, &built.srpms, &built.evidence)?;
+    if !no_index {
+        let timestamp = crate::commands::source_date_epoch(&recipe, source_date_epoch);
+        let key = crate::commands::load_signing_key(
+            signing.signing_key.as_deref(),
+            signing.signing_passphrase_env.as_deref(),
+        )?;
+        crate::commands::repo::index(output, key.as_ref(), timestamp)?;
+    }
+    Ok(built.rpms)
 }
 
 fn report(

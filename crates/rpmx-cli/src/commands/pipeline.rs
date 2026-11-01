@@ -128,6 +128,7 @@ impl BuildPipeline<'_> {
                     verify_root: false,
                     run_tests: self.run_tests,
                     test_filter: self.test_filter,
+                    no_index: true,
                     junit: self.junit,
                     sbom: self.sbom,
                     test_root_lock: self.test_root_lock,

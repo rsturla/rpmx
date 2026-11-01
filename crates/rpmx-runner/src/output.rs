@@ -9,6 +9,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 static LOGS_TO_STDERR: AtomicBool = AtomicBool::new(false);
 static KEEP_WORKDIR: AtomicBool = AtomicBool::new(false);
+static DEBUG: AtomicBool = AtomicBool::new(false);
 
 /// Route every guest stream to stderr from now on.
 pub fn set_logs_to_stderr(enabled: bool) {
@@ -27,4 +28,13 @@ pub fn set_keep_workdir(enabled: bool) {
 
 pub fn keep_workdir() -> bool {
     KEEP_WORKDIR.load(Ordering::Relaxed)
+}
+
+/// Echo step commands before they run.
+pub fn set_debug(enabled: bool) {
+    DEBUG.store(enabled, Ordering::Relaxed);
+}
+
+pub fn debug() -> bool {
+    DEBUG.load(Ordering::Relaxed)
 }

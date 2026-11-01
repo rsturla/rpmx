@@ -38,6 +38,7 @@ pub struct RebuildRequest<'a> {
     pub verify_root: bool,
     pub run_tests: bool,
     pub test_filter: &'a [String],
+    pub no_index: bool,
     pub junit: Option<&'a Path>,
     pub sbom: Option<&'a Path>,
     pub test_root_lock: Option<&'a Path>,
@@ -78,6 +79,7 @@ pub fn run(args: RebuildArgs) -> Result<Vec<PathBuf>, Error> {
         verify_root: true,
         run_tests: args.run_tests,
         test_filter: &args.test,
+        no_index: args.no_index,
         junit: args.junit.as_deref(),
         sbom: args.sbom.as_deref(),
         test_root_lock: args.test_root_lock.as_deref(),
@@ -280,6 +282,9 @@ pub fn execute(request: RebuildRequest<'_>) -> Result<RebuildOutput, Error> {
         &evidence,
         signing.as_ref().map(|key| key.fingerprint()),
     )?;
+    if !request.no_index {
+        crate::commands::repo::index(&output, signing.as_ref(), extracted.source_date_epoch)?;
+    }
     Ok(RebuildOutput {
         rpms: written,
         evidence,

@@ -11,6 +11,9 @@ pub struct Cli {
     /// Keep temporary work directories and print their paths.
     #[arg(long, global = true)]
     pub keep_workdir: bool,
+    /// Echo step commands before they run.
+    #[arg(long, global = true)]
+    pub debug: bool,
     #[command(subcommand)]
     pub command: Command,
 }

@@ -6,6 +6,7 @@ pub fn run(cli: Cli) -> Result<(), Error> {
     let Cli {
         pipeline_dir,
         keep_workdir: _,
+        debug: _,
         command,
     } = cli;
     match command {

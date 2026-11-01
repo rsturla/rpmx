@@ -76,6 +76,9 @@ pub struct BuildArgs {
     /// Run build-stage and installed-stage tests.
     #[arg(long)]
     pub run_tests: bool,
+    /// Do not write repository metadata after the build.
+    #[arg(long)]
+    pub no_index: bool,
     /// Run only the named test; repeat for several.
     #[arg(long = "test", value_name = "NAME")]
     pub test: Vec<String>,
@@ -137,6 +140,9 @@ pub struct RebuildArgs {
     /// Run build-stage tests after the build.
     #[arg(long)]
     pub run_tests: bool,
+    /// Do not write repository metadata after the build.
+    #[arg(long)]
+    pub no_index: bool,
     /// Run only the named test; repeat for several.
     #[arg(long = "test", value_name = "NAME")]
     pub test: Vec<String>,

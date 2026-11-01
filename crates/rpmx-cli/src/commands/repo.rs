@@ -4,6 +4,21 @@ use rpmx_rpm::repo::{generate, RepoOptions};
 
 use crate::commands::{load_signing_key, RepoArgs};
 
+/// Write repodata for an output directory in place.
+pub fn index(
+    output: &std::path::Path,
+    signing_key: Option<&rpmx_rpm::sign::SigningKey>,
+    timestamp: u32,
+) -> Result<(), Error> {
+    generate(RepoOptions {
+        rpms: output,
+        output,
+        signing_key,
+        timestamp,
+    })
+    .map(|_| ())
+}
+
 pub fn run(args: RepoArgs) -> Result<(), Error> {
     let key = load_signing_key(
         args.signing.signing_key.as_deref(),
