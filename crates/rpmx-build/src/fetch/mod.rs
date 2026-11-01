@@ -81,21 +81,7 @@ pub fn fetch_sources(recipe: &Recipe, options: FetchOptions<'_>) -> Result<Vec<F
             fetch_from_locators(&agent, source, options.base_dir, options.cache, &temp_dir)?
         };
 
-        let actual = sha512_file(staged.as_ref()).map_err(|error| {
-            Error::new(
-                codes::FETCH_005,
-                format!("cannot hash source '{}': {error}", source.name),
-            )
-        })?;
-        if actual != source.digest {
-            return Err(Error::new(
-                codes::FETCH_004,
-                format!(
-                    "source '{}' digest mismatch: expected {}, got {}",
-                    source.name, source.digest, actual
-                ),
-            ));
-        }
+        verify_payload(source, &staged, "")?;
         rpmx_store::cas::store_file(options.cache, staged.as_ref(), &source.digest).map_err(
             |error| {
                 Error::new(
@@ -112,6 +98,26 @@ pub fn fetch_sources(recipe: &Recipe, options: FetchOptions<'_>) -> Result<Vec<F
         });
     }
     Ok(fetched)
+}
+
+fn verify_payload(source: &Source, staged: &tempfile::TempPath, context: &str) -> Result<()> {
+    let actual = sha512_file(staged.as_ref()).map_err(|error| {
+        Error::new(
+            codes::FETCH_005,
+            format!("cannot hash source '{}': {error}", source.name),
+        )
+    })?;
+    if actual == source.digest {
+        Ok(())
+    } else {
+        Err(Error::new(
+            codes::FETCH_004,
+            format!(
+                "source '{}' digest mismatch{context}: expected {}, got {actual}",
+                source.name, source.digest
+            ),
+        ))
+    }
 }
 
 fn digest_hex(source: &Source) -> Result<&str> {
@@ -151,22 +157,10 @@ fn fetch_from_locators(
     for locator in &source.locators {
         match fetch_locator(agent, source, locator, base_dir, cache, temp_dir) {
             Ok(staged) => {
-                let actual = sha512_file(staged.as_ref()).map_err(|error| {
-                    Error::new(
-                        codes::FETCH_005,
-                        format!("cannot hash source '{}': {error}", source.name),
-                    )
-                })?;
-                if actual == source.digest {
-                    return Ok(staged);
+                match verify_payload(source, &staged, &format!(" from {} locator", locator.kind)) {
+                    Ok(()) => return Ok(staged),
+                    Err(error) => last_error = Some(error),
                 }
-                last_error = Some(Error::new(
-                    codes::FETCH_004,
-                    format!(
-                        "source '{}' digest mismatch from {} locator: expected {}, got {}",
-                        source.name, locator.kind, source.digest, actual
-                    ),
-                ));
             }
             Err(error) => last_error = Some(error),
         }
@@ -233,10 +227,7 @@ fn fetch_locator(
                     format!("https locator for '{}' has no url", source.name),
                 )
             })?;
-            let mut response = agent.get(url).call().map_err(|error| {
-                Error::new(codes::FETCH_003, format!("GET {url} failed: {error}"))
-            })?;
-            http::download_body(response.body_mut(), temp_dir)
+            http::get(agent, url, temp_dir)
         }
         "go-module" => {
             let proxy = locator.proxy.as_deref().ok_or_else(|| {
@@ -263,10 +254,7 @@ fn fetch_locator(
                 module,
                 version
             );
-            let mut response = agent.get(&url).call().map_err(|error| {
-                Error::new(codes::FETCH_003, format!("GET {url} failed: {error}"))
-            })?;
-            http::download_body(response.body_mut(), temp_dir)
+            http::get(agent, &url, temp_dir)
         }
         other => Err(Error::new(
             codes::FETCH_007,

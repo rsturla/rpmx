@@ -20,6 +20,14 @@ pub(crate) fn proxy_get(
     }
 }
 
+pub(crate) fn get(agent: &ureq::Agent, url: &str, temp_dir: &Path) -> Result<tempfile::TempPath> {
+    let mut response = agent
+        .get(url)
+        .call()
+        .map_err(|error| Error::new(codes::FETCH_003, format!("GET {url} failed: {error}")))?;
+    download_body(response.body_mut(), temp_dir)
+}
+
 pub(crate) fn download_body(body: &mut ureq::Body, temp_dir: &Path) -> Result<tempfile::TempPath> {
     stage_reader(body.as_reader(), temp_dir, "response")
 }

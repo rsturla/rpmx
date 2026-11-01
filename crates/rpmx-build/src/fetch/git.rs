@@ -68,24 +68,7 @@ pub(crate) fn git_archive(
 }
 
 fn run_git(directory: &Path, args: &[&str]) -> Result<()> {
-    let output = std::process::Command::new("git")
-        .arg("-C")
-        .arg(directory)
-        .args(args)
-        .output()
-        .map_err(|error| Error::new(codes::FETCH_003, format!("cannot run git: {error}")))?;
-    if output.status.success() {
-        Ok(())
-    } else {
-        Err(Error::new(
-            codes::FETCH_003,
-            format!(
-                "git {} failed: {}",
-                args.join(" "),
-                String::from_utf8_lossy(&output.stderr).trim()
-            ),
-        ))
-    }
+    git_output(directory, args).map(|_| ())
 }
 
 fn git_output(directory: &Path, args: &[&str]) -> Result<String> {
