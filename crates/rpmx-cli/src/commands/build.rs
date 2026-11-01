@@ -17,16 +17,21 @@ pub fn run(args: BuildArgs, pipeline_dir: Option<&Path>) -> Result<Vec<PathBuf>,
     })?;
     let policy = resolved.plan_policy();
     let profile = args.policy.profile.clone();
+    let output = args
+        .output
+        .clone()
+        .unwrap_or_else(|| crate::commands::default_output(&args.arch));
     if let Some(stage) = args.stage.as_deref() {
-        return package_stage(&args, stage, pipeline_dir, policy);
+        return package_stage(&args, stage, &output, pipeline_dir, policy);
     }
-    build_from_recipe(args, pipeline_dir, policy, profile.as_deref())
+    build_from_recipe(args, &output, pipeline_dir, policy, profile.as_deref())
 }
 
 /// Package an already-staged tree. This is the original `build --stage` mode.
 fn package_stage(
     args: &BuildArgs,
     stage: &Path,
+    output: &Path,
     pipeline_dir: Option<&Path>,
     policy: PlanPolicy<'_>,
 ) -> Result<Vec<PathBuf>, Error> {
@@ -61,10 +66,10 @@ fn package_stage(
         ));
     }
 
-    std::fs::create_dir_all(&args.output).map_err(|error| {
+    std::fs::create_dir_all(output).map_err(|error| {
         Error::new(
             codes::BUILD_001,
-            format!("cannot create {}: {error}", args.output.display()),
+            format!("cannot create {}: {error}", output.display()),
         )
     })?;
 
@@ -81,7 +86,7 @@ fn package_stage(
         for package in packages {
             written.push(emit::binary(
                 &package,
-                &args.output,
+                output,
                 signing.as_ref(),
                 signature_timestamp,
             )?);
@@ -94,13 +99,14 @@ fn package_stage(
 /// Run the full SRPM-first pipeline: source snapshot, SRPM, binary RPMs.
 fn build_from_recipe(
     args: BuildArgs,
+    output: &Path,
     pipeline_dir: Option<&Path>,
     policy: PlanPolicy<'_>,
     profile: Option<&Path>,
 ) -> Result<Vec<PathBuf>, Error> {
     let BuildArgs {
         file,
-        output,
+        output: _,
         arch,
         runner,
         source_date_epoch,
@@ -171,7 +177,7 @@ fn build_from_recipe(
 
     let pipeline = BuildPipeline {
         file: &file,
-        output: &output,
+        output,
         arch: &arch,
         runner: &runner,
         policy,

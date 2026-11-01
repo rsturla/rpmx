@@ -55,9 +55,13 @@ pub fn run(args: RebuildArgs) -> Result<Vec<PathBuf>, Error> {
         dist_tag: args.policy.dist_tag.as_deref(),
         build_release: args.policy.build_release,
     })?;
+    let output = args
+        .output
+        .clone()
+        .unwrap_or_else(|| crate::commands::default_output(&args.arch));
     execute(RebuildRequest {
         file: &args.file,
-        output: &args.output,
+        output: &output,
         arch: &args.arch,
         runner: &args.runner,
         cell: args.cell.as_deref(),

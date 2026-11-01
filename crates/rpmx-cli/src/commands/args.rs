@@ -16,7 +16,8 @@ pub struct OptionalSigningArgs {
 
 #[derive(Debug, clap::Args)]
 pub struct BuildArgs {
-    /// Recipe to build.
+    /// Recipe to build. (default: ./package.yaml).
+    #[arg(default_value = "package.yaml")]
     pub file: PathBuf,
     #[command(flatten)]
     pub policy: crate::cli::PolicyArgs,
@@ -29,9 +30,10 @@ pub struct BuildArgs {
         ]
     )]
     pub stage: Option<PathBuf>,
-    /// Output directory for binary RPMs and build-level SBOMs.
-    #[arg(long, default_value = ".")]
-    pub output: PathBuf,
+    /// Output directory for binary RPMs and build-level SBOMs
+    /// (default: ./packages/<arch>).
+    #[arg(long, visible_alias = "out-dir")]
+    pub output: Option<PathBuf>,
     /// Architecture for outputs that do not declare one.
     #[arg(long, default_value = rpmx_core::arch::native_arch())]
     pub arch: String,
@@ -63,7 +65,7 @@ pub struct BuildArgs {
     #[arg(long)]
     pub unsafe_host_root: bool,
     /// Parallelism exposed as JOBS.
-    #[arg(long, default_value_t = NonZeroU32::new(1).unwrap())]
+    #[arg(long, default_value_t = crate::commands::default_jobs())]
     pub jobs: NonZeroU32,
     /// Wall-clock limit for each step in seconds (must be at least 1).
     #[arg(long, default_value_t = NonZeroU64::new(3600).unwrap())]
@@ -90,9 +92,9 @@ pub struct RebuildArgs {
     pub file: PathBuf,
     #[command(flatten)]
     pub policy: crate::cli::PolicyArgs,
-    /// Output directory.
-    #[arg(long, default_value = ".")]
-    pub output: PathBuf,
+    /// Output directory (default: ./packages/<arch>).
+    #[arg(long, visible_alias = "out-dir")]
+    pub output: Option<PathBuf>,
     /// Architecture for outputs that do not declare one.
     #[arg(long, default_value = rpmx_core::arch::native_arch())]
     pub arch: String,
@@ -103,7 +105,7 @@ pub struct RebuildArgs {
     #[arg(long)]
     pub cell: Option<String>,
     /// Parallelism exposed as JOBS.
-    #[arg(long, default_value_t = NonZeroU32::new(1).unwrap())]
+    #[arg(long, default_value_t = crate::commands::default_jobs())]
     pub jobs: NonZeroU32,
     /// Wall-clock limit for each step in seconds (must be at least 1).
     #[arg(long, default_value_t = NonZeroU64::new(3600).unwrap())]
@@ -144,7 +146,8 @@ pub struct RebuildArgs {
 
 #[derive(Debug, clap::Args)]
 pub struct LintArgs {
-    /// Recipe to check.
+    /// Recipe to check. (default: ./package.yaml).
+    #[arg(default_value = "package.yaml")]
     pub file: PathBuf,
     /// Target architecture used for templates.
     #[arg(long, default_value = rpmx_core::arch::native_arch())]
@@ -158,7 +161,8 @@ pub struct LintArgs {
 
 #[derive(Debug, clap::Args)]
 pub struct PlanArgs {
-    /// Recipe to plan.
+    /// Recipe to plan. (default: ./package.yaml).
+    #[arg(default_value = "package.yaml")]
     pub file: PathBuf,
     /// Target architecture used for templates.
     #[arg(long, default_value = rpmx_core::arch::native_arch())]
@@ -172,7 +176,8 @@ pub struct PlanArgs {
 
 #[derive(Debug, clap::Args)]
 pub struct FetchArgs {
-    /// Recipe whose sources should be fetched.
+    /// Recipe whose sources should be fetched. (default: ./package.yaml).
+    #[arg(default_value = "package.yaml")]
     pub file: PathBuf,
     /// CAS directory (default: $XDG_CACHE_HOME/rpmx/cas).
     #[arg(long)]
@@ -190,7 +195,8 @@ pub struct FetchArgs {
 
 #[derive(Debug, clap::Args)]
 pub struct SourceArgs {
-    /// Recipe to assemble.
+    /// Recipe to assemble. (default: ./package.yaml).
+    #[arg(default_value = "package.yaml")]
     pub file: PathBuf,
     /// Target architecture used for templates.
     #[arg(long, default_value = rpmx_core::arch::native_arch())]
@@ -225,7 +231,7 @@ pub struct SourceArgs {
     #[arg(long)]
     pub source_date_epoch: Option<u32>,
     /// Parallelism exposed as JOBS.
-    #[arg(long, default_value_t = NonZeroU32::new(1).unwrap())]
+    #[arg(long, default_value_t = crate::commands::default_jobs())]
     pub jobs: NonZeroU32,
     /// Wall-clock limit for each step in seconds (must be at least 1).
     #[arg(long, default_value_t = NonZeroU64::new(3600).unwrap())]
@@ -240,7 +246,8 @@ pub struct SourceArgs {
 
 #[derive(Debug, clap::Args)]
 pub struct SrpmArgs {
-    /// Recipe to package.
+    /// Recipe to package. (default: ./package.yaml).
+    #[arg(default_value = "package.yaml")]
     pub file: PathBuf,
     #[command(flatten)]
     pub policy: crate::cli::PolicyArgs,

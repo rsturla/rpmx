@@ -21,5 +21,38 @@ pub mod srpm;
 
 pub use args::*;
 pub use loader::{load_plan, step_root};
+
+use std::num::NonZeroU32;
+use std::path::PathBuf;
+
+/// Parallelism used when `--jobs` is not given.
+pub fn default_jobs() -> NonZeroU32 {
+    let detected = std::thread::available_parallelism()
+        .map(|count| count.get())
+        .unwrap_or(1)
+        .clamp(1, 64);
+    NonZeroU32::new(detected as u32).unwrap_or(NonZeroU32::MIN)
+}
+
+/// Default output directory for a build: `./packages/<arch>`.
+pub fn default_output(arch: &str) -> PathBuf {
+    PathBuf::from("packages").join(arch)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{default_jobs, default_output};
+    use std::path::PathBuf;
+
+    #[test]
+    fn the_output_directory_is_arch_scoped() {
+        assert_eq!(default_output("x86_64"), PathBuf::from("packages/x86_64"));
+    }
+
+    #[test]
+    fn the_default_job_count_is_non_zero() {
+        assert!(default_jobs().get() >= 1);
+    }
+}
 pub use policy::{reconcile_policy, resolve_policy, PlanPolicy, PolicyInput};
 pub use signing::{load_signing_key, signature_timestamp, signing_passphrase, source_date_epoch};
