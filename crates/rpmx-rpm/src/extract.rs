@@ -1,16 +1,9 @@
-use std::collections::BTreeMap;
 use std::io::Read;
 use std::path::Path;
 
 use rpmx_core::{error::codes, Error};
 
-#[derive(Debug, Clone)]
-pub struct ExtractedSrpm {
-    pub files: Vec<String>,
-    pub steps: BTreeMap<String, String>,
-    pub lock_steps: BTreeMap<String, String>,
-    pub source_date_epoch: u32,
-}
+pub use rpmx_core::srpm::ExtractedBundle as ExtractedSrpm;
 
 pub fn extract_srpm(path: &Path, dest: &Path) -> Result<ExtractedSrpm, Error> {
     let package = rpm::Package::open(path).map_err(|error| {
@@ -67,84 +60,7 @@ pub fn extract_srpm(path: &Path, dest: &Path) -> Result<ExtractedSrpm, Error> {
         )
     })?;
     let files = extract_cpio(&payload, dest)?;
-
-    let mut steps = BTreeMap::new();
-    let steps_path = dest.join("RPMX-STEPS.json");
-    if steps_path.exists() {
-        let text = std::fs::read_to_string(&steps_path).map_err(|error| {
-            Error::new(
-                codes::EXTRACT_006,
-                format!("cannot read {}: {error}", steps_path.display()),
-            )
-        })?;
-        steps = serde_json::from_str(&text).map_err(|error| {
-            Error::new(
-                codes::EXTRACT_004,
-                format!("invalid {}: {error}", steps_path.display()),
-            )
-        })?;
-    }
-
-    let mut lock_steps = BTreeMap::new();
-    let lock_path = dest.join("package.lock.json");
-    if lock_path.exists() {
-        let text = std::fs::read_to_string(&lock_path).map_err(|error| {
-            Error::new(
-                codes::EXTRACT_006,
-                format!("cannot read {}: {error}", lock_path.display()),
-            )
-        })?;
-        let lock: serde_json::Value = serde_json::from_str(&text).map_err(|error| {
-            Error::new(
-                codes::EXTRACT_004,
-                format!("invalid {}: {error}", lock_path.display()),
-            )
-        })?;
-        if let Some(steps) = lock.get("steps").and_then(serde_json::Value::as_array) {
-            for step in steps {
-                let name = step
-                    .get("name")
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or_default();
-                let digest = step
-                    .get("digest")
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or_default();
-                if !name.is_empty() && !digest.is_empty() {
-                    lock_steps.insert(name.to_string(), digest.to_string());
-                }
-            }
-        }
-    }
-
-    let mut source_date_epoch = 0;
-    let manifest_path = dest.join("RPMX-MANIFEST.json");
-    if manifest_path.exists() {
-        let text = std::fs::read_to_string(&manifest_path).map_err(|error| {
-            Error::new(
-                codes::EXTRACT_006,
-                format!("cannot read {}: {error}", manifest_path.display()),
-            )
-        })?;
-        let manifest: serde_json::Value = serde_json::from_str(&text).map_err(|error| {
-            Error::new(
-                codes::EXTRACT_004,
-                format!("invalid {}: {error}", manifest_path.display()),
-            )
-        })?;
-        source_date_epoch = manifest
-            .get("source_date_epoch")
-            .and_then(serde_json::Value::as_u64)
-            .and_then(|value| u32::try_from(value).ok())
-            .unwrap_or(0);
-    }
-
-    Ok(ExtractedSrpm {
-        files,
-        steps,
-        lock_steps,
-        source_date_epoch,
-    })
+    rpmx_core::srpm::read_bundle(dest, files)
 }
 
 fn extract_cpio(payload: &[u8], dest: &Path) -> Result<Vec<String>, Error> {
