@@ -16,12 +16,12 @@ impl Cli {
     pub fn json(&self) -> bool {
         match &self.command {
             Command::Root { command } => command.json(),
-            Command::Lint { json, .. }
-            | Command::Plan { json, .. }
-            | Command::Fetch { json, .. }
-            | Command::Keygen { json, .. }
+            Command::Keygen { json, .. }
             | Command::Sign { json, .. }
             | Command::Repo { json, .. } => *json,
+            Command::Lint(args) => args.json,
+            Command::Plan(args) => args.json,
+            Command::Fetch(args) => args.json,
             Command::Build(args) => args.json,
             Command::Rebuild(args) => args.json,
             Command::Source(args) => args.json,
@@ -172,53 +172,17 @@ pub struct PolicyArgs {
 #[derive(Debug, Subcommand)]
 pub enum Command {
     /// Validate a recipe and expand its matrix.
-    Lint {
-        /// Recipe to check.
-        file: PathBuf,
-        /// Target architecture used for templates.
-        #[arg(long, default_value = rpmx_core::arch::native_arch())]
-        arch: String,
-        #[command(flatten)]
-        policy: PolicyArgs,
-        /// Emit machine-readable output.
-        #[arg(long)]
-        json: bool,
-    },
+    Lint(crate::commands::LintArgs),
     /// Show the build cells, outputs and tests without building.
-    Plan {
-        /// Recipe to plan.
-        file: PathBuf,
-        /// Target architecture used for templates.
-        #[arg(long, default_value = rpmx_core::arch::native_arch())]
-        arch: String,
-        #[command(flatten)]
-        policy: PolicyArgs,
-        /// Emit the plan as JSON.
-        #[arg(long)]
-        json: bool,
-    },
+    Plan(crate::commands::PlanArgs),
+    /// Resolve, assemble and export build roots.
     /// Resolve, assemble and export build roots.
     Root {
         #[command(subcommand)]
         command: RootCommand,
     },
     /// Populate the content-addressed cache from the recipe's locators.
-    Fetch {
-        /// Recipe whose sources should be fetched.
-        file: PathBuf,
-        /// CAS directory (default: $XDG_CACHE_HOME/rpmx/cas).
-        #[arg(long)]
-        cache: Option<PathBuf>,
-        /// Content-addressed acquisition proxy.
-        #[arg(long)]
-        proxy: Option<String>,
-        /// Do not use the network; fail on a cache miss.
-        #[arg(long)]
-        offline: bool,
-        /// Emit machine-readable output.
-        #[arg(long)]
-        json: bool,
-    },
+    Fetch(crate::commands::FetchArgs),
     /// Fetch and assemble the source snapshot.
     Source(crate::commands::SourceArgs),
     /// Write a native source RPM from a local source snapshot.

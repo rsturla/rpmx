@@ -19,5 +19,5 @@ pub mod srpm;
 
 pub use args::*;
 pub use loader::{load_plan, step_root};
-pub use policy::{reconcile_policy, resolve_policy, PlanPolicy, PolicyInput, ResolvedPolicy};
+pub use policy::{reconcile_policy, resolve_policy, PlanPolicy, PolicyInput};
 pub use signing::{load_signing_key, signature_timestamp, signing_passphrase, source_date_epoch};

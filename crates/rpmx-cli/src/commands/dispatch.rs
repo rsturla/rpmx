@@ -2,35 +2,14 @@ use crate::cli::{self, Cli, Command};
 use crate::commands;
 use rpmx_core::Error;
 
-fn resolve_policy(policy: cli::PolicyArgs) -> Result<commands::ResolvedPolicy, Error> {
-    commands::resolve_policy(commands::PolicyInput {
-        profile: policy.profile.as_deref(),
-        dist_tag: policy.dist_tag.as_deref(),
-        build_release: policy.build_release,
-    })
-}
-
 pub fn run(cli: Cli) -> Result<(), Error> {
     let Cli {
         pipeline_dir,
         command,
     } = cli;
     match command {
-        Command::Lint {
-            file,
-            arch,
-            policy,
-            json,
-        } => {
-            let resolved = resolve_policy(policy)?;
-            commands::lint::run(
-                &file,
-                &arch,
-                pipeline_dir.as_deref(),
-                resolved.plan_policy(),
-                json,
-            )
-        }
+        Command::Lint(args) => commands::lint::run(args, pipeline_dir.as_deref()),
+        Command::Plan(args) => commands::plan::run(args, pipeline_dir.as_deref()),
         Command::Root { command } => match command {
             cli::RootCommand::Resolve {
                 profile,
@@ -87,34 +66,7 @@ pub fn run(cli: Cli) -> Result<(), Error> {
                 output: output.as_deref(),
             }),
         },
-        Command::Fetch {
-            file,
-            cache,
-            proxy,
-            offline,
-            json,
-        } => commands::fetch::run(commands::FetchArgs {
-            file: &file,
-            cache: cache.as_deref(),
-            proxy: proxy.as_deref(),
-            offline,
-            json,
-        }),
-        Command::Plan {
-            file,
-            arch,
-            policy,
-            json,
-        } => {
-            let resolved = resolve_policy(policy)?;
-            commands::plan::run(
-                &file,
-                &arch,
-                pipeline_dir.as_deref(),
-                resolved.plan_policy(),
-                json,
-            )
-        }
+        Command::Fetch(args) => commands::fetch::run(args),
         Command::Source(args) => commands::source::run(args, pipeline_dir.as_deref()).map(|_| ()),
         Command::Srpm(args) => commands::srpm::run(args, pipeline_dir.as_deref()).map(|_| ()),
         Command::Rebuild(args) => commands::rebuild::run(args).map(|_| ()),

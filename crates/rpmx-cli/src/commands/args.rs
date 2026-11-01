@@ -137,11 +137,49 @@ pub struct RebuildArgs {
     pub quiet: bool,
 }
 
-pub struct FetchArgs<'a> {
-    pub file: &'a Path,
-    pub cache: Option<&'a Path>,
-    pub proxy: Option<&'a str>,
+#[derive(Debug, clap::Args)]
+pub struct LintArgs {
+    /// Recipe to check.
+    pub file: PathBuf,
+    /// Target architecture used for templates.
+    #[arg(long, default_value = rpmx_core::arch::native_arch())]
+    pub arch: String,
+    #[command(flatten)]
+    pub policy: crate::cli::PolicyArgs,
+    /// Emit machine-readable output.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct PlanArgs {
+    /// Recipe to plan.
+    pub file: PathBuf,
+    /// Target architecture used for templates.
+    #[arg(long, default_value = rpmx_core::arch::native_arch())]
+    pub arch: String,
+    #[command(flatten)]
+    pub policy: crate::cli::PolicyArgs,
+    /// Emit the plan as JSON.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct FetchArgs {
+    /// Recipe whose sources should be fetched.
+    pub file: PathBuf,
+    /// CAS directory (default: $XDG_CACHE_HOME/rpmx/cas).
+    #[arg(long)]
+    pub cache: Option<PathBuf>,
+    /// Content-addressed acquisition proxy.
+    #[arg(long)]
+    pub proxy: Option<String>,
+    /// Do not use the network; fail on a cache miss.
+    #[arg(long)]
     pub offline: bool,
+    /// Emit machine-readable output.
+    #[arg(long)]
     pub json: bool,
 }
 

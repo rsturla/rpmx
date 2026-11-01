@@ -3,18 +3,23 @@ use std::path::Path;
 use rpmx_core::error::codes;
 use rpmx_core::Error;
 
-use crate::commands::{load_plan, PlanPolicy};
+use crate::commands::{load_plan, resolve_policy, LintArgs, PolicyInput};
 use crate::render;
 
-pub fn run(
-    file: &Path,
-    arch: &str,
-    pipeline_dir: Option<&Path>,
-    policy: PlanPolicy<'_>,
-    json: bool,
-) -> Result<(), Error> {
-    let (_, plan) = load_plan(file, arch, pipeline_dir, false, policy)?;
-    if json {
+pub fn run(args: LintArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
+    let resolved = resolve_policy(PolicyInput {
+        profile: args.policy.profile.as_deref(),
+        dist_tag: args.policy.dist_tag.as_deref(),
+        build_release: args.policy.build_release,
+    })?;
+    let (_, plan) = load_plan(
+        &args.file,
+        &args.arch,
+        pipeline_dir,
+        false,
+        resolved.plan_policy(),
+    )?;
+    if args.json {
         let value = serde_json::json!({
             "ok": true,
             "cells": plan.cells.len(),

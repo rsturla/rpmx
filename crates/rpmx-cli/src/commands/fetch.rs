@@ -6,22 +6,19 @@ use rpmx_core::{load_recipe, Error};
 
 use crate::commands::FetchArgs;
 
-pub fn run(args: FetchArgs<'_>) -> Result<(), Error> {
-    let FetchArgs {
-        file,
-        cache,
-        proxy,
-        offline,
-        json,
-    } = args;
-    let recipe = load_recipe(file)?;
-    let cache = match cache {
-        Some(path) => path.to_path_buf(),
+pub fn run(args: FetchArgs) -> Result<(), Error> {
+    let recipe = load_recipe(&args.file)?;
+    let cache = match &args.cache {
+        Some(path) => path.clone(),
         None => default_cache()?,
     };
-    let base_dir = file.parent().unwrap_or_else(|| std::path::Path::new("."));
-    let proxy = proxy
-        .map(str::to_string)
+    let base_dir = args
+        .file
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."));
+    let proxy = args
+        .proxy
+        .clone()
         .or_else(|| std::env::var("RPMX_PROXY").ok())
         .or_else(|| std::env::var("RPMX_ACQUISITION_PROXY").ok());
 
@@ -30,12 +27,12 @@ pub fn run(args: FetchArgs<'_>) -> Result<(), Error> {
         FetchOptions {
             cache: &cache,
             proxy: proxy.as_deref(),
-            offline,
+            offline: args.offline,
             base_dir,
         },
     )?;
 
-    if json {
+    if args.json {
         let value = serde_json::json!({
             "ok": true,
             "cache": cache.display().to_string(),
