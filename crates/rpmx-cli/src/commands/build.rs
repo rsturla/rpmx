@@ -120,19 +120,12 @@ fn build_from_recipe(
         ..
     } = args;
 
-    if unsafe_host_root && (root_lock.is_some() || root.is_some()) {
-        return Err(Error::new(
-            codes::ROOT_016,
-            "--unsafe-host-root cannot be combined with --root-lock or --root",
-        ));
-    }
-    if !unsafe_host_root && (root_lock.is_none() || root.is_none()) {
-        return Err(Error::new(
-            codes::ROOT_016,
-            "a full build requires --root-lock and --root for source assembly; \
-             pass --unsafe-host-root to use the host root",
-        ));
-    }
+    let _root_request = rpmx_core::request::resolve(rpmx_core::request::RootRequestOptions {
+        lock: root_lock.as_deref(),
+        root: root.as_deref(),
+        allow_host: unsafe_host_root,
+        arch: &arch,
+    })?;
 
     let (_, plan) = load_plan(&file, &arch, pipeline_dir, false, policy)?;
     let selected: Vec<_> = match cell.as_deref() {

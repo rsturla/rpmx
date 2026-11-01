@@ -263,32 +263,11 @@ pub(crate) fn verify_installed(
         }
     }
 
-    let mut process = Command::new("podman");
-    process
-        .arg("run")
-        .arg("--rm")
-        .arg("--pull=missing")
-        .arg("--arch")
-        .arg(target.to_string());
-    process
-        .arg("--network=none")
-        .arg("--read-only")
-        .arg("--cap-drop=all")
-        .arg("--security-opt=no-new-privileges")
-        .arg("-v")
-        .arg(format!("{}:/root:Z", root.display()))
-        .arg(image)
-        .arg("rpm")
-        .arg("--root")
-        .arg("/root")
-        .arg("-qa")
-        .arg("--qf")
-        .arg("%{NAME}|%{EPOCH}|%{VERSION}|%{RELEASE}|%{ARCH}\n");
-    let output = process.output().map_err(|error| {
-        Error::new(
-            codes::ROOT_013,
-            format!("cannot query the assembled root: {error}"),
-        )
+    let output = super::container::run_offline_root(super::container::OfflineRootCommand {
+        root,
+        image,
+        target,
+        mode: super::container::OfflineRootMode::Query,
     })?;
     if !output.status.success() {
         return Err(Error::new(

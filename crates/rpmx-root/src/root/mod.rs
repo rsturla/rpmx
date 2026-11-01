@@ -1,5 +1,5 @@
 mod assemble;
-mod container;
+pub mod container;
 mod lock;
 mod resolve;
 

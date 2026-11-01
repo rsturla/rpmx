@@ -174,3 +174,62 @@ pub(crate) fn podman_run_assembly(
         )
     })
 }
+
+pub enum OfflineRootMode<'a> {
+    Install { rpms: &'a Path },
+    Query,
+}
+
+pub struct OfflineRootCommand<'a> {
+    pub root: &'a Path,
+    pub image: &'a str,
+    pub target: rpmx_base::arch::Arch,
+    pub mode: OfflineRootMode<'a>,
+}
+
+/// Run one offline RPM operation against an assembled root.
+pub fn run_offline_root(command: OfflineRootCommand<'_>) -> Result<std::process::Output> {
+    let mut process = Command::new("podman");
+    process
+        .arg("run")
+        .arg("--rm")
+        .arg("--pull=missing")
+        .arg("--arch")
+        .arg(command.target.to_string())
+        .arg("--network=none")
+        .arg("--read-only")
+        .arg("--cap-drop=all")
+        .arg("--security-opt=no-new-privileges")
+        .arg("-v")
+        .arg(format!("{}:/root:Z", command.root.display()));
+    match &command.mode {
+        OfflineRootMode::Install { rpms } => {
+            process
+                .arg("--cap-add=CHOWN,DAC_OVERRIDE,FOWNER,FSETID,SETGID,SETUID,SYS_CHROOT")
+                .arg("-v")
+                .arg(format!("{}:/rpms:ro,Z", rpms.display()))
+                .arg(command.image)
+                .args([
+                    "sh",
+                    "-c",
+                    "rpm --root /root -i --replacefiles --replacepkgs --oldpackage --noscripts /rpms/*.rpm",
+                ]);
+        }
+        OfflineRootMode::Query => {
+            process.arg(command.image).args([
+                "rpm",
+                "--root",
+                "/root",
+                "-qa",
+                "--qf",
+                "%{NAME}|%{EPOCH}|%{VERSION}|%{RELEASE}|%{ARCH}\n",
+            ]);
+        }
+    }
+    process.output().map_err(|error| {
+        Error::new(
+            codes::ROOT_012,
+            format!("cannot run the offline root container: {error}"),
+        )
+    })
+}

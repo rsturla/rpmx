@@ -126,33 +126,12 @@ pub fn prepare(options: TestRootOptions<'_>) -> Result<PreparedTestRoot> {
         .first()
         .and_then(|path| path.parent())
         .ok_or_else(|| Error::new(codes::BUILD_007, "no binary RPMs were written"))?;
-    let output = std::process::Command::new("podman")
-        .args([
-            "run",
-            "--rm",
-            "--network=none",
-            "--cap-drop=all",
-            "--cap-add=CHOWN,DAC_OVERRIDE,FOWNER,FSETID,SETGID,SETUID,SYS_CHROOT",
-            "--security-opt=no-new-privileges",
-        ])
-        .arg("--arch")
-        .arg(target.to_string())
-        .arg("-v")
-        .arg(format!("{}:/root:Z", root_path.display()))
-        .arg("-v")
-        .arg(format!("{}:/rpms:ro,Z", rpms_dir.display()))
-        .arg(image)
-        .args([
-            "sh",
-            "-c",
-            "rpm --root /root -i --replacefiles --replacepkgs --oldpackage --noscripts /rpms/*.rpm",
-        ])
-        .output()
-        .map_err(|error| {
-            Error::new(
-                codes::BUILD_007,
-                format!("cannot install test packages: {error}"),
-            )
+    let output =
+        crate::root::container::run_offline_root(crate::root::container::OfflineRootCommand {
+            root: &root_path,
+            image,
+            target,
+            mode: crate::root::container::OfflineRootMode::Install { rpms: rpms_dir },
         })?;
     if !output.status.success() {
         return Err(Error::new(

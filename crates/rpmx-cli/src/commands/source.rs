@@ -1,7 +1,6 @@
 use std::path::Path;
 
 use rpmx_core::error::codes;
-use rpmx_core::root::RootSelection;
 use rpmx_core::source::{assemble, SourceOptions};
 use rpmx_core::Error;
 
@@ -39,37 +38,22 @@ pub fn run(args: SourceArgs, pipeline_dir: Option<&Path>) -> Result<std::path::P
         .parent()
         .unwrap_or_else(|| std::path::Path::new("."));
 
-    if args.unsafe_host_root && (args.root_lock.is_some() || args.root.is_some()) {
-        return Err(Error::new(
-            codes::ROOT_016,
-            "--unsafe-host-root cannot be combined with --root-lock or --root",
-        ));
-    }
-    if !args.unsafe_host_root && (args.root_lock.is_none() || args.root.is_none()) {
-        return Err(Error::new(
-            codes::ROOT_016,
-            "source assembly requires --root-lock and --root; \
-             pass --unsafe-host-root to use the host root",
-        ));
-    }
-
-    let selected = match (args.root_lock.as_deref(), args.root.as_deref()) {
-        (Some(lock_path), Some(root_path)) => {
-            Some(RootSelection::load(lock_path, root_path, &args.arch)?)
+    let root_request = rpmx_core::request::resolve(rpmx_core::request::RootRequestOptions {
+        lock: args.root_lock.as_deref(),
+        root: args.root.as_deref(),
+        allow_host: args.unsafe_host_root,
+        arch: &args.arch,
+    })?;
+    let selected = match &root_request {
+        rpmx_core::request::RootRequest::Host => None,
+        rpmx_core::request::RootRequest::Locked { lock, path, digest } => {
+            let _ = digest;
+            Some(rpmx_core::root::RootSelection {
+                lock: (**lock).clone(),
+                path: path.clone(),
+                digest: digest.clone(),
+            })
         }
-        (Some(_), None) => {
-            return Err(Error::new(
-                codes::ROOT_016,
-                "--root-lock for source assembly requires --root",
-            ));
-        }
-        (None, Some(_)) => {
-            return Err(Error::new(
-                codes::ROOT_016,
-                "--root for source assembly requires --root-lock",
-            ));
-        }
-        (None, None) => None,
     };
     let selected_root = selected.as_ref().map(|selection| selection.path.as_path());
 
