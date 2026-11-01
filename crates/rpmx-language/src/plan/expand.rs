@@ -179,6 +179,7 @@ pub(crate) fn expand_outputs(
             directories: output.files.directories,
             attributes: output.files.attributes,
             dependencies: output.dependencies.to_set(),
+            generators: output.generators,
             scriptlets: output.scriptlets,
         });
     }

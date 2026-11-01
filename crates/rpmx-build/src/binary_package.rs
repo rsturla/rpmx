@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
-use crate::elf;
+use crate::generators;
 use crate::package::{self, OutputSpec};
 use crate::package_spec::{BinaryPackageDirectory, BinaryPackageFile, BinaryPackageSpec};
 use rpmx_base::error::{codes, Error, Result};
@@ -59,6 +59,7 @@ pub fn prepare_binary_packages(
                 provides: Vec::new(),
                 ..Default::default()
             },
+            generators: Default::default(),
             scriptlets: Default::default(),
         });
     }
@@ -72,6 +73,7 @@ pub fn prepare_binary_packages(
         })
         .collect::<Vec<_>>();
     let split = package::split(&staged, &specs)?;
+    let sonames = generators::sonames(&staged);
 
     let mut packages = Vec::with_capacity(split.len());
     for output_files in split {
@@ -141,37 +143,12 @@ pub fn prepare_binary_packages(
             continue;
         }
 
+        let (generated_provides, generated_requires) =
+            generators::generate(&files, options.arch, &sonames, &planned.generators);
         let mut provides = planned.dependencies.provides.clone();
+        provides.extend(generated_provides);
         let mut requires = planned.dependencies.requires.clone();
-        let mut sonames: BTreeSet<String> = BTreeSet::new();
-        for file in &files {
-            if file.target.is_some() {
-                continue;
-            }
-            if let Some(info) = elf::inspect(&file.data) {
-                if let Some(soname) = &info.soname {
-                    let dependency = elf::soname_dependency(soname, info.is_64);
-                    sonames.insert(dependency.clone());
-                    provides.push(dependency);
-                    for version in &info.version_defs {
-                        if version == soname {
-                            continue;
-                        }
-                        provides.push(elf::versioned_dependency(soname, version, info.is_64));
-                    }
-                }
-                for needed in &info.needed {
-                    requires.push(elf::soname_dependency(needed, info.is_64));
-                }
-                for (library, version) in &info.version_needs {
-                    requires.push(elf::versioned_dependency(library, version, info.is_64));
-                }
-            }
-            if let Some(provide) = elf::pkgconfig_provide(&file.path, &file.data) {
-                provides.push(provide);
-            }
-        }
-        requires.retain(|dependency| !sonames.contains(dependency));
+        requires.extend(generated_requires);
         let provides = sorted_unique(provides);
         let requires = sorted_unique(requires);
 

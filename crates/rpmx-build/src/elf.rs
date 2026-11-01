@@ -52,9 +52,6 @@ pub fn inspect(data: &[u8]) -> Option<ElfInfo> {
 }
 
 /// The RPM dependency form of a shared-object name.
-///
-/// Symbol versions (`libc.so.6(GLIBC_2.38)(64bit)`) are not generated yet;
-/// the soname form is enough for dependency resolution.
 pub fn soname_dependency(name: &str, is_64: bool) -> String {
     format!("{name}()({}bit)", if is_64 { "64" } else { "32" })
 }
@@ -64,20 +61,4 @@ pub fn versioned_dependency(library: &str, version: &str, is_64: bool) -> String
         "{library}({version})({}bit)",
         if is_64 { "64" } else { "32" }
     )
-}
-
-/// `pkgconfig(foo)` and, when the file declares one, `pkgconfig(foo) = 1.2`.
-pub fn pkgconfig_provide(path: &str, data: &[u8]) -> Option<String> {
-    let file = path.rsplit('/').next()?;
-    let name = file.strip_suffix(".pc")?;
-    let text = std::str::from_utf8(data).ok()?;
-    let version = text.lines().find_map(|line| {
-        line.strip_prefix("Version:")
-            .map(str::trim)
-            .filter(|version| !version.is_empty())
-    });
-    Some(match version {
-        Some(version) => format!("pkgconfig({name}) = {version}"),
-        None => format!("pkgconfig({name})"),
-    })
 }

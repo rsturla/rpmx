@@ -440,7 +440,66 @@ pub struct Output {
     #[serde(default)]
     pub dependencies: OutputDependencies,
     #[serde(default)]
+    pub generators: OutputGenerators,
+    #[serde(default)]
     pub scriptlets: Scriptlets,
+}
+
+/// Per-output switches for automatic `Provides`/`Requires` generation.
+///
+/// Every generator is on by default. `exclude` removes a generated dependency
+/// (provide or require) by exact match, which is the escape hatch for a
+/// generator that is right in general and wrong here.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct OutputGenerators {
+    /// ELF sonames, versioned symbols, and `.so` symlink requirements.
+    #[serde(default = "enabled")]
+    pub elf: bool,
+    /// `pkgconfig(...)` provides and requires.
+    #[serde(default = "enabled")]
+    pub pkgconfig: bool,
+    /// Interpreter requirements from executable `#!` lines.
+    #[serde(default = "enabled")]
+    pub script: bool,
+    /// `python(abi)` and `pythonX.Ydist(...)` dependencies.
+    #[serde(default = "enabled")]
+    pub python: bool,
+    /// `perl(...)` provides and requires.
+    #[serde(default = "enabled")]
+    pub perl: bool,
+    /// `application(...)` and `mimehandler(...)` provides.
+    #[serde(default = "enabled")]
+    pub desktop: bool,
+    /// `metainfo(...)` provides.
+    #[serde(default = "enabled")]
+    pub metainfo: bool,
+    /// `debuginfo(build-id)` provides.
+    #[serde(default = "enabled")]
+    pub debuginfo: bool,
+    /// Generated dependencies to drop, by exact string.
+    #[serde(default)]
+    pub exclude: Vec<String>,
+}
+
+impl Default for OutputGenerators {
+    fn default() -> Self {
+        Self {
+            elf: true,
+            pkgconfig: true,
+            script: true,
+            python: true,
+            perl: true,
+            desktop: true,
+            metainfo: true,
+            debuginfo: true,
+            exclude: Vec::new(),
+        }
+    }
+}
+
+fn enabled() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]

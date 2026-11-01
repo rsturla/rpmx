@@ -101,6 +101,7 @@ pub struct PlannedOutput {
     pub attributes: Vec<crate::model::Attribute>,
     #[serde(flatten)]
     pub dependencies: crate::model::DependencySet,
+    pub generators: crate::model::OutputGenerators,
     pub scriptlets: crate::model::Scriptlets,
 }
 

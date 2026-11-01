@@ -266,3 +266,233 @@ outputs:
     assert_eq!(flags("/usr/share/doc/demo/README"), (false, true, false));
     assert_eq!(flags("/etc/demo.conf"), (false, false, true));
 }
+
+#[test]
+fn every_file_class_contributes_its_dependencies() {
+    const RECIPE: &str = r#"
+schema: 1
+package:
+  name: demo
+  version: "1.0"
+  release: 1
+  summary: demo
+  license: MIT
+outputs:
+  - name: demo
+    files:
+      include: ["/usr/**"]
+      exclude: ["/usr/share/doc/**"]
+  - name: demo-doc
+    files:
+      include: ["/usr/share/doc/**"]
+"#;
+    let (recipe, plan) = common::load(RECIPE);
+    let stage = tempfile::tempdir().expect("tempdir");
+    let root = stage.path();
+    fs::create_dir_all(root.join("usr/bin")).expect("bin");
+    fs::create_dir_all(root.join("usr/lib64/python3.12/site-packages/foo")).expect("python");
+    fs::create_dir_all(root.join("usr/lib64/python3.12/site-packages/foo-1.0.dist-info"))
+        .expect("dist-info");
+    fs::create_dir_all(root.join("usr/lib64/pkgconfig")).expect("pkgconfig");
+    fs::create_dir_all(root.join("usr/share/applications")).expect("applications");
+    fs::create_dir_all(root.join("usr/share/metainfo")).expect("metainfo");
+    fs::create_dir_all(root.join("usr/share/perl5")).expect("perl");
+    fs::create_dir_all(root.join("usr/lib64/perl5/vendor_perl/auto/Demo")).expect("perl arch");
+    fs::create_dir_all(root.join("usr/share/doc/demo")).expect("doc");
+
+    fs::write(root.join("usr/bin/tool"), b"#!/usr/bin/python3\nprint(1)\n").expect("tool");
+    fs::write(root.join("usr/bin/python3.12"), b"").expect("interpreter");
+    fs::write(
+        root.join("usr/lib64/python3.12/site-packages/foo/__init__.py"),
+        b"",
+    )
+    .expect("module");
+    fs::write(
+        root.join("usr/lib64/python3.12/site-packages/foo-1.0.dist-info/METADATA"),
+        b"Metadata-Version: 2.1\nName: foo\nVersion: 1.0\n\
+          Requires-Dist: bar>=2.0\n\
+          Requires-Dist: testpkg; extra == \"test\"\n",
+    )
+    .expect("metadata");
+    fs::write(
+        root.join("usr/lib64/pkgconfig/libdemo.pc"),
+        b"Name: libdemo\nVersion: 1.2\nRequires: zlib >= 1.2\n",
+    )
+    .expect("pc");
+    fs::write(
+        root.join("usr/share/applications/demo.desktop"),
+        b"[Desktop Entry]\nType=Application\nExec=demo\nMimeType=text/plain;\n",
+    )
+    .expect("desktop");
+    fs::write(
+        root.join("usr/share/metainfo/demo.metainfo.xml"),
+        b"<component/>",
+    )
+    .expect("metainfo");
+    fs::write(
+        root.join("usr/share/perl5/Demo.pm"),
+        b"package Demo;\nour $VERSION = '0.5';\nuse JSON::PP;\n",
+    )
+    .expect("perl");
+    fs::write(
+        root.join("usr/lib64/perl5/vendor_perl/auto/Demo/Demo.so"),
+        b"",
+    )
+    .expect("perl xs");
+    fs::write(root.join("usr/share/doc/demo/README"), b"doc").expect("doc");
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        for path in ["usr/bin/tool", "usr/bin/python3.12"] {
+            let path = root.join(path);
+            let mut permissions = fs::metadata(&path).expect("stat").permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(&path, permissions).expect("chmod");
+        }
+    }
+
+    let packages = prepare_binary_packages(BinaryPackageOptions {
+        recipe: &recipe,
+        cell: &plan.cells[0],
+        stage: root,
+        arch: "x86_64",
+        source_date_epoch: 1_700_000_000,
+        debuginfo: false,
+    })
+    .expect("prepare");
+    let demo = packages
+        .iter()
+        .find(|package| package.name == "demo")
+        .expect("demo package");
+    let provides = &demo.dependencies.provides;
+    let requires = &demo.dependencies.requires;
+
+    for expected in [
+        "python(abi) = 3.12",
+        "python3.12dist(foo) = 1",
+        "pkgconfig(libdemo) = 1.2",
+        "application()",
+        "application(demo.desktop)",
+        "metainfo()",
+        "metainfo(demo.metainfo.xml)",
+        "perl(Demo) = 0.5",
+    ] {
+        assert!(
+            provides.iter().any(|provide| provide == expected),
+            "missing provide {expected:?} in {provides:?}"
+        );
+    }
+    for expected in [
+        "/usr/bin/python3",
+        "pkgconfig(zlib) >= 1.2",
+        "python3.12dist(bar) >= 2",
+        "perl(JSON::PP)",
+    ] {
+        assert!(
+            requires.iter().any(|require| require == expected),
+            "missing require {expected:?} in {requires:?}"
+        );
+    }
+    assert!(
+        !requires.iter().any(|require| require.contains("testpkg")),
+        "extras must not leak into the base package: {requires:?}"
+    );
+    assert!(
+        !requires
+            .iter()
+            .any(|require| require == "python(abi) = 3.12"),
+        "a package must not require the ABI it ships: {requires:?}"
+    );
+    assert!(
+        !requires
+            .iter()
+            .any(|require| require == "perl-libs" || require.starts_with("perl(:MODULE_COMPAT_")),
+        "generators must not invent a Perl runtime package: {requires:?}"
+    );
+
+    let docs = packages
+        .iter()
+        .find(|package| package.name == "demo-doc")
+        .expect("doc package");
+    assert!(
+        docs.dependencies.provides.is_empty() && docs.dependencies.requires.is_empty(),
+        "docs picked up generated dependencies: {:?}",
+        docs.dependencies
+    );
+}
+
+#[test]
+fn a_recipe_can_disable_a_generator_and_exclude_a_dependency() {
+    const RECIPE: &str = r#"
+schema: 1
+package:
+  name: demo
+  version: "1.0"
+  release: 1
+  summary: demo
+  license: MIT
+outputs:
+  - name: demo
+    files:
+      include: ["/**"]
+    generators:
+      pkgconfig: false
+      exclude: ["/usr/bin/python3"]
+"#;
+    let (recipe, plan) = common::load(RECIPE);
+    let stage = tempfile::tempdir().expect("tempdir");
+    let root = stage.path();
+    fs::create_dir_all(root.join("usr/bin")).expect("bin");
+    fs::create_dir_all(root.join("usr/lib64/pkgconfig")).expect("pkgconfig");
+    fs::write(root.join("usr/bin/tool"), b"#!/usr/bin/python3\n").expect("tool");
+    fs::write(
+        root.join("usr/lib64/pkgconfig/demo.pc"),
+        b"Name: demo\nVersion: 1.0\n",
+    )
+    .expect("pc");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let path = root.join("usr/bin/tool");
+        let mut permissions = fs::metadata(&path).expect("stat").permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&path, permissions).expect("chmod");
+    }
+
+    let packages = prepare_binary_packages(BinaryPackageOptions {
+        recipe: &recipe,
+        cell: &plan.cells[0],
+        stage: root,
+        arch: "x86_64",
+        source_date_epoch: 1_700_000_000,
+        debuginfo: false,
+    })
+    .expect("prepare");
+    let dependencies = &packages[0].dependencies;
+
+    assert!(
+        !dependencies
+            .provides
+            .iter()
+            .any(|provide| provide.starts_with("pkgconfig(")),
+        "provides: {:?}",
+        dependencies.provides
+    );
+    assert!(
+        !dependencies
+            .requires
+            .iter()
+            .any(|require| require.starts_with("pkgconfig(")),
+        "requires: {:?}",
+        dependencies.requires
+    );
+    assert!(
+        !dependencies
+            .requires
+            .iter()
+            .any(|require| require == "/usr/bin/python3"),
+        "excluded require is still present: {:?}",
+        dependencies.requires
+    );
+}

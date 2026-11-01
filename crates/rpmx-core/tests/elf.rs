@@ -38,17 +38,3 @@ fn soname_dependency_uses_the_rpm_form() {
         "libzstd.so.1()(32bit)"
     );
 }
-
-#[test]
-fn pkgconfig_provide_reads_the_version() {
-    let data = b"prefix=/usr\nName: demo\nVersion: 1.2.3\n";
-    assert_eq!(
-        elf::pkgconfig_provide("/usr/lib64/pkgconfig/demo.pc", data).as_deref(),
-        Some("pkgconfig(demo) = 1.2.3")
-    );
-    assert_eq!(
-        elf::pkgconfig_provide("/usr/lib64/pkgconfig/demo.pc", b"Name: demo\n").as_deref(),
-        Some("pkgconfig(demo)")
-    );
-    assert!(elf::pkgconfig_provide("/usr/bin/demo", data).is_none());
-}

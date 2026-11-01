@@ -106,6 +106,48 @@ All scopes are installed into the same build root today. `tests` is used when
 building the installed-stage test root. `environment` is merged into every
 build step's environment; a step's own `env` wins.
 
+#### 5.3.1 Automatic dependencies
+
+Every output also gets dependencies derived from the files it actually ships,
+merged with the ones declared above:
+
+| File class | Generated |
+|---|---|
+| ELF | `libz.so.1()(64bit)` provides and requires, versioned symbols, and a `.so` symlink requiring its target's soname |
+| pkgconfig | `pkgconfig(zlib) = 1.2` provides and `pkgconfig(libcrypto) >= 3` requires |
+| Executable `#!` | the interpreter path, such as `/usr/bin/python3` |
+| Python | `python(abi) = 3.12`, plus `python3.12dist(foo) = 1.2` provides and requires from `.dist-info`/`.egg-info` metadata |
+| Perl | `perl(JSON::PP) = 4.16` provides and requires from `.pm` and Perl scripts |
+| Desktop/AppStream | `application(...)`, `mimehandler(...)` and `metainfo(...)` provides |
+| Debuginfo | `debuginfo(build-id) = ...` from `/usr/lib/debug/.build-id` |
+
+The Python generator evaluates common `Requires-Dist` markers (`python_version`,
+`sys_platform`, `platform_machine`, `extra`) and keeps unmarked dependencies.
+It emits version-specific `pythonX.Ydist(...)` names; there is no
+`python3dist(...)` major alias and no extras subpackage; a distro that wants
+one declares it on its runtime package. The Perl reader understands `package`,
+`$VERSION`, `use`/`require`/`no` and POD, but not `eval`-generated modules. It
+does not invent a Perl runtime package or ABI capability; a recipe or profile
+must declare those if the distro has them. A `#!/usr/bin/env name` shebang
+requires `/usr/bin/env`, not `name`, because rpmx does not rewrite shebangs.
+
+Each output can turn a generator off or drop a generated entry by exact match:
+
+```yaml
+outputs:
+  - name: libcurl
+    files:
+      include: ["/usr/lib64/**"]
+    generators:
+      pkgconfig: false
+      exclude:
+        - libcurl.so.4()(64bit)
+```
+
+The keys are `elf`, `pkgconfig`, `script`, `python`, `perl`, `desktop`,
+`metainfo` and `debuginfo`; all default to `true`. `elf` also controls the
+`.so` symlink requirement.
+
 ### 5.4 Sources
 
 ```yaml

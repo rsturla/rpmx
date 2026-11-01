@@ -5,6 +5,11 @@ does not promise a stable schema or CLI yet.
 
 ## Unreleased
 
+- File-payload dependency generators: ELF sonames, symbol versions and `.so`
+  symlink requires; pkgconfig provides and requires; shebang interpreters;
+  Python ABI and `pythonX.Ydist(...)`; Perl modules; desktop/AppStream
+  provides; and debuginfo build-ids.
+- Per-output `generators:` switches and exact-match `exclude` lists.
 - Native SRPM and binary RPM writers, with `rpmbuild` never invoked.
 - Weak runtime dependencies (`recommends`, `suggests`, `supplements`,
   `enhances`) in recipes, RPM headers and repository metadata.

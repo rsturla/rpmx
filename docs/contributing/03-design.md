@@ -403,14 +403,20 @@ outputs:
     generators:
       elf: true
       pkgconfig: true
+      script: true
       python: false
       perl: false
-      ruby: false
+      desktop: false
+      metainfo: false
+      debuginfo: false
       exclude:
         - libcurl.so.4()(64bit)
 ```
 
-Generated dependencies are shown by `rpmx explain` and recorded in the lock. They are not invisible macro behaviour. A profile can require generators to be on or off.
+Every generator is on by default. `exclude` removes a generated provide or
+require by exact match. Generated dependencies are computed at package time
+from the staged payload and merged with the output's declared dependencies;
+they are not invisible macro behaviour, and an output can turn a generator off.
 
 ### 4.6 Features
 

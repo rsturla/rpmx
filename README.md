@@ -29,6 +29,11 @@ prototype, not production software.
 - **Repositories.** `rpmx repo` writes `repodata` and can sign `repomd.xml.asc`.
 - **Explicit file metadata.** Empty directories, per-path owner/group/mode and
   file capabilities are recipe data.
+- **Automatic dependencies.** ELF sonames and symbol versions, pkgconfig,
+  interpreter shebangs, Python ABI/distribution names, Perl modules,
+  desktop/AppStream metadata and debuginfo build-ids are derived from the
+  packaged files. Recipe-declared dependencies are merged, and a per-output
+  `generators:` block can disable a class or exclude one generated entry.
 - **Git sources.** Sources can be pinned to a full git commit and are archived
   deterministically before entering the cache.
 
@@ -352,6 +357,13 @@ explicit escape hatch.
 
 - Rich dependencies are not implemented; weak dependencies
   (`recommends`, `suggests`, `supplements`, `enhances`) are.
+- Dependency generators cover ELF, pkgconfig, shebangs, Python, Perl,
+  desktop/AppStream and debuginfo. Fontconfig, OCaml, sysusers/usergroup and
+  rpm macro provides are not generated; Python emits versioned
+  `pythonX.Ydist(...)` names only; a distro that wants a major-only alias or
+  extras subpackages declares them on its runtime package. A
+  `#!/usr/bin/env name` shebang requires `/usr/bin/env`, not `name`, and
+  scriptlet dependencies are not generated.
 - SELinux labels, `%ghost`, `%lang`, multilib and arbitrary xattrs are not
   implemented. File capabilities are.
 - `-debugsource`, build-id debug links and per-subpackage debuginfo are not
