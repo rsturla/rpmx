@@ -133,7 +133,7 @@ impl<'a> Sandbox<'a> {
             .cwd
             .as_deref()
             .map(|cwd| expand(cwd, self))
-            .unwrap_or_else(|| "/tmp/build".to_string());
+            .unwrap_or_else(|| crate::guest::BUILD.to_string());
 
         let mut env = BTreeMap::new();
         for (key, value) in base_env(self) {
@@ -281,10 +281,10 @@ impl Session for BwrapSession {
             "/tmp".to_string(),
             "--bind".to_string(),
             self.workspace.display().to_string(),
-            "/tmp/build".to_string(),
+            crate::guest::BUILD.to_string(),
             "--bind".to_string(),
             self.stage.display().to_string(),
-            "/tmp/stage".to_string(),
+            crate::guest::STAGE.to_string(),
             "--chdir".to_string(),
             request.cwd.to_string(),
         ];
@@ -495,8 +495,8 @@ impl QemuSession {
             timeout: config.timeout,
         };
         session.wait_for_ssh()?;
-        session.copy_in(config.workspace, "/tmp/build")?;
-        session.copy_in(config.stage, "/tmp/stage")?;
+        session.copy_in(config.workspace, crate::guest::BUILD)?;
+        session.copy_in(config.stage, crate::guest::STAGE)?;
         Ok(Box::new(session))
     }
 
@@ -688,8 +688,8 @@ impl Session for QemuSession {
     }
 
     fn sync_out(&mut self) -> Result<()> {
-        self.sync_path("/tmp/build", &self.workspace)?;
-        self.sync_path("/tmp/stage", &self.stage)
+        self.sync_path(crate::guest::BUILD, &self.workspace)?;
+        self.sync_path(crate::guest::STAGE, &self.stage)
     }
 
     fn stop(&mut self) -> Result<()> {
@@ -1227,15 +1227,15 @@ fn finish(completion: Completion, timeout: Option<u64>, label: &str, prefix: &st
 fn base_env(sandbox: &Sandbox<'_>) -> Vec<(&'static str, String)> {
     let mut env = vec![
         ("PATH", SANDBOX_PATH.to_string()),
-        ("HOME", "/tmp/build".to_string()),
+        ("HOME", crate::guest::BUILD.to_string()),
         ("TMPDIR", "/tmp".to_string()),
         ("LANG", "C.UTF-8".to_string()),
         ("LC_ALL", "C.UTF-8".to_string()),
         ("TZ", "UTC".to_string()),
         ("SOURCE_DATE_EPOCH", sandbox.source_date_epoch.to_string()),
-        ("SRC", "/tmp/build".to_string()),
-        ("BUILD", "/tmp/build".to_string()),
-        ("STAGE", "/tmp/stage".to_string()),
+        ("SRC", crate::guest::BUILD.to_string()),
+        ("BUILD", crate::guest::BUILD.to_string()),
+        ("STAGE", crate::guest::STAGE.to_string()),
         ("JOBS", sandbox.jobs.to_string()),
         ("RPMX_HOST_ARCH", sandbox.host_arch.to_string()),
         ("RPMX_TARGET_ARCH", sandbox.target_arch.to_string()),
@@ -1262,11 +1262,11 @@ fn base_env(sandbox: &Sandbox<'_>) -> Vec<(&'static str, String)> {
 
 fn expand(value: &str, sandbox: &Sandbox<'_>) -> String {
     value
-        .replace("${source.dir}", "/tmp/build")
-        .replace("${build.dir}", "/tmp/build")
-        .replace("${stage}", "/tmp/stage")
-        .replace("${prefix}", "/usr")
-        .replace("${libdir}", "/usr/lib64")
+        .replace("${source.dir}", crate::guest::BUILD)
+        .replace("${build.dir}", crate::guest::BUILD)
+        .replace("${stage}", crate::guest::STAGE)
+        .replace("${prefix}", crate::guest::PREFIX)
+        .replace("${libdir}", crate::guest::LIBDIR)
         .replace("${jobs}", &sandbox.jobs.to_string())
 }
 

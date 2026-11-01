@@ -872,11 +872,17 @@ fn base_scope_without_cell(
         Value::String(recipe.package.license.clone()),
     );
     scope.insert("arch".into(), Value::String(arch.to_string()));
-    scope.insert("source.dir".into(), Value::String("/tmp/build".into()));
-    scope.insert("build.dir".into(), Value::String("/tmp/build".into()));
-    scope.insert("stage".into(), Value::String("/tmp/stage".into()));
-    scope.insert("prefix".into(), Value::String("/usr".into()));
-    scope.insert("libdir".into(), Value::String("/usr/lib64".into()));
+    scope.insert(
+        "source.dir".into(),
+        Value::String(crate::guest::BUILD.into()),
+    );
+    scope.insert(
+        "build.dir".into(),
+        Value::String(crate::guest::BUILD.into()),
+    );
+    scope.insert("stage".into(), Value::String(crate::guest::STAGE.into()));
+    scope.insert("prefix".into(), Value::String(crate::guest::PREFIX.into()));
+    scope.insert("libdir".into(), Value::String(crate::guest::LIBDIR.into()));
     scope.insert("jobs".into(), Value::String("1".into()));
     scope
 }

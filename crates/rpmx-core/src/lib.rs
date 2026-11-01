@@ -4,6 +4,7 @@ pub mod cas;
 pub mod elf;
 pub mod error;
 pub mod fetch;
+pub mod guest;
 pub mod hash;
 pub mod matrix;
 pub mod model;

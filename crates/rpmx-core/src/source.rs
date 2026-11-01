@@ -171,7 +171,7 @@ pub fn apply_patches(
             args: vec![
                 format!("-p{}", patch.strip),
                 "-i".to_string(),
-                format!("/tmp/build/.rpmx-patches/{name}"),
+                format!("{}/.rpmx-patches/{name}", crate::guest::BUILD),
             ],
             cwd: None,
             env: std::collections::BTreeMap::new(),
