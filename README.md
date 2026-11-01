@@ -204,6 +204,39 @@ rpmx root resolve local.profile.yaml
 The same applies to a local `gpgkey`; it is copied into the resolver work
 directory and referenced by `file://`.
 
+## Authenticated repositories
+
+A profile can authenticate to an RPM repository with a TLS client certificate
+(RHEL CDN), basic auth (Satellite or a private mirror), or a proxy. Secret
+values are never written into the recipe, lock or SRPM. The profile names an
+`env:NAME` reference or an absolute file path; rpmx resolves it at resolve time.
+
+```yaml
+repositories:
+  - id: rhel-baseos
+    baseurl: https://cdn.redhat.com/content/dist/rhel9/$releasever/$basearch/baseos/os
+    gpgkey: file:///etc/pki/rpm-gpg/RPM-GPG-KEY-redhat-release
+    repo-gpgcheck: true
+    auth:
+      ca: /etc/pki/entitlement/...-ca.pem
+      cert: env:RHEL_CLIENT_CERT
+      key: env:RHEL_CLIENT_KEY
+```
+
+Basic auth uses `auth.username` and `auth.password`. The password must be an
+`env:NAME` reference or a file path, so a literal secret is a profile error.
+Proxy credentials use `auth.proxy`, `auth.proxy-username` and
+`auth.proxy-password`.
+
+Credential files are copied into a private resolver directory, mounted
+read-only into the resolver container, and removed when resolution finishes.
+They are never mounted into the build sandbox, which has no network. Repository
+URLs must not embed a user name or password; use the `auth` block instead.
+
+`root assemble` and `rebuild` use payloads from the content-addressed cache, so
+they do not need the credentials. A host without entitlement can build from a
+cache populated by an entitled host.
+
 ## Policies and artifacts
 
 The profile carries artifact policy:
@@ -342,6 +375,8 @@ explicit escape hatch.
   assembly.
 - [`docs/15-ux-audit.md`](docs/15-ux-audit.md) — UX audit against Melange,
   with prioritized proposals.
+- [`docs/16-usage.md`](docs/16-usage.md) — detailed day-to-day usage, recipe
+  reference and troubleshooting.
 - [`examples/README.md`](examples/README.md) — the tested example corpus.
 
 ## License
