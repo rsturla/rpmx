@@ -31,7 +31,15 @@ pub fn fetch_sources(recipe: &Recipe, options: FetchOptions<'_>) -> Result<Vec<F
     let mut fetched = Vec::with_capacity(recipe.sources.len());
     for source in &recipe.sources {
         let hex = digest_hex(source)?;
-        let path = options.cache.join("sha512").join(hex);
+        let path = crate::cas::path(options.cache, &source.digest).map_err(|error| {
+            Error::new(
+                codes::FETCH_001,
+                format!(
+                    "source '{}' cannot use the CAS: {}",
+                    source.name, error.message
+                ),
+            )
+        })?;
         if path.exists() {
             fetched.push(FetchedSource {
                 name: source.name.clone(),
@@ -71,7 +79,12 @@ pub fn fetch_sources(recipe: &Recipe, options: FetchOptions<'_>) -> Result<Vec<F
                 ),
             ));
         }
-        write_cas(&path, &bytes)?;
+        crate::cas::store(options.cache, &bytes).map_err(|error| {
+            Error::new(
+                codes::FETCH_005,
+                format!("cannot publish source '{}': {}", source.name, error.message),
+            )
+        })?;
         fetched.push(FetchedSource {
             name: source.name.clone(),
             digest: source.digest.clone(),
@@ -460,28 +473,4 @@ fn read_body(body: &mut ureq::Body) -> Result<Vec<u8>> {
         .read_to_end(&mut bytes)
         .map_err(|error| Error::new(codes::FETCH_003, format!("cannot read response: {error}")))?;
     Ok(bytes)
-}
-
-fn write_cas(path: &Path, bytes: &[u8]) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|error| {
-            Error::new(
-                codes::FETCH_005,
-                format!("cannot create {}: {error}", parent.display()),
-            )
-        })?;
-    }
-    let temp = path.with_extension(format!("tmp.{}", std::process::id()));
-    std::fs::write(&temp, bytes).map_err(|error| {
-        Error::new(
-            codes::FETCH_005,
-            format!("cannot write {}: {error}", temp.display()),
-        )
-    })?;
-    std::fs::rename(&temp, path).map_err(|error| {
-        Error::new(
-            codes::FETCH_005,
-            format!("cannot publish {}: {error}", path.display()),
-        )
-    })
 }
