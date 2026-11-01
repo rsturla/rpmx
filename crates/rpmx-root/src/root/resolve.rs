@@ -144,6 +144,18 @@ fn prepare_work(work: &Path) -> Result<()> {
 
 fn write_repositories(work: &Path, repositories: &[Repository]) -> Result<()> {
     for repository in repositories {
+        if repository.id.is_empty()
+            || repository.id == "."
+            || repository.id == ".."
+            || repository.id.contains('/')
+            || repository.id.contains('\\')
+            || repository.id.chars().any(char::is_control)
+        {
+            return Err(Error::new(
+                codes::ROOT_006,
+                format!("repository id '{}' is not a safe file name", repository.id),
+            ));
+        }
         let (kind, url) = repository.location();
         // Fedora dropped signed repository metadata, so only package
         // signatures are checked. Metadata pinning is an open question.

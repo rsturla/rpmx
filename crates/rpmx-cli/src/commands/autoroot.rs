@@ -17,6 +17,7 @@ use rpmx_core::profile::{
 };
 use rpmx_core::root::{
     assemble, load_lock, remove_tree, resolve_profile, write_lock, AssembleOptions, RootLock,
+    RootSelection,
 };
 use rpmx_core::tree::digest_root;
 use rpmx_core::Error;
@@ -24,6 +25,7 @@ use rpmx_core::Error;
 use crate::commands::fetch::default_cache;
 
 /// A root that was resolved or found in the cache.
+#[derive(Debug)]
 pub struct AutomaticRoot {
     pub lock: PathBuf,
     pub root: PathBuf,
@@ -78,6 +80,9 @@ pub fn ensure(
     let mut packages: BTreeSet<String> = profile.packages.install.iter().cloned().collect();
     packages.extend(required.iter().cloned());
     profile.packages.install = packages.into_iter().collect();
+    // Inline roots never pass through `load_profile`; validate the assembled
+    // profile before anything derives an architecture or a root path from it.
+    profile.validate()?;
 
     let cas = match cache {
         Some(path) => path.to_path_buf(),
@@ -93,26 +98,21 @@ pub fn ensure(
     let root_path = directory.join("root");
     let name = profile.name(recipe.package.name.as_str());
 
-    if !refresh && lock_path.is_file() && root_path.is_dir() {
-        // The cache key is the requirement digest and the lock is written
-        // last, so a hit is a complete root. Re-hashing every file here costs
-        // minutes on a normal distribution root; explicit --root verification
-        // remains the way to prove a root on demand.
-        let document = load_lock(&lock_path)?;
-        let path = std::fs::canonicalize(&root_path).map_err(|error| {
-            Error::new(
-                codes::ROOT_017,
-                format!("cannot resolve {}: {error}", root_path.display()),
-            )
-        })?;
-        return Ok(Some(AutomaticRoot {
-            lock: lock_path,
-            root: path,
-            packages: count_packages(&document),
-            profile: document.profile.clone(),
-            document,
-            cached: true,
-        }));
+    if !refresh {
+        match load_cached(&lock_path, &root_path, arch) {
+            Ok(Some(root)) => return Ok(Some(root)),
+            Ok(None) => {}
+            Err(error) if offline => {
+                return Err(Error::new(
+                    codes::ROOT_016,
+                    format!(
+                        "cached root {} does not verify ({error}); run without --offline to rebuild it",
+                        directory.display()
+                    ),
+                ));
+            }
+            Err(_) => {}
+        }
     }
 
     if offline {
@@ -132,6 +132,15 @@ pub fn ensure(
             format!("cannot create {}: {error}", roots.display()),
         )
     })?;
+    // Serialize publishers per requirement. Without this, two cold starts
+    // delete each other's half-built root.
+    let _publishing = CacheLock::acquire(&roots, key)?;
+    if !refresh {
+        match load_cached(&lock_path, &root_path, arch) {
+            Ok(Some(root)) => return Ok(Some(root)),
+            Ok(None) | Err(_) => {}
+        }
+    }
     if directory.exists() {
         remove_tree(&directory)?;
     }
@@ -177,6 +186,106 @@ pub fn ensure(
         packages,
         cached: false,
     }))
+}
+
+fn load_cached(
+    lock_path: &Path,
+    root_path: &Path,
+    arch: &str,
+) -> Result<Option<AutomaticRoot>, Error> {
+    if !lock_path.is_file() || !root_path.is_dir() {
+        return Ok(None);
+    }
+    let document = load_lock(lock_path)?;
+    // Publishing writes the lock last, so a root newer than its lock may have
+    // been changed after publication. Re-hash only then: a full walk of a
+    // distribution root costs minutes on every build.
+    let lock_time = std::fs::metadata(lock_path)
+        .and_then(|metadata| metadata.modified())
+        .ok();
+    let root_time = std::fs::metadata(root_path)
+        .and_then(|metadata| metadata.modified())
+        .ok();
+    let changed = match (lock_time, root_time) {
+        (Some(lock), Some(root)) => root > lock,
+        _ => true,
+    };
+    if changed {
+        RootSelection::verify(&document, root_path, arch)?;
+    }
+    let path = std::fs::canonicalize(root_path).map_err(|error| {
+        Error::new(
+            codes::ROOT_017,
+            format!("cannot resolve {}: {error}", root_path.display()),
+        )
+    })?;
+    Ok(Some(AutomaticRoot {
+        lock: lock_path.to_path_buf(),
+        root: path,
+        packages: count_packages(&document),
+        profile: document.profile.clone(),
+        document,
+        cached: true,
+    }))
+}
+
+/// A per-requirement publishing mutex.
+struct CacheLock {
+    path: PathBuf,
+}
+
+impl CacheLock {
+    fn acquire(roots: &Path, key: &str) -> Result<Self, Error> {
+        use std::io::Write;
+
+        let path = roots.join(format!("{key}.publishing"));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(600);
+        loop {
+            match std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&path)
+            {
+                Ok(mut file) => {
+                    let _ = writeln!(file, "{}", std::process::id());
+                    return Ok(Self { path });
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                    let stale = std::fs::metadata(&path)
+                        .and_then(|metadata| metadata.modified())
+                        .ok()
+                        .and_then(|modified| modified.elapsed().ok())
+                        .is_some_and(|age| age > std::time::Duration::from_secs(900));
+                    if stale {
+                        let _ = std::fs::remove_file(&path);
+                        continue;
+                    }
+                    if std::time::Instant::now() >= deadline {
+                        return Err(Error::new(
+                            codes::ROOT_004,
+                            format!(
+                                "timed out waiting for another rpmx process to publish {}",
+                                roots.display()
+                            ),
+                        ));
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
+                Err(error) => {
+                    return Err(Error::new(
+                        codes::ROOT_004,
+                        format!("cannot create {}: {error}", path.display()),
+                    ))
+                }
+            }
+        }
+    }
+}
+
+impl Drop for CacheLock {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
 }
 
 fn has_inline_fields(spec: &RootSpec) -> bool {
@@ -242,6 +351,11 @@ fn repository(source: &RootRepository) -> Repository {
 fn discover_profile(name: &str, recipe_dir: &Path) -> Result<PathBuf, Error> {
     if name.is_empty() {
         return Err(Error::new(codes::ROOT_006, "build.root.profile is empty"));
+    }
+    // A relative path is relative to the recipe, not the caller's cwd.
+    let relative = recipe_dir.join(name);
+    if relative.is_file() {
+        return Ok(relative);
     }
     let explicit = Path::new(name);
     if explicit.is_file() {
@@ -343,6 +457,177 @@ outputs:
         );
         let spec = recipe.build.root.expect("root");
         assert!(has_inline_fields(&spec));
+    }
+
+    fn plan(recipe: &Recipe) -> rpmx_core::Plan {
+        rpmx_core::plan_with_options(
+            recipe,
+            rpmx_core::PlanOptions {
+                arch: "x86_64",
+                step_root: None,
+                allow_builtin_override: false,
+                dist_tag: None,
+                build_release: None,
+            },
+        )
+        .expect("plan")
+    }
+
+    #[test]
+    fn inline_roots_are_validated_before_any_resolution() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let recipe = recipe(
+            r#"
+schema: 1
+package:
+  name: p
+  version: "1"
+  release: 1
+  summary: p
+  license: MIT
+build:
+  root:
+    releasever: "44"
+    archs: [typo]
+    repositories:
+      - id: repo
+        baseurl: https://example.invalid/fedora
+    packages: [bash]
+outputs:
+  - name: p
+    metapackage: true
+"#,
+        );
+        let plan = plan(&recipe);
+        let error = super::ensure(
+            &recipe,
+            &plan,
+            &directory.path().join("package.yaml"),
+            None,
+            Some(directory.path()),
+            true,
+            false,
+            "x86_64",
+        )
+        .expect_err("invalid arch");
+        // `Profile::validate` reports an unknown architecture as ROOT-009.
+        assert_eq!(error.code, rpmx_core::error::codes::ROOT_009);
+    }
+
+    #[test]
+    fn naming_a_profile_and_describing_one_is_rejected() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let recipe = recipe(
+            r#"
+schema: 1
+package:
+  name: p
+  version: "1"
+  release: 1
+  summary: p
+  license: MIT
+build:
+  root:
+    profile: base
+    releasever: "44"
+outputs:
+  - name: p
+    metapackage: true
+"#,
+        );
+        let plan = plan(&recipe);
+        let error = super::ensure(
+            &recipe,
+            &plan,
+            &directory.path().join("package.yaml"),
+            None,
+            Some(directory.path()),
+            true,
+            false,
+            "x86_64",
+        )
+        .expect_err("conflicting root");
+        assert_eq!(error.code, rpmx_core::error::codes::ROOT_006);
+        assert_eq!(error.path.as_deref(), Some("build.root"));
+    }
+
+    #[test]
+    fn a_profile_path_is_relative_to_the_recipe() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let profiles = directory.path().join("profiles");
+        std::fs::create_dir_all(&profiles).expect("profiles");
+        std::fs::write(
+            profiles.join("review.yaml"),
+            r#"
+document: rpmx-profile
+version: 1
+name: review
+releasever: "44"
+archs: [x86_64]
+repositories:
+  - id: fedora
+    baseurl: https://example.invalid/fedora
+packages:
+  install: [bash]
+"#,
+        )
+        .expect("profile");
+        let recipe = recipe(
+            r#"
+schema: 1
+package:
+  name: p
+  version: "1"
+  release: 1
+  summary: p
+  license: MIT
+build:
+  root:
+    profile: profiles/review.yaml
+outputs:
+  - name: p
+    metapackage: true
+"#,
+        );
+        let plan = plan(&recipe);
+        let error = super::ensure(
+            &recipe,
+            &plan,
+            &directory.path().join("package.yaml"),
+            None,
+            Some(directory.path()),
+            true,
+            false,
+            "x86_64",
+        )
+        .expect_err("cold offline cache");
+        assert_eq!(error.code, rpmx_core::error::codes::ROOT_016);
+        assert!(
+            error.message.contains("not cached"),
+            "profile was not discovered: {}",
+            error.message
+        );
+    }
+
+    #[test]
+    fn publishing_the_same_requirement_is_serialized() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let held = super::CacheLock::acquire(directory.path(), "key").expect("first lock");
+        let path = directory.path().to_path_buf();
+        let started = std::time::Instant::now();
+        let waiter = std::thread::spawn(move || {
+            let _second = super::CacheLock::acquire(&path, "key").expect("second lock");
+            started.elapsed()
+        });
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        let waiting = waiter.is_finished();
+        drop(held);
+        let elapsed = waiter.join().expect("thread");
+        assert!(!waiting, "second publisher did not wait");
+        assert!(
+            elapsed >= std::time::Duration::from_millis(150),
+            "second publisher returned after {elapsed:?}"
+        );
     }
 
     #[test]

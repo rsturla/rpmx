@@ -182,6 +182,15 @@ impl Profile {
                     "repository id must not be empty",
                 ));
             }
+            if !valid_repository_id(&repository.id) {
+                return Err(Error::new(
+                    codes::ROOT_006,
+                    format!(
+                        "repository id '{}' must contain only letters, digits, '.', '_', '-' and '+'",
+                        repository.id
+                    ),
+                ));
+            }
             if !seen.insert(repository.id.as_str()) {
                 return Err(Error::new(
                     codes::ROOT_006,
@@ -253,9 +262,54 @@ pub fn default_sbom() -> bool {
     true
 }
 
+/// Repository ids become file names under `repos.d`.
+fn valid_repository_id(id: &str) -> bool {
+    !id.is_empty()
+        && id != "."
+        && id != ".."
+        && id.chars().all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '.' | '_' | '-' | '+')
+        })
+}
+
 /// Normalize an architecture name to the RPM spelling used in NEVRAs.
 pub fn normalize_arch(arch: &str) -> Result<&'static str> {
     rpmx_base::arch::Arch::parse(arch)
         .map(rpmx_base::arch::Arch::as_str)
         .map_err(|error| Error::new(codes::ROOT_009, error.message))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_profile;
+    use rpmx_base::error::codes;
+
+    fn profile(id: &str) -> String {
+        format!(
+            r#"
+document: rpmx-profile
+version: 1
+releasever: "44"
+archs: [x86_64]
+repositories:
+  - id: "{id}"
+    baseurl: https://example.invalid/fedora
+packages:
+  install: [bash]
+"#
+        )
+    }
+
+    #[test]
+    fn repository_ids_cannot_escape_the_repository_directory() {
+        for id in ["../victim", "/tmp/victim", "a/b", "a\\b"] {
+            let error = parse_profile(&profile(id)).expect_err(id);
+            assert_eq!(error.code, codes::ROOT_006, "{id}");
+        }
+    }
+
+    #[test]
+    fn ordinary_repository_ids_are_accepted() {
+        parse_profile(&profile("fedora-44_updates.1")).expect("valid id");
+    }
 }
