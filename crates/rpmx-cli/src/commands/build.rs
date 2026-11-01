@@ -140,6 +140,7 @@ fn build_from_recipe(
         ..
     } = args;
 
+    let run_tests = run_tests || !test.is_empty();
     let (recipe, plan) = load_plan(&file, &arch, pipeline_dir, false, policy)?;
     if locked {
         crate::commands::lock::verify(&recipe, &plan, &file, policy, profile, &arch)?;

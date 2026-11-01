@@ -40,6 +40,12 @@ pub(super) fn run(options: TestRunOptions<'_>) -> Result<Option<PathBuf>, Error>
         .filter(|test| options.filter.is_empty() || options.filter.contains(&test.name))
         .cloned()
         .collect();
+    if !options.filter.is_empty() && tests.is_empty() {
+        return Err(Error::new(
+            codes::TEST_004,
+            format!("no test matches '{}'", options.filter.join(", ")),
+        ));
+    }
     let cache = crate::commands::fetch::default_cache()?;
     let prepared = if tests.iter().any(|test| test.stage == "installed") {
         let lock = options.active_lock.ok_or_else(|| {

@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 use rpmx_base::error::{codes, Error, Result};
-use rpmx_base::hash::sha512_hex;
+use rpmx_base::hash::{sha256_hex, sha512_hex};
 
 /// The on-disk name for a content-addressed payload.
 pub fn path(cache: &Path, digest: &str) -> Result<PathBuf> {
@@ -176,7 +176,11 @@ pub fn load(cache: &Path, digest: &str) -> Result<Vec<u8>> {
             ),
         )
     })?;
-    let actual = sha512_hex(&bytes);
+    let actual = if digest.starts_with("sha256:") {
+        sha256_hex(&bytes)
+    } else {
+        sha512_hex(&bytes)
+    };
     if actual != digest {
         return Err(Error::new(
             codes::ROOT_011,
@@ -184,4 +188,42 @@ pub fn load(cache: &Path, digest: &str) -> Result<Vec<u8>> {
         ));
     }
     Ok(bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{load, path, store, store_file};
+    use rpmx_base::hash::sha256_hex;
+    use std::io::Write;
+
+    #[test]
+    fn sha256_payloads_round_trip() {
+        let cache = tempfile::tempdir().expect("cache");
+        let bytes = b"sha256 payload";
+        let digest = sha256_hex(bytes);
+        let source = cache.path().join("incoming");
+        let mut file = std::fs::File::create(&source).expect("source");
+        file.write_all(bytes).expect("write");
+        store_file(cache.path(), &source, &digest).expect("store");
+        assert!(path(cache.path(), &digest).expect("path").is_file());
+        assert_eq!(load(cache.path(), &digest).expect("load"), bytes);
+    }
+
+    #[test]
+    fn sha512_payloads_round_trip() {
+        let cache = tempfile::tempdir().expect("cache");
+        let digest = store(cache.path(), b"sha512 payload").expect("store");
+        assert_eq!(
+            load(cache.path(), &digest).expect("load"),
+            b"sha512 payload"
+        );
+    }
+
+    #[test]
+    fn a_corrupt_payload_is_rejected() {
+        let cache = tempfile::tempdir().expect("cache");
+        let digest = store(cache.path(), b"good").expect("store");
+        std::fs::write(path(cache.path(), &digest).expect("path"), b"bad").expect("corrupt");
+        assert!(load(cache.path(), &digest).is_err());
+    }
 }

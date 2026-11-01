@@ -65,6 +65,7 @@ pub struct LockedCell {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LockedStep {
+    pub scope: String,
     pub uses: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub digest: Option<String>,
@@ -185,13 +186,28 @@ pub fn build(
                 .iter()
                 .map(|output| output.name.clone())
                 .collect(),
-            steps: cell
-                .pipeline
+            steps: plan
+                .source_assembly
                 .iter()
-                .map(|step| LockedStep {
+                .flat_map(|source| {
+                    source.steps.iter().map(|step| LockedStep {
+                        scope: "source-assembly".to_string(),
+                        uses: step.uses.clone(),
+                        digest: step.step_digest.clone(),
+                    })
+                })
+                .chain(cell.pipeline.iter().map(|step| LockedStep {
+                    scope: "build".to_string(),
                     uses: step.uses.clone(),
                     digest: step.step_digest.clone(),
-                })
+                }))
+                .chain(cell.tests.iter().flat_map(|test| {
+                    test.pipeline.iter().map(move |step| LockedStep {
+                        scope: format!("test:{}", test.name),
+                        uses: step.uses.clone(),
+                        digest: step.step_digest.clone(),
+                    })
+                }))
                 .collect(),
         })
         .collect();

@@ -302,15 +302,56 @@ pub fn unpack_staged_with(
             .path()
             .map_err(|error| Error::new(code, format!("cannot read {subject}: {error}")))?
             .into_owned();
+        let components: Vec<_> = path
+            .components()
+            .filter(|component| !matches!(component, std::path::Component::CurDir))
+            .collect();
         let mut stripped = std::path::PathBuf::new();
-        for (index, component) in path.components().enumerate() {
+        for (index, component) in components.iter().enumerate() {
             if (index as u32) < strip_components {
                 continue;
+            }
+            if !matches!(component, std::path::Component::Normal(_)) {
+                return Err(Error::new(
+                    code,
+                    format!("refusing to unpack {subject} entry '{}'", path.display()),
+                ));
             }
             stripped.push(component.as_os_str());
         }
         if stripped.as_os_str().is_empty() {
             continue;
+        }
+        match entry.header().entry_type() {
+            tar::EntryType::Link => {
+                return Err(Error::new(code, format!("refusing hard link in {subject}")))
+            }
+            tar::EntryType::Symlink => {
+                if let Some(link) = entry.link_name().map_err(|error| {
+                    Error::new(code, format!("cannot read link in {subject}: {error}"))
+                })? {
+                    if link.is_absolute()
+                        || link.components().any(|component| {
+                            matches!(
+                                component,
+                                std::path::Component::ParentDir
+                                    | std::path::Component::RootDir
+                                    | std::path::Component::Prefix(_)
+                            )
+                        })
+                    {
+                        return Err(Error::new(
+                            code,
+                            format!(
+                                "refusing symlink '{}' -> '{}' in {subject}",
+                                path.display(),
+                                link.display()
+                            ),
+                        ));
+                    }
+                }
+            }
+            _ => {}
         }
         let target = base.join(&stripped);
         ensure_safe_parents(&base, &stripped, code, subject)?;
@@ -645,5 +686,114 @@ mod tests {
 
         let error = check(&mut archive).expect_err("sparse entry");
         assert!(error.message.contains("sparse entry"), "{}", error.message);
+    }
+}
+
+#[cfg(test)]
+mod extraction_safety {
+    use super::unpack_staged_with;
+    use rpmx_base::error::codes;
+    use std::io::Write;
+
+    fn tar_with(build: impl FnOnce(&mut tar::Builder<&mut Vec<u8>>)) -> std::fs::File {
+        let mut bytes = Vec::new();
+        {
+            let mut builder = tar::Builder::new(&mut bytes);
+            build(&mut builder);
+            builder.finish().expect("finish");
+        }
+        let directory = tempfile::tempdir().expect("tempdir");
+        let path = directory.path().join("archive.tar");
+        let mut file = std::fs::File::create(&path).expect("create");
+        file.write_all(&bytes).expect("write");
+        drop(directory);
+        file
+    }
+
+    fn header(kind: tar::EntryType, path: &str, size: u64) -> tar::Header {
+        let mut header = tar::Header::new_gnu();
+        header.set_entry_type(kind);
+        header.set_path(path).expect("path");
+        header.set_size(size);
+        header.set_mode(0o644);
+        header.set_cksum();
+        header
+    }
+
+    #[test]
+    fn parent_components_are_rejected() {
+        // `tar::Builder` refuses `..`; a hostile archive does not use it.
+        let mut bytes = vec![0u8; 1024];
+        let name = b"sub/../../escape";
+        bytes[..name.len()].copy_from_slice(name);
+        bytes[100..108].copy_from_slice(b"0000644\0");
+        bytes[108..116].copy_from_slice(b"0000000\0");
+        bytes[116..124].copy_from_slice(b"0000000\0");
+        bytes[124..136].copy_from_slice(b"00000000001\0");
+        bytes[136..148].copy_from_slice(b"00000000000\0");
+        bytes[148..156].fill(b' ');
+        bytes[156] = b'0';
+        bytes[257..263].copy_from_slice(b"ustar\0");
+        bytes[263..265].copy_from_slice(b"00");
+        let sum: u32 = bytes[..512].iter().map(|byte| u32::from(*byte)).sum();
+        bytes[148..156].copy_from_slice(format!("{sum:06o}\0 ").as_bytes());
+        let directory = tempfile::tempdir().expect("tempdir");
+        let path = directory.path().join("archive.tar");
+        std::fs::write(&path, &bytes).expect("archive");
+        let archive = std::fs::File::open(&path).expect("open");
+        let error = unpack_staged_with(
+            archive,
+            directory.path(),
+            "test",
+            codes::SOURCE_031,
+            None,
+            0,
+            ".",
+        )
+        .expect_err("parent traversal");
+        assert_eq!(error.code, codes::SOURCE_031);
+        assert!(!directory.path().join("escape").exists());
+    }
+
+    #[test]
+    fn hard_links_are_rejected() {
+        let archive = tar_with(|builder| {
+            let mut header = header(tar::EntryType::Link, "link", 0);
+            header.set_link_name("/etc/passwd").expect("link");
+            header.set_cksum();
+            builder.append(&header, std::io::empty()).expect("link");
+        });
+        let directory = tempfile::tempdir().expect("tempdir");
+        assert!(unpack_staged_with(
+            archive,
+            directory.path(),
+            "test",
+            codes::SOURCE_031,
+            None,
+            0,
+            ".",
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn escaping_symlinks_are_rejected() {
+        let archive = tar_with(|builder| {
+            let mut header = header(tar::EntryType::Symlink, "link", 0);
+            header.set_link_name("../../outside").expect("link");
+            header.set_cksum();
+            builder.append(&header, std::io::empty()).expect("link");
+        });
+        let directory = tempfile::tempdir().expect("tempdir");
+        assert!(unpack_staged_with(
+            archive,
+            directory.path(),
+            "test",
+            codes::SOURCE_031,
+            None,
+            0,
+            ".",
+        )
+        .is_err());
     }
 }

@@ -155,6 +155,52 @@ pub(crate) fn validate_sources(recipe: &Recipe) -> Result<()> {
             codes::SOURCE_002,
             "source",
         )?;
+        if source.name.is_empty()
+            || source.name == "."
+            || source.name == ".."
+            || source.name.contains('/')
+            || source.name.contains('\\')
+        {
+            return Err(Error::new(
+                codes::SOURCE_002,
+                format!(
+                    "source name '{}' must be a single relative path component",
+                    source.name
+                ),
+            )
+            .at(format!("sources[{index}].name")));
+        }
+        if let Some(extract) = &source.extract {
+            if let Some(destination) = &extract.destination {
+                if destination.starts_with('/')
+                    || destination.split(['/', '\\']).any(|part| part == "..")
+                {
+                    return Err(Error::new(
+                        codes::SOURCE_002,
+                        format!(
+                            "source '{}' extract.destination '{}' must stay under the workspace",
+                            source.name, destination
+                        ),
+                    )
+                    .at(format!("sources[{index}].extract.destination")));
+                }
+            }
+            if let Some(format) = &extract.format {
+                if !matches!(
+                    format.as_str(),
+                    "auto" | "tar" | "tar.gz" | "tgz" | "tar.xz" | "tar.zst" | "zstd" | "none"
+                ) {
+                    return Err(Error::new(
+                        codes::SOURCE_002,
+                        format!(
+                            "source '{}' has unsupported extract.format '{}'",
+                            source.name, format
+                        ),
+                    )
+                    .at(format!("sources[{index}].extract.format")));
+                }
+            }
+        }
         for (locator_index, locator) in source.locators.iter().enumerate() {
             if locator.kind != "git" {
                 continue;

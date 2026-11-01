@@ -395,7 +395,7 @@ impl CacheLock {
                         .and_then(|metadata| metadata.modified())
                         .ok()
                         .and_then(|modified| modified.elapsed().ok())
-                        .is_some_and(|age| age > std::time::Duration::from_secs(900));
+                        .is_some_and(|age| age > std::time::Duration::from_secs(120));
                     if stale {
                         let _ = std::fs::remove_file(&path);
                         continue;

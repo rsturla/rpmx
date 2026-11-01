@@ -182,6 +182,12 @@ fn materialize(
     extract: Option<&rpmx_language::model::Extract>,
     workspace: &Path,
 ) -> Result<()> {
+    if name.is_empty() || name == "." || name == ".." || name.contains('/') || name.contains('\\') {
+        return Err(Error::new(
+            codes::SOURCE_031,
+            format!("source name '{name}' must be a single path component"),
+        ));
+    }
     let Some(extract) = extract else {
         let target = workspace.join(name);
         return std::fs::copy(path, &target).map(|_| ()).map_err(|error| {
@@ -191,6 +197,14 @@ fn materialize(
             )
         });
     };
+    if let Some(destination) = &extract.destination {
+        if destination.starts_with('/') || destination.split(['/', '\\']).any(|part| part == "..") {
+            return Err(Error::new(
+                codes::SOURCE_031,
+                format!("extract destination '{destination}' must stay under the workspace"),
+            ));
+        }
+    }
     let format = match extract.format.as_deref().unwrap_or("auto") {
         "auto" => detect_format(path),
         other => other.to_string(),

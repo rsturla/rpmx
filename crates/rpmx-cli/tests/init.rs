@@ -27,6 +27,20 @@ fn init_creates_a_package_that_lints_clean() {
 }
 
 #[test]
+fn init_uses_the_requested_profile_name() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let target = directory.path().join("hello");
+    let output = rpmx_in(
+        directory.path(),
+        &["init", target.to_str().unwrap(), "--profile", "rhel-9"],
+    );
+    assert!(output.status.success(), "{output:?}");
+    let recipe = std::fs::read_to_string(target.join("package.yaml")).expect("recipe");
+    assert!(recipe.contains("profile: rhel-9"), "{recipe}");
+    assert!(target.join("profiles/rhel-9.yaml").is_file());
+}
+
+#[test]
 fn init_refuses_to_overwrite_without_force() {
     let directory = tempfile::tempdir().expect("tempdir");
     let target = directory.path().join("hello");

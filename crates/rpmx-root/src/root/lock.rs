@@ -66,12 +66,22 @@ impl RootLock {
 
     /// The lock must have an assembled root digest before it can be used.
     pub fn require_digest(&self) -> Result<&str> {
-        self.root_digest.as_deref().ok_or_else(|| {
+        let digest = self.root_digest.as_deref().ok_or_else(|| {
             Error::new(
                 codes::ROOT_016,
                 "the root lock has no root_digest; run `rpmx root assemble` first",
             )
-        })
+        })?;
+        let valid = digest.strip_prefix("sha512:").is_some_and(|hex| {
+            hex.len() == 128 && hex.bytes().all(|byte| byte.is_ascii_hexdigit())
+        });
+        if !valid {
+            return Err(Error::new(
+                codes::ROOT_016,
+                format!("root lock has an invalid root_digest '{digest}'"),
+            ));
+        }
+        Ok(digest)
     }
 }
 

@@ -217,13 +217,20 @@ pub fn run(args: InitArgs) -> Result<(), Error> {
             ))
         }
     };
-    let recipe = recipe.replace("{name}", &name).replace("{module}", &module);
+    let recipe = recipe
+        .replace("fedora-44", &args.profile)
+        .replace("{name}", &name)
+        .replace("{module}", &module);
     write(&directory.join("package.yaml"), &recipe, args.force)?;
     if needs_profile {
         let profile = directory
             .join("profiles")
             .join(format!("{}.yaml", args.profile));
-        write(&profile, PROFILE, args.force)?;
+        write(
+            &profile,
+            &PROFILE.replace("fedora-44", &args.profile),
+            args.force,
+        )?;
     }
     write(
         &directory.join("README.md"),
