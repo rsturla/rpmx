@@ -68,7 +68,7 @@ pub fn run(args: RebuildArgs) -> Result<Vec<PathBuf>, Error> {
         image: args.root_image.as_deref(),
         source_date_epoch: extracted.source_date_epoch,
         jobs,
-        timeout: Some(step_timeout),
+        timeout: step_timeout,
         debuginfo,
     })?;
 
@@ -269,7 +269,7 @@ pub fn run(args: RebuildArgs) -> Result<Vec<PathBuf>, Error> {
                 runner: runner_kind,
                 source_date_epoch: extracted.source_date_epoch,
                 jobs,
-                timeout: Some(step_timeout),
+                timeout: step_timeout,
                 debuginfo,
             },
         );
