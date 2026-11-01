@@ -31,6 +31,9 @@ pub struct RebuildRequest<'a> {
     pub root_image: Option<&'a str>,
     pub root_lock: Option<&'a Path>,
     pub root: Option<&'a Path>,
+    /// Re-hash an explicit root against its lock. A full build that just
+    /// resolved or cached the root passes false.
+    pub verify_root: bool,
     pub run_tests: bool,
     pub sbom: Option<&'a Path>,
     pub test_root_lock: Option<&'a Path>,
@@ -62,6 +65,7 @@ pub fn run(args: RebuildArgs) -> Result<Vec<PathBuf>, Error> {
         root_image: args.root_image.as_deref(),
         root_lock: args.root_lock.as_deref(),
         root: args.root.as_deref(),
+        verify_root: true,
         run_tests: args.run_tests,
         sbom: args.sbom.as_deref(),
         test_root_lock: args.test_root_lock.as_deref(),

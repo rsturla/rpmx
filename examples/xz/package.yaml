@@ -15,7 +15,7 @@ sources:
         url: https://tukaani.org/xz/xz-5.6.4.tar.gz
 build:
   dependencies:
-    tools: [gcc, make, sh]
+    tools: [gcc, make, bash]
   pipeline:
     - runs: |
         cd xz-5.6.4

@@ -11,7 +11,7 @@ package:
   source-date-epoch: 1704067200
 build:
   dependencies:
-    tools: [python3, sh]
+    tools: [python3, bash]
     tests: [python3]
   pipeline:
     - runs: |

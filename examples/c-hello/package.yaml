@@ -51,7 +51,7 @@ source-assembly:
 
 build:
   dependencies:
-    tools: [gcc, make, python3, sh]
+    tools: [gcc, make, python3, bash]
   pipeline:
     - runs: |
         python3 - <<'HEADER'

@@ -1,4 +1,5 @@
 mod args;
+pub mod autoroot;
 pub mod build;
 pub mod cache;
 pub mod dispatch;

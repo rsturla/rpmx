@@ -14,12 +14,16 @@ pub struct SourceRequest<'a> {
     pub arch: &'a str,
     pub runner: &'a str,
     pub policy: PlanPolicy<'a>,
+    pub profile: Option<&'a Path>,
     pub cache: Option<&'a Path>,
     pub proxy: Option<&'a str>,
     pub offline: bool,
     pub root_lock: Option<&'a Path>,
     pub root: Option<&'a Path>,
     pub unsafe_host_root: bool,
+    /// Re-hash an explicit root. A caller that already resolved the root
+    /// passes false to avoid hashing the whole tree twice.
+    pub verify_root: bool,
     pub output: &'a Path,
     pub source_date_epoch: Option<u32>,
     pub jobs: NonZeroU32,
@@ -41,12 +45,14 @@ pub fn run(args: SourceArgs, pipeline_dir: Option<&Path>) -> Result<PathBuf, Err
         arch: &args.arch,
         runner: &args.runner,
         policy,
+        profile: args.policy.profile.as_deref(),
         cache: args.cache.as_deref(),
         proxy: args.proxy.as_deref(),
         offline: args.offline,
         root_lock: args.root_lock.as_deref(),
         root: args.root.as_deref(),
         unsafe_host_root: args.unsafe_host_root,
+        verify_root: true,
         output: &args.output,
         source_date_epoch: args.source_date_epoch,
         jobs: args.jobs,
@@ -74,6 +80,35 @@ pub fn execute(request: SourceRequest<'_>) -> Result<PathBuf, Error> {
         false,
         request.policy,
     )?;
+    let automatic =
+        if request.root_lock.is_none() && request.root.is_none() && !request.unsafe_host_root {
+            crate::commands::autoroot::ensure(
+                &recipe,
+                &plan,
+                request.file,
+                request.profile,
+                request.cache,
+                request.offline,
+                false,
+                request.arch,
+            )?
+        } else {
+            None
+        };
+    if let Some(root) = &automatic {
+        eprintln!(
+            "root {} x86_64 {} packages {} ({})",
+            root.profile,
+            root.packages,
+            root.document.root_digest.as_deref().unwrap_or("-"),
+            if root.cached { "cache" } else { "resolved" }
+        );
+    }
+    let verify_digest = request.verify_root && automatic.is_none();
+    let automatic_lock = automatic.as_ref().map(|root| root.lock.as_path());
+    let automatic_root = automatic.as_ref().map(|root| root.root.as_path());
+    let root_lock = request.root_lock.or(automatic_lock);
+    let root = request.root.or(automatic_root);
     let source_date_epoch = crate::commands::source_date_epoch(&recipe, request.source_date_epoch);
     let work = tempfile::tempdir().map_err(|error| {
         Error::new(
@@ -86,10 +121,11 @@ pub fn execute(request: SourceRequest<'_>) -> Result<PathBuf, Error> {
     let base_dir = request.file.parent().unwrap_or_else(|| Path::new("."));
 
     let root_request = rpmx_core::request::resolve(rpmx_core::request::RootRequestOptions {
-        lock: request.root_lock,
-        root: request.root,
+        lock: root_lock,
+        root,
         allow_host: request.unsafe_host_root,
         arch: request.arch,
+        verify_digest,
     })?;
     let selected = match &root_request {
         rpmx_core::request::RootRequest::Host => None,

@@ -27,7 +27,7 @@ sources:
 
 build:
   dependencies:
-    tools: [gcc, make, sh]
+    tools: [gcc, make, bash]
   pipeline:
     - runs: |
         cd zstd-1.5.7

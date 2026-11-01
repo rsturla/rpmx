@@ -15,7 +15,7 @@ package:
 
 build:
   dependencies:
-    tools: [gcc, make, sh]
+    tools: [gcc, make, bash]
     tests: [gcc]
   pipeline:
     - uses: make

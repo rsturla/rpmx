@@ -16,10 +16,11 @@ pub fn run(args: BuildArgs, pipeline_dir: Option<&Path>) -> Result<Vec<PathBuf>,
         build_release: args.policy.build_release,
     })?;
     let policy = resolved.plan_policy();
+    let profile = args.policy.profile.clone();
     if let Some(stage) = args.stage.as_deref() {
         return package_stage(&args, stage, pipeline_dir, policy);
     }
-    build_from_recipe(args, pipeline_dir, policy)
+    build_from_recipe(args, pipeline_dir, policy, profile.as_deref())
 }
 
 /// Package an already-staged tree. This is the original `build --stage` mode.
@@ -95,6 +96,7 @@ fn build_from_recipe(
     args: BuildArgs,
     pipeline_dir: Option<&Path>,
     policy: PlanPolicy<'_>,
+    profile: Option<&Path>,
 ) -> Result<Vec<PathBuf>, Error> {
     let BuildArgs {
         file,
@@ -119,14 +121,43 @@ fn build_from_recipe(
         ..
     } = args;
 
+    let (recipe, plan) = load_plan(&file, &arch, pipeline_dir, false, policy)?;
+    let automatic = if root_lock.is_none() && root.is_none() && !unsafe_host_root {
+        crate::commands::autoroot::ensure(
+            &recipe,
+            &plan,
+            &file,
+            profile,
+            cache.as_deref(),
+            offline,
+            false,
+            &arch,
+        )?
+    } else {
+        None
+    };
+    let verify_digest = automatic.is_none();
+    let (root_lock, root) = match automatic {
+        Some(root) => {
+            eprintln!(
+                "root {} x86_64 {} packages {} ({})",
+                root.profile,
+                root.packages,
+                root.document.root_digest.as_deref().unwrap_or("-"),
+                if root.cached { "cache" } else { "resolved" }
+            );
+            (Some(root.lock), Some(root.root))
+        }
+        None => (root_lock, root),
+    };
     let _root_request = rpmx_core::request::resolve(rpmx_core::request::RootRequestOptions {
         lock: root_lock.as_deref(),
         root: root.as_deref(),
         allow_host: unsafe_host_root,
         arch: &arch,
+        verify_digest,
     })?;
 
-    let (_, plan) = load_plan(&file, &arch, pipeline_dir, false, policy)?;
     let selected: Vec<_> = match cell.as_deref() {
         Some(id) => plan.cells.iter().filter(|cell| cell.id == id).collect(),
         None => plan.cells.iter().collect(),
@@ -144,6 +175,7 @@ fn build_from_recipe(
         arch: &arch,
         runner: &runner,
         policy,
+        profile,
         cache: cache.as_deref(),
         proxy: proxy.as_deref(),
         offline,

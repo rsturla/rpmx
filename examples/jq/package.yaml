@@ -15,7 +15,7 @@ sources:
         url: https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-1.7.1.tar.gz
 build:
   dependencies:
-    tools: [gcc, make, sh]
+    tools: [gcc, make, bash]
     tests: [oniguruma]
   pipeline:
     - runs: |

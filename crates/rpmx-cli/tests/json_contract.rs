@@ -78,6 +78,60 @@ fn root_resolution_errors_exit_4() {
 }
 
 #[test]
+fn automatic_root_reports_a_missing_offline_closure() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let recipe = directory.path().join("package.yaml");
+    let package = format!("rpmx-ux-missing-{}", std::process::id());
+    write(
+        &recipe,
+        &format!(
+            r#"
+schema: 1
+package:
+  name: probe
+  version: "1.0"
+  release: 1
+  summary: A probe package
+  license: MIT
+build:
+  root:
+    releasever: "44"
+    archs: [x86_64]
+    repositories:
+      - id: probe
+        baseurl: https://example.invalid/fedora
+    packages: [{package}]
+  pipeline:
+    - runs: "true"
+outputs:
+  - name: probe
+    metapackage: true
+"#
+        ),
+    );
+    let out = directory.path().join("out");
+    let output = rpmx(&[
+        "build",
+        recipe.to_str().unwrap(),
+        "--offline",
+        "--output",
+        out.to_str().unwrap(),
+        "--json",
+    ]);
+    assert_eq!(output.status.code(), Some(4), "{output:?}");
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("stdout is one JSON document");
+    assert_eq!(value["ok"], false);
+    assert!(
+        value["diagnostics"][0]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("not cached"),
+        "{value}"
+    );
+}
+
+#[test]
 fn srpm_json_lists_typed_artifacts_with_paths() {
     let directory = tempfile::tempdir().expect("tempdir");
     let recipe = directory.path().join("package.yaml");

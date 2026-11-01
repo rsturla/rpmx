@@ -171,6 +171,52 @@ pub struct Build {
     pub dependencies: Dependencies,
     #[serde(default)]
     pub environment: BTreeMap<String, String>,
+    /// Build root source. Either a named profile or an inline environment.
+    /// When absent, `--profile` supplies the root.
+    #[serde(default)]
+    pub root: Option<RootSpec>,
+}
+
+/// Where the build root comes from.
+///
+/// `profile` is a name or path; the remaining fields describe a root inline,
+/// so a single recipe can build without a separate profile file.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RootSpec {
+    #[serde(default)]
+    pub profile: Option<String>,
+    #[serde(default)]
+    pub releasever: Option<String>,
+    #[serde(default)]
+    pub archs: Vec<String>,
+    #[serde(default)]
+    pub repositories: Vec<RootRepository>,
+    /// Packages to install in the root before the recipe's dependencies.
+    #[serde(default)]
+    pub packages: Vec<String>,
+    #[serde(default)]
+    pub builder: Option<RootBuilder>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RootRepository {
+    pub id: String,
+    #[serde(default)]
+    pub baseurl: Option<String>,
+    #[serde(default)]
+    pub metalink: Option<String>,
+    #[serde(default)]
+    pub mirrorlist: Option<String>,
+    #[serde(default)]
+    pub gpgkey: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RootBuilder {
+    pub image: String,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]

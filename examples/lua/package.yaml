@@ -15,7 +15,7 @@ sources:
         url: https://www.lua.org/ftp/lua-5.4.7.tar.gz
 build:
   dependencies:
-    tools: [gcc, make, sh]
+    tools: [gcc, make, bash]
   pipeline:
     - runs: |
         cd lua-5.4.7

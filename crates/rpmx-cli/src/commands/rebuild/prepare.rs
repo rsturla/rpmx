@@ -185,8 +185,19 @@ pub(super) fn prepare(
                 locked_packages.insert(package.name.clone());
             }
         }
-        let selection = RootSelection::verify(lock, root_path, request.arch)?;
-        Some(selection.path)
+        let path = if request.verify_root {
+            RootSelection::verify(lock, root_path, request.arch)?.path
+        } else {
+            lock.require_target(request.arch)?;
+            lock.require_digest()?;
+            std::fs::canonicalize(root_path).map_err(|error| {
+                Error::new(
+                    codes::ROOT_017,
+                    format!("cannot resolve {}: {error}", root_path.display()),
+                )
+            })?
+        };
+        Some(path)
     } else {
         if request.root.is_some() {
             return Err(Error::new(

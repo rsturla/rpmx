@@ -46,7 +46,7 @@ source-assembly:
         EOF
 build:
   dependencies:
-    tools: [sh]
+    tools: [bash]
   pipeline:
     - runs: |
         mkdir -p ${stage}/usr/bin ${stage}/usr/lib/systemd/system \
