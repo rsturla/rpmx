@@ -46,6 +46,17 @@ impl Arch {
     pub const fn is_64(self) -> bool {
         !matches!(self, Self::I686)
     }
+
+    /// The architecture name used by OCI manifest indexes.
+    pub const fn oci_arch(self) -> &'static str {
+        match self {
+            Self::X86_64 => "amd64",
+            Self::Aarch64 => "arm64",
+            Self::Ppc64le => "ppc64le",
+            Self::S390x => "s390x",
+            Self::I686 => "386",
+        }
+    }
 }
 
 /// The native architecture as an RPM string. Used as the CLI default.
@@ -83,5 +94,18 @@ mod tests {
     fn unknown_architectures_are_rejected() {
         let error = Arch::parse("sparc").expect_err("unsupported arch");
         assert_eq!(error.code, "RPMX-RUNNER-001");
+    }
+
+    #[test]
+    fn every_rpm_arch_has_an_oci_name() {
+        for (arch, oci) in [
+            (Arch::X86_64, "amd64"),
+            (Arch::Aarch64, "arm64"),
+            (Arch::Ppc64le, "ppc64le"),
+            (Arch::S390x, "s390x"),
+            (Arch::I686, "386"),
+        ] {
+            assert_eq!(arch.oci_arch(), oci);
+        }
     }
 }

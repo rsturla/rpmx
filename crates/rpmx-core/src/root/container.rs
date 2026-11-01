@@ -42,13 +42,7 @@ pub(crate) fn podman_run(
 
 pub(crate) fn image_digest_for_arch(image: &str, arch: &str) -> Result<String> {
     let target = crate::arch::Arch::parse(arch)?;
-    let oci_arch = match target {
-        crate::arch::Arch::X86_64 => "amd64",
-        crate::arch::Arch::Aarch64 => "arm64",
-        crate::arch::Arch::Ppc64le => "ppc64le",
-        crate::arch::Arch::S390x => "s390x",
-        crate::arch::Arch::I686 => "386",
-    };
+    let oci_arch = target.oci_arch();
     if let Ok(output) = Command::new("podman")
         .args(["manifest", "inspect", image])
         .output()
@@ -80,13 +74,7 @@ pub(crate) fn image_digest_for_arch(image: &str, arch: &str) -> Result<String> {
     // architecture matches the requested one.
     let digest = ensure_image(image)?;
     let actual_arch = inspect_image(image, "{{.Architecture}}")?;
-    let expected = match target {
-        crate::arch::Arch::X86_64 => "amd64",
-        crate::arch::Arch::Aarch64 => "arm64",
-        crate::arch::Arch::Ppc64le => "ppc64le",
-        crate::arch::Arch::S390x => "s390x",
-        crate::arch::Arch::I686 => "386",
-    };
+    let expected = target.oci_arch();
     if actual_arch != expected {
         return Err(Error::new(
             codes::ROOT_002,
