@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::error::{codes, Error, Result};
-use crate::reject_yaml_constructs;
+use crate::yaml;
 
 pub const DOCUMENT: &str = "rpmx-profile";
 pub const VERSION: u32 = 1;
@@ -108,15 +108,7 @@ pub struct ResolveOptions {
 }
 
 pub fn parse_profile(text: &str) -> Result<Profile> {
-    reject_yaml_constructs(text)?;
-    let profile: Profile = serde_yaml_ng::from_str(text).map_err(|error| {
-        let location = error.location();
-        let mapped = Error::new(codes::ROOT_006, error.to_string());
-        match location {
-            Some(location) => mapped.with_location(Some(location.line()), Some(location.column())),
-            None => mapped,
-        }
-    })?;
+    let profile: Profile = yaml::parse_strict(text, codes::ROOT_006)?;
     profile.validate()?;
     Ok(profile)
 }

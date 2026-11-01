@@ -20,6 +20,7 @@ pub mod srpm;
 pub mod steps;
 pub mod template;
 pub mod tree;
+pub mod yaml;
 
 use std::path::Path;
 
@@ -33,51 +34,7 @@ pub use plan::{
 };
 
 pub fn parse_recipe(text: &str) -> Result<Recipe> {
-    reject_yaml_constructs(text)?;
-    serde_yaml_ng::from_str(text).map_err(|error| {
-        let location = error.location();
-        let mapped = Error::new(codes::YAML_001, error.to_string());
-        match location {
-            Some(location) => mapped.with_location(Some(location.line()), Some(location.column())),
-            None => mapped,
-        }
-    })
-}
-
-pub(crate) fn reject_yaml_constructs(text: &str) -> Result<()> {
-    use saphyr_parser::{Event, Parser};
-
-    let mut parser = Parser::new_from_str(text);
-    while let Some(event) = parser.next_event() {
-        let (event, _span) =
-            event.map_err(|error| Error::new(codes::YAML_002, format!("invalid YAML: {error}")))?;
-        match event {
-            Event::Alias(_) => {
-                return Err(Error::new(
-                    codes::YAML_003,
-                    "YAML aliases are not allowed; write the value in full",
-                ));
-            }
-            Event::Scalar(_, _, anchor, tag)
-            | Event::SequenceStart(anchor, tag)
-            | Event::MappingStart(anchor, tag) => {
-                if anchor != 0 {
-                    return Err(Error::new(
-                        codes::YAML_003,
-                        "YAML anchors are not allowed; write the value in full",
-                    ));
-                }
-                if tag.is_some_and(|tag| !tag.is_yaml_core_schema()) {
-                    return Err(Error::new(
-                        codes::YAML_004,
-                        "custom YAML tags are not allowed",
-                    ));
-                }
-            }
-            _ => {}
-        }
-    }
-    Ok(())
+    yaml::parse_strict(text, codes::YAML_001)
 }
 
 pub fn load_recipe(path: impl AsRef<Path>) -> Result<Recipe> {
