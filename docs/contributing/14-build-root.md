@@ -78,6 +78,8 @@ dist_tag: .fc44
 options:
   weak_deps: false
   docs: false
+prefix: /usr
+libdir: /usr/lib64
 repositories:
   - id: fedora
     metalink: https://mirrors.fedoraproject.org/metalink?repo=fedora-$releasever&arch=$basearch

@@ -997,3 +997,57 @@ outputs:
     let plan = plan_str(&yaml).expect("plan");
     assert_eq!(plan.cells[0].tools, ["foo-tool", "make >= 4"]);
 }
+
+#[test]
+fn inline_step_rejects_a_hardcoded_guest_path() {
+    let yaml = minimal(
+        r#"
+build:
+  pipeline:
+    - runs: "find /tmp/stage -type f -delete"
+outputs:
+  - name: foo
+    files:
+      include: ["/usr/bin/foo"]
+"#,
+    );
+    assert_eq!(error_code(&yaml), "RPMX-STEP-019");
+}
+
+#[test]
+fn inline_steps_keep_executor_paths_as_placeholders() {
+    let yaml = minimal(
+        r#"
+build:
+  pipeline:
+    - runs: |
+        test "${source.dir}" = "$SRC"
+        test "${build.dir}" = "$BUILD"
+        install -D "${stage}/usr/bin/foo" "${prefix}/bin/foo"
+        test "${libdir}" = "$LIBDIR"
+        make -j"${jobs}"
+outputs:
+  - name: foo
+    files:
+      include: ["/usr/bin/foo"]
+"#,
+    );
+    let plan = plan_str(&yaml).expect("plan");
+    let script = &plan.cells[0].pipeline[0].args[1];
+    for placeholder in [
+        "${source.dir}",
+        "${build.dir}",
+        "${stage}",
+        "${prefix}",
+        "${libdir}",
+        "${jobs}",
+    ] {
+        assert!(
+            script.contains(placeholder),
+            "plan baked {placeholder}: {script}"
+        );
+    }
+    for path in ["/tmp/build", "/tmp/stage", "/usr/lib64"] {
+        assert!(!script.contains(path), "plan baked {path}: {script}");
+    }
+}

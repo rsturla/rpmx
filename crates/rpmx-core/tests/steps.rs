@@ -251,7 +251,7 @@ summary: local override for the test
 inputs:
   output:
     type: string
-    default: /usr/bin/foo
+    default: "${prefix}/bin/foo"
 run:
   runs: echo local
 "#,
@@ -304,4 +304,52 @@ outputs:
     let step = &plan.cells[0].pipeline[0];
     assert!(!step.builtin);
     assert!(step.args[1].contains("echo local"));
+}
+
+#[test]
+fn local_step_rejects_a_hardcoded_guest_path() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    write_step(
+        dir.path(),
+        "acme/strip",
+        r#"
+name: acme/strip
+version: 1
+summary: Strip a binary
+inputs:
+  path:
+    type: string
+    required: true
+run:
+  argv: ["strip", "--strip-unneeded", "${inputs.path}", "/tmp/build/keep"]
+"#,
+    );
+
+    let error = plan_with_root(recipe(), dir.path()).expect_err("hardcoded path fails");
+    assert_eq!(error.code, "RPMX-STEP-019");
+    assert!(error.message.contains("/tmp/build"), "{}", error.message);
+}
+
+#[test]
+fn local_step_rejects_a_hardcoded_guest_path_in_an_input_default() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    write_step(
+        dir.path(),
+        "acme/strip",
+        r#"
+name: acme/strip
+version: 1
+summary: Strip a binary
+inputs:
+  path:
+    type: string
+    default: "/tmp/stage/usr/bin/foo"
+run:
+  argv: ["strip", "--strip-unneeded", "${inputs.path}"]
+"#,
+    );
+    let yaml = recipe().replace("      with:\n        path: /usr/bin/foo\n", "");
+
+    let error = plan_with_root(&yaml, dir.path()).expect_err("hardcoded default fails");
+    assert_eq!(error.code, "RPMX-STEP-019");
 }

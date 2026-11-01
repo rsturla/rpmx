@@ -486,10 +486,9 @@ default  slug= release=1 package=c-hello
 but the same recipe built against the Fedora root produces
 `c-hello-1.0-1.fc44`. **[verified]**
 
-The plan also expands `${stage}` to `/tmp/stage` and `${source.dir}` to
-`/tmp/build` (`plan/expand.rs`), because the built-in steps hardcode those
-paths. A reviewer sees container-internal paths, not the workspace they are
-about to build.
+The plan keeps `${stage}`, `${source.dir}` and the other executor paths as
+placeholders; only the sandbox resolves them. A reviewer sees the build
+contract, not a container-internal path.
 
 `plan` prints the full inline `runs:` body for every step, including a 30-line
 `strip` shell script. That is honest, but it is not readable, and it omits the
@@ -558,7 +557,7 @@ The model (`crates/rpmx-core/src/model.rs`) is much smaller than the design.
 | `package.changelog`, `release.auto: git` | No | Release is a literal string. |
 | `tests[].dependencies`, `kind: abi/reproduce` | No | Tests share one global tool list; only commands. |
 | `build.dependencies.extra` with `when/reason` | No | No conditional dependencies. |
-| Profiles with `paths.prefix/libdir`, policy flags | No | Built-in steps hardcode `/usr` and `lib64`. |
+| Profiles with `paths.prefix/libdir`, policy flags | Partial | Prefix/libdir are wired through the lock and steps; policy flags are not. |
 
 `examples/curl/package.yaml` (a design artifact) does not parse:
 `RPMX-YAML-001: package: unknown field 'unowned-files'`. That is fine as a
@@ -1509,10 +1508,11 @@ changelog in the RPM matches the lock.
 
 **Problem.** The design's profile is a policy overlay with `paths.prefix`,
 `paths.libdir`, build flags, allowed actions, and policy booleans. The
-implementation's `Profile` is only a root recipe: repositories, packages,
-releasever, dist tag, debuginfo, sbom. Built-in steps hardcode `/usr` and
-`lib64`, so non-Fedora layouts cannot be expressed. `--profile` on `build` only
-reads the dist tag.
+implementation's `Profile` is still mostly a root recipe: repositories,
+packages, releasever, dist tag, debuginfo, sbom. `paths.prefix` and
+`paths.libdir` are now recorded in the lock and exported to steps as
+`PREFIX`/`LIBDIR`; the remaining policy flags are not implemented. `--profile`
+on `build` still only reads the dist tag.
 
 **Design.** Either:
 

@@ -30,6 +30,13 @@ pub struct RootLock {
     pub dist_tag: Option<String>,
     #[serde(default)]
     pub options: ResolveOptions,
+    /// Install prefix recorded from the profile. It is provenance, not closure
+    /// content, so it is deliberately outside `closure_digest`.
+    #[serde(default = "crate::profile::default_prefix")]
+    pub prefix: String,
+    /// Library directory recorded from the profile.
+    #[serde(default = "crate::profile::default_libdir")]
+    pub libdir: String,
     #[serde(default)]
     pub debuginfo: bool,
     #[serde(default = "crate::profile::default_sbom")]

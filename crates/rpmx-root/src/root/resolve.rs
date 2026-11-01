@@ -114,6 +114,8 @@ pub fn resolve_profile(
         releasever: profile.releasever.clone(),
         dist_tag: profile.dist_tag()?,
         options: profile.options.clone(),
+        prefix: profile.paths.prefix.clone(),
+        libdir: profile.paths.libdir.clone(),
         debuginfo: profile.debuginfo,
         sbom: profile.sbom,
         repositories,

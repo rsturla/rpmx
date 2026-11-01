@@ -106,10 +106,11 @@ diagnostics. `explain --json`, `test --install-dir --json`, `doctor --json` and
 | `<VAR>` named by `--signing-passphrase-env` / `--passphrase-env` | Signing key passphrase. |
 
 Steps see a fixed environment: `PATH`, `HOME`, `TMPDIR`, `LANG`, `LC_ALL`,
-`TZ`, `SOURCE_DATE_EPOCH`, `SRC`, `BUILD`, `STAGE`, `JOBS`, `RPMX_HOST_ARCH`,
-`RPMX_TARGET_ARCH`, `RPMX_CROSS` and `RPMX_DEBUGINFO`. The host environment is
-not inherited. `SOURCE_DATE_EPOCH`, `SRC`, `BUILD`, `STAGE` and `JOBS` are
-reserved and cannot be set by a step.
+`TZ`, `SOURCE_DATE_EPOCH`, `SRC`, `BUILD`, `STAGE`, `PREFIX`, `LIBDIR`,
+`JOBS`, `RPMX_HOST_ARCH`, `RPMX_TARGET_ARCH`, `RPMX_CROSS` and
+`RPMX_DEBUGINFO`. The host environment is not inherited. `SOURCE_DATE_EPOCH`,
+`SRC`, `BUILD`, `STAGE`, `PREFIX`, `LIBDIR` and `JOBS` are reserved and cannot
+be set by a step.
 
 ---
 

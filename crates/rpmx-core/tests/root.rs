@@ -48,6 +48,8 @@ fn lock() -> RootLock {
         releasever: "44".to_string(),
         dist_tag: None,
         options: options(),
+        prefix: "/usr".to_string(),
+        libdir: "/usr/lib64".to_string(),
         debuginfo: false,
         sbom: true,
         repositories,

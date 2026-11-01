@@ -5,14 +5,15 @@ needs:
   tools: [binutils, findutils]
 run:
   runs: |
-    find /tmp/stage -type f -exec sh -c '
+    find "$STAGE" -type f -exec sh -c '
+      debug_root="$STAGE$PREFIX/lib/debug"
       for f do
         case "$f" in
-          /tmp/stage/usr/lib/debug/*) continue ;;
+          "$debug_root/"*) continue ;;
         esac
         if [ "$RPMX_DEBUGINFO" = "1" ]; then
-          rel="$${f#/tmp/stage}"
-          debug="/tmp/stage/usr/lib/debug$rel.debug"
+          rel="$${f#"$STAGE"}"
+          debug="$debug_root$rel.debug"
           mkdir -p "$(dirname "$debug")"
           if objcopy --only-keep-debug "$f" "$debug" 2>/dev/null; then
             strip --strip-unneeded "$f" 2>/dev/null || true

@@ -244,6 +244,8 @@ fn run_installed(
         stage: &stage,
         root: Some(&prepared.path),
         image: None,
+        prefix: &lock.prefix,
+        libdir: &lock.libdir,
         source_date_epoch,
         jobs: args.runtime.jobs,
         timeout,
@@ -258,6 +260,8 @@ fn run_installed(
         source_date_epoch,
         jobs: args.runtime.jobs,
         timeout,
+        prefix: &lock.prefix,
+        libdir: &lock.libdir,
         debuginfo: false,
     };
     let mut outcomes = Vec::new();

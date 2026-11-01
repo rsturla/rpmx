@@ -22,8 +22,6 @@ No environment lookups, no shell, no network, no arithmetic, no filters, no cond
 | `${profile.name}` | string | Profile name. |
 | `${profile.vendor}` | string | Profile vendor. |
 | `${profile.dist_tag}` | string | Distro tag. |
-| `${profile.prefix}` | string | Install prefix. |
-| `${profile.libdir}` | string | Library directory. |
 | `${arch}` | string | Target architecture. |
 | `${target}` | string | Target triple. |
 | `${cell.id}` | string | Matrix cell ID, e.g. `python=3.12`. |
@@ -63,6 +61,9 @@ Rules:
 - Expansion is a fixed point with cycle detection.
 - A variable may not reference itself, directly or indirectly.
 - `vars` are recipe-local; profiles can override them via the profile overlay.
+- Executor paths (`${source.dir}`, `${stage}`, `${prefix}`, `${libdir}`,
+  `${jobs}`) are resolved by the sandbox. Use them directly in a step, not
+  inside a `vars` value.
 - There are no lists, maps or expressions in `vars` in v1. If a value needs structure, it belongs in the recipe, not in a template.
 
 ## 4. Where templates are allowed

@@ -70,6 +70,63 @@ pub fn expand_string(input: &str, scope: &BTreeMap<String, Value>) -> Result<Str
     expand_tokens(input, &mut |token| lookup(scope, token))
 }
 
+/// Values owned by the executor. They stay as `${...}` placeholders in the
+/// plan, the lock and the SRPM, and only the sandbox resolves them.
+pub const EXECUTOR_TOKENS: &[&str] = &[
+    "source.dir",
+    "build.dir",
+    "stage",
+    "prefix",
+    "libdir",
+    "jobs",
+];
+
+const DEFERRED_OPEN: char = '\u{1}';
+const DEFERRED_CLOSE: char = '\u{2}';
+
+/// Expand recipe templates but leave executor tokens intact.
+pub fn expand_string_deferring(input: &str, scope: &BTreeMap<String, Value>) -> Result<String> {
+    let out = expand_tokens_inner(
+        input,
+        &mut |token| {
+            if EXECUTOR_TOKENS.contains(&token) {
+                Ok(format!("{DEFERRED_OPEN}{token}{DEFERRED_CLOSE}"))
+            } else {
+                lookup(scope, token)
+            }
+        },
+        true,
+    )?;
+    let mut out = out;
+    for token in EXECUTOR_TOKENS {
+        out = out.replace(
+            &format!("{DEFERRED_OPEN}{token}{DEFERRED_CLOSE}"),
+            &format!("${{{token}}}"),
+        );
+    }
+    Ok(out)
+}
+
+pub fn expand_json_deferring(value: &Value, scope: &BTreeMap<String, Value>) -> Result<Value> {
+    match value {
+        Value::String(text) => Ok(Value::String(expand_string_deferring(text, scope)?)),
+        Value::Array(items) => Ok(Value::Array(
+            items
+                .iter()
+                .map(|item| expand_json_deferring(item, scope))
+                .collect::<Result<Vec<_>>>()?,
+        )),
+        Value::Object(map) => {
+            let mut out = serde_json::Map::new();
+            for (key, item) in map {
+                out.insert(key.clone(), expand_json_deferring(item, scope)?);
+            }
+            Ok(Value::Object(out))
+        }
+        other => Ok(other.clone()),
+    }
+}
+
 pub fn expand_inputs(input: &str, inputs: &BTreeMap<String, Value>) -> Result<String> {
     expand_tokens_inner(
         input,

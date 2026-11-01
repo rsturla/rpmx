@@ -298,7 +298,42 @@ pub(crate) fn validate_step(step: &Step, path: String) -> Result<()> {
     {
         return Err(Error::new(codes::STEP_003, "runs must not be empty").at(path));
     }
+    if let Some((guest_path, field)) = hardcoded_guest_path(step) {
+        return Err(Error::new(
+            codes::STEP_019,
+            format!(
+                "step '{}' hardcodes guest path '{guest_path}' in '{field}'; \
+                 use the ${{...}} placeholder so the executor supplies it",
+                step.label()
+            ),
+        )
+        .at(format!("{path}.{field}")));
+    }
     Ok(())
+}
+
+fn hardcoded_guest_path(step: &Step) -> Option<(&'static str, String)> {
+    let mut fields: Vec<(String, &str)> = Vec::new();
+    if let Some(cwd) = step.cwd.as_deref() {
+        fields.push(("cwd".into(), cwd));
+    }
+    if let Some(runs) = step.runs.as_deref() {
+        fields.push(("runs".into(), runs));
+    }
+    for (index, arg) in step.argv.iter().flatten().enumerate() {
+        fields.push((format!("argv[{index}]"), arg));
+    }
+    for (key, value) in step.env.iter().flatten() {
+        fields.push((format!("env.{key}"), value));
+    }
+    for (field, text) in fields {
+        for guest_path in [rpmx_base::guest::BUILD, rpmx_base::guest::STAGE] {
+            if text.contains(guest_path) {
+                return Some((guest_path, field));
+            }
+        }
+    }
+    None
 }
 
 pub(crate) fn validate_outputs(recipe: &Recipe) -> Result<()> {

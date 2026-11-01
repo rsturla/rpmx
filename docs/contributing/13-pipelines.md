@@ -81,6 +81,10 @@ Common optional fields on any entry:
 
 `uses` and `argv`/`runs` are mutually exclusive, and `argv` and `runs` are mutually exclusive.
 
+An inline step must not spell the workspace or stage root (`/tmp/build`,
+`/tmp/stage`). Use `${source.dir}` and `${stage}`; the planner rejects a literal
+with `RPMX-STEP-019`.
+
 There is no `if:`. Conditional behavior belongs in features, matrix axes or separate outputs. Melange's `if:` is rejected for the same reason `%if` is rejected.
 
 ## 4. Step definition
@@ -188,7 +192,16 @@ Unpacking is not a step. The verified source snapshot is already extracted when 
 
 `JOBS` is set from the recipe's jobs setting. Built-in steps pass it explicitly (`make -j"$JOBS"`, `cmake --build --parallel "$JOBS"`, `meson compile -j "$JOBS"`), so a step does not have to guess the parallelism. `MAKEFLAGS` is not set.
 
-`${stage}` is also exported as the runtime environment variable `STAGE`. Recipes may use either form for `DESTDIR`; built-in steps use `$STAGE` because their YAML is rendered with only their declared inputs. The staging root is the only tree that is packaged; output `files.include` patterns are matched relative to it.
+`${stage}` is also exported as the runtime environment variable `STAGE`. Recipes may use either form for `DESTDIR`.
+
+Every executor path has an environment equivalent: `SRC`/`BUILD` for
+`${source.dir}`/`${build.dir}`, `STAGE` for `${stage}`, `PREFIX`/`LIBDIR` for
+`${prefix}`/`${libdir}`, and `JOBS` for `${jobs}`. A step's `runs` script uses
+the variable form (`"$STAGE"`, `--prefix="$PREFIX"`); `cwd`, `argv` and `env`
+use the `${...}` form because they are not shell. Built-in steps contain no
+literal guest path and no hardcoded `/usr`; both come from the executor. The
+staging root is the only tree that is packaged; output `files.include` patterns
+are matched relative to it.
 
 Patches declared at the top level of the recipe are applied in order after the
 source archives are materialised and before the source-assembly pipeline runs.
@@ -304,6 +317,10 @@ Rules:
   supplied by `with:`; defaults are allowed. Unknown `with` keys are errors.
 - `${inputs.*}` is substituted at plan time. Executor paths such as
   `${stage}` and `${source.dir}` are left as placeholders for the executor.
+- A step file must not spell a guest path (`${source.dir}`, `${stage}`, the
+  configured prefix or libdir). Use `$STAGE`/`$PREFIX`/`$LIBDIR` in `runs` and
+  `${stage}`/`${prefix}`/`${libdir}` in `cwd`, `argv` and `env`. The loader
+  rejects a literal with `RPMX-STEP-019`.
 - `run.argv` and `run.runs` are mutually exclusive. `needs` is merged into the
   build-root requirements.
 - A local step is a source input. Its SHA-512 digest goes into the lock and the
@@ -399,14 +416,19 @@ where the steps run, not how they are resolved.
 
 | Code | Condition |
 |---|---|
-| `RPMX-STEP-001` | Unknown step name. |
-| `RPMX-STEP-002` | Missing required input. |
-| `RPMX-STEP-003` | Unknown input or wrong type. |
-| `RPMX-STEP-004` | `uses` combined with `argv`/`runs`, or `argv` with `runs`. |
-| `RPMX-STEP-005` | Step digest does not match the lock. |
-| `RPMX-STEP-006` | Bundle contains `argv`/`runs`. |
-| `RPMX-STEP-007` | `needs` tool cannot be resolved in the build root. |
-| `RPMX-STEP-008` | Inline shell forbidden by the active profile. |
+| `RPMX-STEP-001` | A step has no command, or does not name exactly one of `uses`, `argv`, or `runs`. |
+| `RPMX-STEP-002` | A step's `argv` list is empty. |
+| `RPMX-STEP-003` | A step's `runs` script is empty. |
+| `RPMX-STEP-010` | A step name is not a valid namespaced name. |
+| `RPMX-STEP-011` | A step file cannot be read, or the named step cannot be found. |
+| `RPMX-STEP-012` | A step file is not UTF-8 or does not parse as a valid step. |
+| `RPMX-STEP-013` | A step file's declared name does not match the requested name. |
+| `RPMX-STEP-014` | A step is given an input it does not declare. |
+| `RPMX-STEP-015` | A required step input is missing, or an input reference is unknown. |
+| `RPMX-STEP-016` | A local step shadows a built-in step, or an input value has the wrong type. |
+| `RPMX-STEP-017` | A step has an empty `argv`, or specifies both or neither of `argv` and `runs`. |
+| `RPMX-STEP-018` | A step requests an unknown template renderer. |
+| `RPMX-STEP-019` | A step definition hardcodes a guest path. |
 
 ## 13. External tools and built-in steps
 

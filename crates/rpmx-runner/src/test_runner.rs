@@ -18,6 +18,8 @@ pub struct TestSandboxConfig<'a> {
     pub source_date_epoch: u32,
     pub jobs: NonZeroU32,
     pub timeout: NonZeroU64,
+    pub prefix: &'a str,
+    pub libdir: &'a str,
     pub debuginfo: bool,
 }
 
@@ -70,6 +72,8 @@ pub fn run_planned_tests(
         source_date_epoch: settings.source_date_epoch,
         jobs: settings.jobs,
         timeout: settings.timeout,
+        prefix: settings.prefix,
+        libdir: settings.libdir,
         debuginfo: settings.debuginfo,
     })?;
     for test in installed_tests {

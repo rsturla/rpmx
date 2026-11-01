@@ -428,6 +428,8 @@ pub mod codes {
         STEP_017 = "RPMX-STEP-017",
         /// A step requests an unknown template renderer.
         STEP_018 = "RPMX-STEP-018",
+        /// A step definition hardcodes a guest path instead of using a variable or placeholder.
+        STEP_019 = "RPMX-STEP-019",
         /// Variable definitions form a cycle.
         TEMPLATE_001 = "RPMX-TEMPLATE-001",
         /// A template references an unknown variable.

@@ -147,6 +147,14 @@ pub fn execute(request: SourceRequest<'_>) -> Result<PathBuf, Error> {
         }
     };
     let selected_root = selected.as_ref().map(|selection| selection.path.as_path());
+    let prefix = selected
+        .as_ref()
+        .map(|selection| selection.lock.prefix.as_str())
+        .unwrap_or(rpmx_core::guest::PREFIX);
+    let libdir = selected
+        .as_ref()
+        .map(|selection| selection.lock.libdir.as_str())
+        .unwrap_or(rpmx_core::guest::LIBDIR);
 
     let snapshot = assemble(SourceOptions {
         recipe: &bundle.recipe,
@@ -157,6 +165,8 @@ pub fn execute(request: SourceRequest<'_>) -> Result<PathBuf, Error> {
         base_dir,
         workspace: &workspace,
         stage: &stage,
+        prefix,
+        libdir,
         output: request.output,
         source_date_epoch,
         jobs: request.jobs,

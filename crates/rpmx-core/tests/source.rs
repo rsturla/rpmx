@@ -160,6 +160,8 @@ fn patches_are_applied_and_removed_from_the_workspace() {
         stage: stage.path(),
         root: None,
         image: None,
+        prefix: "/usr",
+        libdir: "/usr/lib64",
         source_date_epoch: 1_700_000_000,
         jobs: NonZeroU32::new(1).expect("jobs"),
         timeout: NonZeroU64::new(3600).expect("timeout"),

@@ -200,6 +200,8 @@ pub fn to_lock(
         releasever: releasever.to_string(),
         dist_tag: None,
         options,
+        prefix: crate::profile::default_prefix(),
+        libdir: crate::profile::default_libdir(),
         debuginfo: false,
         sbom: true,
         repositories,

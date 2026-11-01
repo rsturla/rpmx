@@ -77,27 +77,6 @@ pub(crate) fn base_scope_without_cell(
         Value::String(recipe.package.license.clone()),
     );
     scope.insert("arch".into(), Value::String(arch.to_string()));
-    scope.insert(
-        "source.dir".into(),
-        Value::String(rpmx_base::guest::BUILD.into()),
-    );
-    scope.insert(
-        "build.dir".into(),
-        Value::String(rpmx_base::guest::BUILD.into()),
-    );
-    scope.insert(
-        "stage".into(),
-        Value::String(rpmx_base::guest::STAGE.into()),
-    );
-    scope.insert(
-        "prefix".into(),
-        Value::String(rpmx_base::guest::PREFIX.into()),
-    );
-    scope.insert(
-        "libdir".into(),
-        Value::String(rpmx_base::guest::LIBDIR.into()),
-    );
-    scope.insert("jobs".into(), Value::String("1".into()));
     scope
 }
 
@@ -122,12 +101,26 @@ fn expand_typed<T: serde::Serialize + serde::de::DeserializeOwned>(
         .map_err(|error| Error::new(decode_code, error.to_string()).at(path))
 }
 
+fn expand_typed_deferring<T: serde::Serialize + serde::de::DeserializeOwned>(
+    value: &T,
+    scope: &BTreeMap<String, Value>,
+    path: &str,
+    encode_code: rpmx_base::error::Code,
+    decode_code: rpmx_base::error::Code,
+) -> Result<T> {
+    let raw =
+        serde_json::to_value(value).map_err(|error| Error::new(encode_code, error.to_string()))?;
+    let expanded = template::expand_json_deferring(&raw, scope).map_err(|error| error.at(path))?;
+    serde_json::from_value(expanded)
+        .map_err(|error| Error::new(decode_code, error.to_string()).at(path))
+}
+
 pub(crate) fn expand_steps(
     steps: &[Step],
     scope: &BTreeMap<String, Value>,
     path: &str,
 ) -> Result<Vec<Step>> {
-    expand_typed(
+    expand_typed_deferring(
         &steps.to_vec(),
         scope,
         path,
@@ -192,7 +185,7 @@ pub(crate) fn expand_tests(
     step_root: Option<&std::path::Path>,
     allow_builtin_override: bool,
 ) -> Result<Vec<PlannedTest>> {
-    let tests: Vec<Test> = expand_typed(
+    let tests: Vec<Test> = expand_typed_deferring(
         &tests.to_vec(),
         scope,
         "tests",
@@ -203,6 +196,13 @@ pub(crate) fn expand_tests(
     let mut seen = BTreeSet::new();
     let mut planned = Vec::with_capacity(tests.len());
     for (index, test) in tests.into_iter().enumerate() {
+        if test.name.contains("${") || test.stage.contains("${") {
+            return Err(Error::new(
+                codes::TEMPLATE_007,
+                "a test name or stage cannot contain an executor placeholder",
+            )
+            .at(format!("tests[{index}]")));
+        }
         if test.name.trim().is_empty() {
             return Err(
                 Error::new(codes::TEST_001, "test name expanded to an empty string")

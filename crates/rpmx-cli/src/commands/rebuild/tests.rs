@@ -68,6 +68,14 @@ pub(super) fn run(options: TestRunOptions<'_>) -> Result<Option<PathBuf>, Error>
         None
     };
     let test_root = prepared.as_ref().map(|root| root.path.as_path());
+    let prefix = options
+        .active_lock
+        .map(|lock| lock.prefix.as_str())
+        .unwrap_or(rpmx_core::guest::PREFIX);
+    let libdir = options
+        .active_lock
+        .map(|lock| lock.libdir.as_str())
+        .unwrap_or(rpmx_core::guest::LIBDIR);
     let settings = TestSandboxConfig {
         workspace: options.build,
         stage: options.stage,
@@ -77,6 +85,8 @@ pub(super) fn run(options: TestRunOptions<'_>) -> Result<Option<PathBuf>, Error>
         source_date_epoch: options.source_date_epoch,
         jobs: options.jobs,
         timeout: options.timeout,
+        prefix,
+        libdir,
         debuginfo: options.debuginfo,
     };
     let mut outcomes = Vec::new();

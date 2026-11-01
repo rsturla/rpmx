@@ -45,9 +45,13 @@ impl Runner for PodmanBackend<'_> {
             "--tmpfs".to_string(),
             "/tmp:rw,size=2g".to_string(),
             "-v".to_string(),
-            format!("{}:/tmp/build:Z", config.workspace.display()),
+            format!(
+                "{}:{}:Z",
+                config.workspace.display(),
+                rpmx_base::guest::BUILD
+            ),
             "-v".to_string(),
-            format!("{}:/tmp/stage:Z", config.stage.display()),
+            format!("{}:{}:Z", config.stage.display(), rpmx_base::guest::STAGE),
             "--entrypoint".to_string(),
             "/bin/sh".to_string(),
             self.image.to_string(),

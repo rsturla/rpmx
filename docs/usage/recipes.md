@@ -303,8 +303,8 @@ inputs:
     type: string
     required: true
 run:
-  cwd: /tmp/build
-  argv: [install, -D, -m, "0644", "${inputs.source}", /tmp/stage/etc/acme.conf]
+  cwd: "${source.dir}"
+  argv: [install, -D, -m, "0644", "${inputs.source}", "${stage}/etc/acme.conf"]
 needs:
   tools: [coreutils]
 ```

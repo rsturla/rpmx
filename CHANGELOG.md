@@ -5,6 +5,11 @@ does not promise a stable schema or CLI yet.
 
 ## Unreleased
 
+- Steps no longer hardcode guest paths. Built-in steps use `$STAGE`, `$PREFIX`,
+  `$LIBDIR` and `$JOBS` (or the `${...}` placeholders); the planner keeps those
+  placeholders in the plan, lock and SRPM, and the loader rejects a literal
+  guest path with `RPMX-STEP-019`. Profiles gain `paths.prefix` and
+  `paths.libdir`, recorded in the root lock.
 - File-payload dependency generators: ELF sonames, symbol versions and `.so`
   symlink requires; pkgconfig provides and requires; shebang interpreters;
   Python ABI and `pythonX.Ydist(...)`; Perl modules; desktop/AppStream

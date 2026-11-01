@@ -10,4 +10,4 @@ needs:
 run:
   cwd: "${source.dir}"
   runs: |
-    meson setup build --prefix=/usr --libdir=lib64 --buildtype=release ${inputs.args}
+    meson setup build --prefix="$PREFIX" --libdir="${LIBDIR##*/}" --buildtype=release ${inputs.args}

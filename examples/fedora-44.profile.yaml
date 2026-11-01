@@ -16,3 +16,6 @@ packages:
 options:
   weak_deps: false
   docs: false
+paths:
+  prefix: /usr
+  libdir: /usr/lib64

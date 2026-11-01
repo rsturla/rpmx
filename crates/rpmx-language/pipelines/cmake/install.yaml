@@ -6,4 +6,4 @@ needs:
 run:
   cwd: "${source.dir}"
   runs: |
-    DESTDIR="$STAGE" cmake --install build --prefix /usr
+    DESTDIR="$STAGE" cmake --install build --prefix "$PREFIX"

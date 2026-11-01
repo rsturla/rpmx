@@ -24,13 +24,19 @@ packages:
 options:
   weak_deps: false
   docs: false
+paths:
+  prefix: /usr
+  libdir: /usr/lib64
 debuginfo: false
 sbom: true
 ```
 
 A repository sets exactly one of `baseurl`, `metalink`, `mirrorlist`, plus an
 optional `gpgkey`. `dist-tag` is appended to every release. `debuginfo` and
-`sbom` are recorded in the root lock and applied at build time. Module streams
+`sbom` are recorded in the root lock and applied at build time. `paths.prefix`
+and `paths.libdir` set the install layout: the executor exports them as
+`PREFIX` and `LIBDIR`, substitutes them for `${prefix}` and `${libdir}`, and
+records them in the root lock. `libdir` must be inside `prefix`. Module streams
 and `reinstall` are rejected today.
 
 ### Local repositories

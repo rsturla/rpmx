@@ -17,6 +17,8 @@ fn config<'a>(workspace: &'a std::path::Path, stage: &'a std::path::Path) -> San
         stage,
         root: None,
         image: None,
+        prefix: "/usr",
+        libdir: "/usr/lib64",
         source_date_epoch: 1_700_000_000,
         jobs: NonZeroU32::new(1).expect("jobs"),
         timeout: NonZeroU64::new(3600).expect("timeout"),
@@ -98,13 +100,22 @@ fn native_runners_reject_a_foreign_target() {
     assert!(error.message.contains("use a runner"));
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Probe {
+    host: Arch,
+    target: Arch,
+    target_arch: String,
+    prefix: String,
+    libdir: String,
+}
+
 struct ProbeRunner {
-    seen: std::sync::Arc<std::sync::Mutex<Option<(Arch, Arch, String)>>>,
+    seen: std::sync::Arc<std::sync::Mutex<Option<Probe>>>,
     started: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 struct ProbeSession {
-    seen: std::sync::Arc<std::sync::Mutex<Option<(Arch, Arch, String)>>>,
+    seen: std::sync::Arc<std::sync::Mutex<Option<Probe>>>,
     host: Arch,
     target: Arch,
 }
@@ -131,15 +142,17 @@ impl Runner for ProbeRunner {
 
 impl Session for ProbeSession {
     fn run(&mut self, request: &RunnerRequest<'_>) -> Result<(), rpmx_core::Error> {
-        *self.seen.lock().expect("probe lock") = Some((
-            self.host,
-            self.target,
-            request
+        *self.seen.lock().expect("probe lock") = Some(Probe {
+            host: self.host,
+            target: self.target,
+            target_arch: request
                 .env
                 .get("RPMX_TARGET_ARCH")
                 .cloned()
                 .unwrap_or_default(),
-        ));
+            prefix: request.env.get("PREFIX").cloned().unwrap_or_default(),
+            libdir: request.env.get("LIBDIR").cloned().unwrap_or_default(),
+        });
         Ok(())
     }
 
@@ -174,7 +187,41 @@ fn a_custom_runner_receives_the_arch_contract() {
     .expect("custom runner step");
 
     let seen = seen.lock().expect("probe lock").clone();
-    assert_eq!(seen, Some((Arch::X86_64, Arch::Aarch64, "aarch64".into())));
+    assert_eq!(
+        seen,
+        Some(Probe {
+            host: Arch::X86_64,
+            target: Arch::Aarch64,
+            target_arch: "aarch64".into(),
+            prefix: "/usr".into(),
+            libdir: "/usr/lib64".into(),
+        })
+    );
+}
+
+#[test]
+fn a_custom_runner_receives_the_install_layout() {
+    let work = tempfile::tempdir().expect("work");
+    let stage = tempfile::tempdir().expect("stage");
+    let probe = ProbeRunner {
+        seen: std::sync::Arc::new(std::sync::Mutex::new(None)),
+        started: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+    };
+    let seen = probe.seen.clone();
+    Sandbox::with_runner(
+        SandboxConfig {
+            prefix: "/opt",
+            libdir: "/opt/lib",
+            ..config(work.path(), stage.path())
+        },
+        Box::new(probe),
+    )
+    .run(&step("true", &[]))
+    .expect("custom runner step");
+
+    let seen = seen.lock().expect("probe lock").clone().expect("seen");
+    assert_eq!(seen.prefix, "/opt");
+    assert_eq!(seen.libdir, "/opt/lib");
 }
 
 #[test]
@@ -273,10 +320,16 @@ fn nested_user_namespaces_are_disabled() {
 
 #[test]
 fn reserved_environment_variables_are_rejected() {
-    let mut step = step("true", &[]);
-    step.env.insert("STAGE".to_string(), "/etc".to_string());
-    let error = run(&step).expect_err("a step must not move the staging tree");
-    assert_eq!(error.code, "RPMX-SANDBOX-003");
+    for (name, value) in [
+        ("STAGE", "/etc"),
+        ("PREFIX", "/opt"),
+        ("LIBDIR", "/opt/lib"),
+    ] {
+        let mut step = step("true", &[]);
+        step.env.insert(name.to_string(), value.to_string());
+        let error = run(&step).expect_err("a step must not move the build contract");
+        assert_eq!(error.code, "RPMX-SANDBOX-003");
+    }
 }
 
 #[test]

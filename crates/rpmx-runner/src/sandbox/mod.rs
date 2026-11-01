@@ -13,7 +13,15 @@ const SANDBOX_PATH: &str = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/s
 
 /// Variables that define the build contract. A recipe may set toolchain
 /// variables, but it may not move the staging tree or rewrite the timestamp.
-const RESERVED_ENV: &[&str] = &["SOURCE_DATE_EPOCH", "SRC", "BUILD", "STAGE", "JOBS"];
+const RESERVED_ENV: &[&str] = &[
+    "SOURCE_DATE_EPOCH",
+    "SRC",
+    "BUILD",
+    "STAGE",
+    "PREFIX",
+    "LIBDIR",
+    "JOBS",
+];
 
 /// Everything the sandbox decides before a runner starts: which backend to
 /// use, where the build root comes from, and the deterministic policy fields.
@@ -26,6 +34,10 @@ pub struct SandboxConfig<'a> {
     pub stage: &'a Path,
     pub root: Option<&'a Path>,
     pub image: Option<&'a str>,
+    /// Install prefix. The profile supplies it; the runner only exports it.
+    pub prefix: &'a str,
+    /// Library directory. The profile supplies it; the runner only exports it.
+    pub libdir: &'a str,
     pub source_date_epoch: u32,
     pub jobs: NonZeroU32,
     pub timeout: NonZeroU64,
@@ -113,11 +125,7 @@ impl<'a> Sandbox<'a> {
         {
             args[1] = format!("set -x\n{}", args[1]);
         }
-        let cwd = step
-            .cwd
-            .as_deref()
-            .map(|cwd| expand(cwd, self))
-            .unwrap_or_else(|| rpmx_base::guest::BUILD.to_string());
+        let cwd = expand(step.cwd.as_deref().unwrap_or("${source.dir}"), self);
 
         let mut env = BTreeMap::new();
         for (key, value) in base_env(self) {
@@ -225,6 +233,8 @@ fn base_env(sandbox: &Sandbox<'_>) -> Vec<(&'static str, String)> {
         ("SRC", rpmx_base::guest::BUILD.to_string()),
         ("BUILD", rpmx_base::guest::BUILD.to_string()),
         ("STAGE", rpmx_base::guest::STAGE.to_string()),
+        ("PREFIX", sandbox.config.prefix.to_string()),
+        ("LIBDIR", sandbox.config.libdir.to_string()),
         ("JOBS", sandbox.config.jobs.to_string()),
         ("RPMX_HOST_ARCH", sandbox.config.host.to_string()),
         ("RPMX_TARGET_ARCH", sandbox.config.target.to_string()),
@@ -254,8 +264,8 @@ fn expand(value: &str, sandbox: &Sandbox<'_>) -> String {
         .replace("${source.dir}", rpmx_base::guest::BUILD)
         .replace("${build.dir}", rpmx_base::guest::BUILD)
         .replace("${stage}", rpmx_base::guest::STAGE)
-        .replace("${prefix}", rpmx_base::guest::PREFIX)
-        .replace("${libdir}", rpmx_base::guest::LIBDIR)
+        .replace("${prefix}", sandbox.config.prefix)
+        .replace("${libdir}", sandbox.config.libdir)
         .replace("${jobs}", &sandbox.config.jobs.to_string())
 }
 
@@ -277,6 +287,8 @@ mod tests {
             stage: Path::new("/tmp"),
             root: Some(Path::new("/root")),
             image: Some("image"),
+            prefix: "/usr",
+            libdir: "/usr/lib64",
             source_date_epoch: 1,
             jobs: NonZeroU32::new(1).expect("jobs"),
             timeout: NonZeroU64::new(3600).expect("timeout"),

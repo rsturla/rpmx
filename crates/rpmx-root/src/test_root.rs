@@ -97,6 +97,10 @@ pub fn prepare(options: TestRootOptions<'_>) -> Result<PreparedTestRoot> {
         },
         modules: Default::default(),
         options: lock.options.clone(),
+        paths: crate::profile::Paths {
+            prefix: lock.prefix.clone(),
+            libdir: lock.libdir.clone(),
+        },
         debuginfo: false,
         sbom: false,
     };

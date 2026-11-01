@@ -496,6 +496,7 @@ fn inline_profile(spec: &RootSpec, arch: &str) -> Result<Profile, Error> {
         },
         modules: Default::default(),
         options: ResolveOptions::default(),
+        paths: Default::default(),
         debuginfo: false,
         sbom: true,
     })

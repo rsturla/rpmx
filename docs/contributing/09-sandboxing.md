@@ -400,9 +400,10 @@ Every sandbox backend must pass a common test suite:
 
 - Every step starts from a cleared environment. The sandbox sets only `PATH`,
   `HOME=/tmp/build`, `TMPDIR=/tmp`, `LANG`/`LC_ALL=C.UTF-8`, `TZ=UTC`,
-  `SOURCE_DATE_EPOCH`, `SRC`, `BUILD`, `STAGE` and `JOBS`. A step may add
-  toolchain variables but cannot set the reserved contract variables
-  (`SOURCE_DATE_EPOCH`, `SRC`, `BUILD`, `STAGE`, `JOBS`).
+  `SOURCE_DATE_EPOCH`, `SRC`, `BUILD`, `STAGE`, `PREFIX`, `LIBDIR` and `JOBS`.
+  A step may add toolchain variables but cannot set the reserved contract
+  variables (`SOURCE_DATE_EPOCH`, `SRC`, `BUILD`, `STAGE`, `PREFIX`, `LIBDIR`,
+  `JOBS`).
 - bwrap runs with `--unshare-all --unshare-user --disable-userns`, so a step
   cannot create a nested user namespace. This needs bubblewrap >= 0.9; the
   sandbox fails closed if bwrap is absent or too old.

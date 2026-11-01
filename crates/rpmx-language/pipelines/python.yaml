@@ -7,7 +7,7 @@ inputs:
     default: python3
   prefix:
     type: string
-    default: /usr
+    default: "${prefix}"
 needs:
   tools: [python3-build, python3-setuptools, python3-wheel, python3-pip]
 run:

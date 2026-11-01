@@ -128,6 +128,14 @@ pub fn execute(request: RebuildRequest<'_>) -> Result<RebuildOutput, Error> {
     let runner_kind = runner.parse::<RunnerKind>()?;
     let debuginfo = active_lock.as_ref().is_some_and(|lock| lock.debuginfo);
     let sbom_enabled = active_lock.as_ref().map(|lock| lock.sbom).unwrap_or(true);
+    let prefix = active_lock
+        .as_ref()
+        .map(|lock| lock.prefix.as_str())
+        .unwrap_or(rpmx_core::guest::PREFIX);
+    let libdir = active_lock
+        .as_ref()
+        .map(|lock| lock.libdir.as_str())
+        .unwrap_or(rpmx_core::guest::LIBDIR);
     let sandbox = Sandbox::new(SandboxConfig {
         runner: runner_kind,
         host: host_arch,
@@ -136,6 +144,8 @@ pub fn execute(request: RebuildRequest<'_>) -> Result<RebuildOutput, Error> {
         stage: &stage,
         root: assembled_root.as_deref(),
         image: request.root_image,
+        prefix,
+        libdir,
         source_date_epoch: extracted.source_date_epoch,
         jobs,
         timeout: step_timeout,

@@ -10,7 +10,7 @@ needs:
 run:
   cwd: "${source.dir}"
   runs: |
-    ./configure --prefix=/usr --libdir=/usr/lib64 ${inputs.args}
+    ./configure --prefix="$PREFIX" --libdir="$LIBDIR" ${inputs.args}
     make -j"$JOBS"
     make check
     make install DESTDIR="$STAGE"

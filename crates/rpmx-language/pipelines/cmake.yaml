@@ -10,7 +10,7 @@ needs:
 run:
   cwd: "${source.dir}"
   runs: |
-    cmake -S . -B build -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=lib64 ${inputs.args}
+    cmake -S . -B build -DCMAKE_INSTALL_PREFIX="$PREFIX" -DCMAKE_INSTALL_LIBDIR="${LIBDIR##*/}" ${inputs.args}
     cmake --build build --parallel "$JOBS"
     ctest --test-dir build --output-on-failure
-    DESTDIR="$STAGE" cmake --install build --prefix /usr
+    DESTDIR="$STAGE" cmake --install build --prefix "$PREFIX"

@@ -32,12 +32,35 @@ pub struct Profile {
     pub modules: Modules,
     #[serde(default)]
     pub options: ResolveOptions,
+    /// Install layout used by every step in this build.
+    #[serde(default)]
+    pub paths: Paths,
     /// Package debug sections into a `-debuginfo` output.
     #[serde(default)]
     pub debuginfo: bool,
     /// Emit SPDX SBOMs (per package and build-level) with each build.
     #[serde(default = "default_sbom")]
     pub sbom: bool,
+}
+
+/// Where the build installs files. The executor exports these values to every
+/// step as `PREFIX` and `LIBDIR`; no step definition may spell them out.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Paths {
+    #[serde(default = "default_prefix")]
+    pub prefix: String,
+    #[serde(default = "default_libdir")]
+    pub libdir: String,
+}
+
+impl Default for Paths {
+    fn default() -> Self {
+        Self {
+            prefix: default_prefix(),
+            libdir: default_libdir(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -260,6 +283,22 @@ impl Profile {
                 "module streams are not supported yet",
             ));
         }
+        validate_install_path("paths.prefix", &self.paths.prefix)?;
+        validate_install_path("paths.libdir", &self.paths.libdir)?;
+        if self.paths.libdir != self.paths.prefix
+            && !self
+                .paths
+                .libdir
+                .starts_with(&format!("{}/", self.paths.prefix))
+        {
+            return Err(Error::new(
+                codes::ROOT_006,
+                format!(
+                    "profile paths.libdir '{}' must be inside paths.prefix '{}'",
+                    self.paths.libdir, self.paths.prefix
+                ),
+            ));
+        }
         Ok(())
     }
 
@@ -290,6 +329,40 @@ impl Profile {
 
 pub fn default_sbom() -> bool {
     true
+}
+
+pub fn default_prefix() -> String {
+    rpmx_base::guest::PREFIX.to_string()
+}
+
+pub fn default_libdir() -> String {
+    rpmx_base::guest::LIBDIR.to_string()
+}
+
+fn validate_install_path(field: &str, value: &str) -> Result<()> {
+    let workspace = rpmx_base::guest::BUILD;
+    let stage = rpmx_base::guest::STAGE;
+    let invalid = value.is_empty()
+        || value == "/"
+        || !value.starts_with('/')
+        || value.ends_with('/')
+        || value
+            .split('/')
+            .any(|component| component == "." || component == "..")
+        || value == workspace
+        || value.starts_with(&format!("{workspace}/"))
+        || value == stage
+        || value.starts_with(&format!("{stage}/"));
+    if invalid {
+        return Err(Error::new(
+            codes::ROOT_006,
+            format!(
+                "profile {field} must be an absolute path outside the build workspace and stage, \
+                 without a trailing slash, found '{value}'"
+            ),
+        ));
+    }
+    Ok(())
 }
 
 fn validate_auth(repository: &str, auth: &RepositoryAuth) -> Result<()> {
@@ -448,5 +521,47 @@ packages:
     #[test]
     fn ordinary_repository_ids_are_accepted() {
         parse_profile(&profile("fedora-44_updates.1")).expect("valid id");
+    }
+
+    #[test]
+    fn paths_default_to_the_guest_layout() {
+        let profile = parse_profile(&profile("base")).expect("valid profile");
+        assert_eq!(profile.paths.prefix, "/usr");
+        assert_eq!(profile.paths.libdir, "/usr/lib64");
+    }
+
+    #[test]
+    fn paths_are_read_from_the_profile() {
+        let text = profile("base").replace(
+            "packages:",
+            "paths:\n  prefix: /opt\n  libdir: /opt/lib\npackages:",
+        );
+        let profile = parse_profile(&text).expect("valid profile");
+        assert_eq!(profile.paths.prefix, "/opt");
+        assert_eq!(profile.paths.libdir, "/opt/lib");
+    }
+
+    #[test]
+    fn invalid_paths_are_rejected() {
+        for (prefix, libdir) in [
+            ("relative", "/usr/lib64"),
+            ("/usr/", "/usr/lib64"),
+            ("/usr", "/opt/lib"),
+            ("/", "/lib"),
+            ("/tmp/stage", "/tmp/stage/lib"),
+            ("/usr/../etc", "/usr/etc"),
+        ] {
+            let text = profile("base").replace(
+                "packages:",
+                &format!("paths:\n  prefix: \"{prefix}\"\n  libdir: \"{libdir}\"\npackages:"),
+            );
+            let error =
+                parse_profile(&text).expect_err(&format!("prefix={prefix} libdir={libdir}"));
+            assert_eq!(
+                error.code,
+                codes::ROOT_006,
+                "prefix={prefix} libdir={libdir}"
+            );
+        }
     }
 }

@@ -253,6 +253,7 @@ pub fn resolve(
             ),
         ));
     }
+    validate_guest_paths(name, &file)?;
 
     let scope = bind_inputs(&file, with)?;
     let (command, args) = render_run(&file.run, &scope, name)?;
@@ -456,6 +457,56 @@ fn type_matches(kind: &str, value: &Value) -> bool {
     }
 }
 
+/// Guest paths belong to the executor. A step that spells one out breaks
+/// silently when the executor moves it, and it teaches the wrong thing to every
+/// recipe author who copies the step. Reject it for built-in, local and
+/// SRPM-embedded steps alike.
+fn validate_guest_paths(name: &str, file: &StepFile) -> Result<()> {
+    const GUEST_PATHS: [&str; 4] = [
+        rpmx_base::guest::BUILD,
+        rpmx_base::guest::STAGE,
+        rpmx_base::guest::PREFIX,
+        rpmx_base::guest::LIBDIR,
+    ];
+
+    let run = &file.run;
+    let mut fields: Vec<(String, &str)> = Vec::new();
+    if let Some(cwd) = run.cwd.as_deref() {
+        fields.push(("cwd".into(), cwd));
+    }
+    if let Some(runs) = run.runs.as_deref() {
+        fields.push(("runs".into(), runs));
+    }
+    for (index, arg) in run.argv.iter().flatten().enumerate() {
+        fields.push((format!("argv[{index}]"), arg));
+    }
+    for (key, value) in run.env.iter().flatten() {
+        fields.push((format!("env.{key}"), value));
+    }
+    for (input, spec) in &file.inputs {
+        if let Some(Value::String(value)) = &spec.default {
+            fields.push((format!("inputs.{input}.default"), value));
+        }
+    }
+
+    for (field, text) in fields {
+        for path in GUEST_PATHS {
+            if text.contains(path) {
+                return Err(Error::new(
+                    codes::STEP_019,
+                    format!(
+                        "step '{name}' hardcodes guest path '{path}' in '{field}'; \
+                         use the sandbox variable ($STAGE, $PREFIX, $LIBDIR) in 'runs', \
+                         or the ${{...}} placeholder in 'cwd', 'argv' and 'env'"
+                    ),
+                )
+                .at(field));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn render_run(
     run: &Run,
     scope: &BTreeMap<String, Value>,
@@ -511,6 +562,24 @@ mod tests {
                 assert!(
                     cwd.starts_with("${"),
                     "built-in step '{name}' hardcodes cwd '{cwd}'; use a ${{...}} placeholder so a recipe author never needs to know a guest path"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn builtin_steps_do_not_hardcode_guest_paths_in_their_body() {
+        let guest_paths = [
+            rpmx_base::guest::BUILD,
+            rpmx_base::guest::STAGE,
+            rpmx_base::guest::PREFIX,
+            rpmx_base::guest::LIBDIR,
+        ];
+        for (name, source) in BUILTINS {
+            for path in guest_paths {
+                assert!(
+                    !source.contains(path),
+                    "built-in step '{name}' hardcodes guest path '{path}'; use the sandbox variable or the ${{...}} placeholder"
                 );
             }
         }
