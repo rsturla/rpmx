@@ -123,6 +123,32 @@ pub mod codes {
         FETCH_007 = "RPMX-FETCH-007",
         /// A recipe file cannot be read from disk.
         IO_001 = "RPMX-IO-001",
+        /// The recipe has one or more lint errors.
+        LINT_001 = "RPMX-LINT-001",
+        /// A license is not a syntactically valid SPDX expression.
+        LINT_010 = "RPMX-LINT-010",
+        /// A package release starts at zero.
+        LINT_011 = "RPMX-LINT-011",
+        /// A summary is empty or unreasonably long.
+        LINT_012 = "RPMX-LINT-012",
+        /// A recipe omits a deterministic source date.
+        LINT_013 = "RPMX-LINT-013",
+        /// A dependency or tool is listed twice.
+        LINT_014 = "RPMX-LINT-014",
+        /// A source, output or test name is declared twice.
+        LINT_015 = "RPMX-LINT-015",
+        /// A declared variable is never referenced.
+        LINT_016 = "RPMX-LINT-016",
+        /// A patch file does not exist.
+        LINT_017 = "RPMX-LINT-017",
+        /// A source locator is not encrypted.
+        LINT_018 = "RPMX-LINT-018",
+        /// A package declares no maintainers.
+        LINT_019 = "RPMX-LINT-019",
+        /// A test has neither an argv nor a pipeline.
+        LINT_020 = "RPMX-LINT-020",
+        /// A build has an empty pipeline.
+        LINT_021 = "RPMX-LINT-021",
         /// A package lock cannot be read, parsed or written.
         LOCK_001 = "RPMX-LOCK-001",
         /// The recipe or plan has drifted from its package lock.
@@ -437,6 +463,9 @@ pub struct Error {
     pub path: Option<String>,
     pub line: Option<usize>,
     pub column: Option<usize>,
+    /// The command already printed a document describing this failure.
+    #[doc(hidden)]
+    pub reported: bool,
 }
 
 impl Error {
@@ -447,7 +476,14 @@ impl Error {
             path: None,
             line: None,
             column: None,
+            reported: false,
         }
+    }
+
+    /// Mark this error as already rendered by the command.
+    pub fn reported(mut self) -> Self {
+        self.reported = true;
+        self
     }
 
     pub fn at(mut self, path: impl Into<String>) -> Self {

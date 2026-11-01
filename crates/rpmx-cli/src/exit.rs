@@ -40,7 +40,7 @@ pub fn code_for(code: Code) -> u8 {
         "POLICY" | "SIGN" => POLICY,
         "SBOM" | "EXTRACT" => EVIDENCE,
         "YAML" | "SCHEMA" | "PLAN" | "OUTPUT" | "STEP" | "TEMPLATE" | "MATRIX" | "TOOL"
-        | "ASSEMBLY" | "SOURCE" | "STAGE" => RECIPE,
+        | "ASSEMBLY" | "SOURCE" | "STAGE" | "LINT" => RECIPE,
         _ => INTERNAL,
     }
 }

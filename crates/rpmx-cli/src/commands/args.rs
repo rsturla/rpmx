@@ -157,6 +157,9 @@ pub struct LintArgs {
     pub arch: String,
     #[command(flatten)]
     pub policy: crate::cli::PolicyArgs,
+    /// Treat warnings as errors.
+    #[arg(long)]
+    pub strict: bool,
     /// Emit machine-readable output.
     #[arg(long)]
     pub json: bool,

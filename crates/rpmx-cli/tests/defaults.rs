@@ -8,6 +8,10 @@ package:
   release: 1
   summary: A probe package
   license: MIT
+  source-date-epoch: 1704067200
+  maintainers:
+    - name: A Maintainer
+      email: a@example.org
 build:
   pipeline:
     - runs: "true"

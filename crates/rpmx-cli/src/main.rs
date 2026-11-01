@@ -19,6 +19,9 @@ fn main() -> ExitCode {
     match commands::dispatch::run(cli) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
+            if error.reported {
+                return ExitCode::from(exit::code_for(error.code));
+            }
             if json {
                 let value = serde_json::json!({
                     "schema": 1,
