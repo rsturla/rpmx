@@ -39,6 +39,42 @@ pub fn default_output(arch: &str) -> PathBuf {
     PathBuf::from("packages").join(arch)
 }
 
+/// A temporary work directory that survives the command when
+/// `--keep-workdir` is set, and prints where it is.
+pub struct WorkDir {
+    path: PathBuf,
+    _temporary: Option<tempfile::TempDir>,
+}
+
+impl WorkDir {
+    pub fn new() -> Result<Self, rpmx_core::Error> {
+        let temporary = tempfile::tempdir().map_err(|error| {
+            rpmx_core::Error::new(
+                rpmx_core::error::codes::BUILD_005,
+                format!("cannot create work directory: {error}"),
+            )
+        })?;
+        if rpmx_core::output::keep_workdir() {
+            let path = temporary.keep();
+            eprintln!("work directory: {}", path.display());
+            Ok(Self {
+                path,
+                _temporary: None,
+            })
+        } else {
+            let path = temporary.path().to_path_buf();
+            Ok(Self {
+                path,
+                _temporary: Some(temporary),
+            })
+        }
+    }
+
+    pub fn path(&self) -> &std::path::Path {
+        &self.path
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{default_jobs, default_output};

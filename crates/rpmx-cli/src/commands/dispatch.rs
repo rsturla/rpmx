@@ -5,6 +5,7 @@ use rpmx_core::Error;
 pub fn run(cli: Cli) -> Result<(), Error> {
     let Cli {
         pipeline_dir,
+        keep_workdir: _,
         command,
     } = cli;
     match command {

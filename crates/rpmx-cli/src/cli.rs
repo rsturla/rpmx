@@ -8,6 +8,9 @@ pub struct Cli {
     /// Directory containing reusable step files (default: <recipe>/pipelines).
     #[arg(long, global = true, value_name = "DIR")]
     pub pipeline_dir: Option<PathBuf>,
+    /// Keep temporary work directories and print their paths.
+    #[arg(long, global = true)]
+    pub keep_workdir: bool,
     #[command(subcommand)]
     pub command: Command,
 }

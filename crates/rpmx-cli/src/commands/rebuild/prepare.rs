@@ -13,7 +13,7 @@ use crate::commands::{load_plan, reconcile_policy, PlanPolicy};
 use super::RebuildRequest;
 
 pub(super) struct RebuildState {
-    pub(super) work: tempfile::TempDir,
+    pub(super) work: crate::commands::WorkDir,
     pub(super) extracted: rpmx_rpm::extract::ExtractedSrpm,
     pub(super) package_lock: rpmx_core::srpm::PackageLock,
     pub(super) recipe: rpmx_core::Recipe,
@@ -31,12 +31,7 @@ pub(super) fn prepare(
     request: &RebuildRequest<'_>,
     signing: Option<&rpmx_rpm::sign::SigningKey>,
 ) -> Result<RebuildState, Error> {
-    let work = tempfile::tempdir().map_err(|error| {
-        Error::new(
-            codes::BUILD_005,
-            format!("cannot create work directory: {error}"),
-        )
-    })?;
+    let work = crate::commands::WorkDir::new()?;
     let extracted = extract_srpm(request.file, work.path())?;
     // Read the authoritative lock before unpacking the snapshot. The snapshot
     // is user-controlled recipe data and must not be able to replace it.

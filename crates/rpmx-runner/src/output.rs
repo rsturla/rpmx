@@ -8,6 +8,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 
 static LOGS_TO_STDERR: AtomicBool = AtomicBool::new(false);
+static KEEP_WORKDIR: AtomicBool = AtomicBool::new(false);
 
 /// Route every guest stream to stderr from now on.
 pub fn set_logs_to_stderr(enabled: bool) {
@@ -17,4 +18,13 @@ pub fn set_logs_to_stderr(enabled: bool) {
 /// Whether guest output belongs on stderr.
 pub fn logs_to_stderr() -> bool {
     LOGS_TO_STDERR.load(Ordering::Relaxed)
+}
+
+/// Keep temporary work directories instead of deleting them.
+pub fn set_keep_workdir(enabled: bool) {
+    KEEP_WORKDIR.store(enabled, Ordering::Relaxed);
+}
+
+pub fn keep_workdir() -> bool {
+    KEEP_WORKDIR.load(Ordering::Relaxed)
 }

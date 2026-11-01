@@ -189,11 +189,51 @@ fn failing_guest_step_exits_5_and_keeps_stdout_clean() {
     assert_eq!(value["ok"], false);
     assert_eq!(value["command"], "source");
     assert_eq!(value["diagnostics"][0]["severity"], "error");
+    let message = value["diagnostics"][0]["message"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(message.contains("command:"), "{message}");
+    assert!(message.contains("cwd:"), "{message}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        String::from_utf8_lossy(&output.stderr).contains("before-fail"),
-        "guest output missing from stderr: {}",
-        String::from_utf8_lossy(&output.stderr)
+        stderr.contains("before-fail"),
+        "guest output missing: {stderr}"
     );
+    assert!(
+        stderr.contains("rpmx: step"),
+        "step header missing: {stderr}"
+    );
+}
+
+#[test]
+fn keep_workdir_preserves_a_failed_workspace() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let recipe = directory.path().join("package.yaml");
+    write(
+        &recipe,
+        &VALID.replace(
+            "build:\n  pipeline:\n    - runs: \"true\"\n",
+            "source-assembly:\n  pipeline:\n    - runs: \"echo before-fail; exit 17\"\nbuild:\n  pipeline:\n    - runs: \"true\"\n",
+        ),
+    );
+    let out = directory.path().join("out");
+    let output = rpmx(&[
+        "source",
+        recipe.to_str().unwrap(),
+        "--unsafe-host-root",
+        "--output",
+        out.to_str().unwrap(),
+        "--keep-workdir",
+    ]);
+    assert_eq!(output.status.code(), Some(5), "{output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let path = stderr
+        .lines()
+        .find_map(|line| line.strip_prefix("work directory: "))
+        .expect("work directory line");
+    let path = Path::new(path.trim());
+    assert!(path.is_dir(), "workspace was not kept: {}", path.display());
+    std::fs::remove_dir_all(path).expect("remove kept workspace");
 }
 
 #[test]

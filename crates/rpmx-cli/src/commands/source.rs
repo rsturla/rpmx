@@ -110,12 +110,7 @@ pub fn execute(request: SourceRequest<'_>) -> Result<PathBuf, Error> {
     let root_lock = request.root_lock.or(automatic_lock);
     let root = request.root.or(automatic_root);
     let source_date_epoch = crate::commands::source_date_epoch(&recipe, request.source_date_epoch);
-    let work = tempfile::tempdir().map_err(|error| {
-        Error::new(
-            codes::SOURCE_030,
-            format!("cannot create work directory: {error}"),
-        )
-    })?;
+    let work = crate::commands::WorkDir::new()?;
     let workspace = work.path().join("build");
     let stage = work.path().join("stage");
     let base_dir = request.file.parent().unwrap_or_else(|| Path::new("."));

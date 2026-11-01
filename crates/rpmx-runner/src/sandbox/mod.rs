@@ -119,12 +119,13 @@ impl<'a> Sandbox<'a> {
             env.insert(key.clone(), expand(value, self));
         }
 
+        let label = step_label(step, command, &args);
         let request = RunnerRequest {
             command,
             args: &args,
             cwd: &cwd,
             env: &env,
-            label: &step.uses,
+            label: &label,
         };
 
         let mut session = self.session.borrow_mut();
@@ -138,10 +139,40 @@ impl<'a> Sandbox<'a> {
             }
             *session = Some(self.runner.start(&self.config.runner_config())?);
         }
-        session
+        let mut rendered = String::new();
+        rendered.push_str(command);
+        for arg in &args {
+            rendered.push(' ');
+            rendered.push_str(arg);
+        }
+        // Step headers and outcomes go to stderr so stdout stays a clean
+        // artifact list (or a JSON document).
+        eprintln!("rpmx: step {label}");
+        let started = std::time::Instant::now();
+        let result = session
             .as_mut()
             .expect("session was initialized")
-            .run(&request)
+            .run(&request);
+        match result {
+            Ok(()) => {
+                eprintln!(
+                    "rpmx: step {label}: ok ({:.1}s)",
+                    started.elapsed().as_secs_f64()
+                );
+                Ok(())
+            }
+            Err(mut error) => {
+                let help = if crate::output::keep_workdir() {
+                    "the work directory was kept for inspection"
+                } else {
+                    "re-run with --keep-workdir to inspect the workspace"
+                };
+                error.message.push_str(&format!(
+                    "\n  command: {rendered}\n  cwd: {cwd}\n  help: {help}"
+                ));
+                Err(error)
+            }
+        }
     }
 
     /// Flush session-local outputs to the host workspace and stage.
@@ -158,6 +189,26 @@ impl Drop for Sandbox<'_> {
         if let Some(mut session) = self.session.get_mut().take() {
             let _ = session.stop();
         }
+    }
+}
+
+/// A readable label for an unnamed inline step.
+fn step_label(step: &PlannedStep, command: &str, args: &[String]) -> String {
+    if step.uses != "<anonymous>" {
+        return step.uses.clone();
+    }
+    let candidate = if command == "sh" {
+        args.get(1)
+            .and_then(|script| script.lines().find(|line| !line.trim().is_empty()))
+            .unwrap_or(command)
+    } else {
+        command
+    };
+    let candidate = candidate.trim();
+    if candidate.chars().count() > 60 {
+        format!("{}…", candidate.chars().take(59).collect::<String>())
+    } else {
+        candidate.to_string()
     }
 }
 

@@ -53,12 +53,7 @@ impl BuildPipeline<'_> {
                 format!("cannot create {}: {error}", self.output.display()),
             )
         })?;
-        let work = tempfile::tempdir().map_err(|error| {
-            Error::new(
-                codes::BUILD_005,
-                format!("cannot create work directory: {error}"),
-            )
-        })?;
+        let work = crate::commands::WorkDir::new()?;
         let source_output = work.path().join("source");
         std::fs::create_dir_all(&source_output).map_err(|error| {
             Error::new(

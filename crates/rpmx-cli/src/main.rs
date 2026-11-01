@@ -15,6 +15,7 @@ fn main() -> ExitCode {
     let command = cli.command_name();
     // Guest output must never share stdout with a JSON document.
     rpmx_core::output::set_logs_to_stderr(json);
+    rpmx_core::output::set_keep_workdir(cli.keep_workdir);
     match commands::dispatch::run(cli) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
