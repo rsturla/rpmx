@@ -3,8 +3,8 @@ use std::path::Path;
 use serde_json::{json, Value};
 
 use crate::error::{codes, Error, Result};
+use crate::hash::sha512_hex;
 use crate::root::RootLock;
-use crate::srpm::sha512_hex;
 
 pub const SBOM_DIR: &str = "/usr/share/sbom";
 

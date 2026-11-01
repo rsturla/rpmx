@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 use crate::error::{codes, Error, Result};
-use crate::srpm::sha512_hex;
+use crate::hash::sha512_hex;
 
 /// The on-disk name for a content-addressed payload.
 pub fn path(cache: &Path, digest: &str) -> Result<PathBuf> {

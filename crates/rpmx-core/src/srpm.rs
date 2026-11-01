@@ -1,9 +1,8 @@
 use std::path::Path;
 
-use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha512};
-
 use crate::error::{codes, Error, Result};
+pub use crate::hash::sha512_hex;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone)]
 pub struct SnapshotFile {
@@ -11,10 +10,6 @@ pub struct SnapshotFile {
     pub data: Vec<u8>,
     pub mode: u32,
     pub digest: String,
-}
-
-pub fn sha512_hex(bytes: &[u8]) -> String {
-    format!("sha512:{:x}", Sha512::digest(bytes))
 }
 
 pub fn snapshot_dir(dir: &Path) -> Result<Vec<SnapshotFile>> {

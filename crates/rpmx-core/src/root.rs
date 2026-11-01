@@ -6,8 +6,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::cas;
 use crate::error::{codes, Error, Result};
+use crate::hash::sha512_hex;
 use crate::profile::{normalize_arch, Profile, Repository, ResolveOptions};
-use crate::srpm::sha512_hex;
 
 pub const DOCUMENT: &str = "rpmx-root-lock";
 pub const VERSION: u32 = 1;

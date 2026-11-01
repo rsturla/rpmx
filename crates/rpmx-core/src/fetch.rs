@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crate::error::{codes, Error, Result};
+use crate::hash::sha512_hex;
 use crate::model::{Locator, Recipe, Source};
-use crate::srpm::sha512_hex;
 
 #[derive(Debug, Clone)]
 pub struct FetchedSource {
