@@ -45,14 +45,7 @@ pub struct BinaryPackageSpec {
     pub source_date_epoch: u32,
     pub files: Vec<BinaryPackageFile>,
     pub directories: Vec<BinaryPackageDirectory>,
-    pub requires: Vec<String>,
-    pub recommends: Vec<String>,
-    pub suggests: Vec<String>,
-    pub supplements: Vec<String>,
-    pub enhances: Vec<String>,
-    pub provides: Vec<String>,
-    pub obsoletes: Vec<String>,
-    pub conflicts: Vec<String>,
+    pub dependencies: rpmx_language::model::DependencySet,
     pub scriptlets: Scriptlets,
 }
 

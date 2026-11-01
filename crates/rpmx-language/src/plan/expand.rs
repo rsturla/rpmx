@@ -160,14 +160,7 @@ pub(crate) fn expand_outputs(
             noreplace: output.files.noreplace,
             directories: output.files.directories,
             attributes: output.files.attributes,
-            requires: output.dependencies.run,
-            recommends: output.dependencies.recommends,
-            suggests: output.dependencies.suggests,
-            supplements: output.dependencies.supplements,
-            enhances: output.dependencies.enhances,
-            provides: output.dependencies.provides,
-            obsoletes: output.dependencies.obsoletes,
-            conflicts: output.dependencies.conflicts,
+            dependencies: output.dependencies.to_set(),
             scriptlets: output.scriptlets,
         });
     }

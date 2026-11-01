@@ -99,14 +99,8 @@ pub struct PlannedOutput {
     pub noreplace: Vec<String>,
     pub directories: Vec<crate::model::Directory>,
     pub attributes: Vec<crate::model::Attribute>,
-    pub requires: Vec<String>,
-    pub recommends: Vec<String>,
-    pub suggests: Vec<String>,
-    pub supplements: Vec<String>,
-    pub enhances: Vec<String>,
-    pub provides: Vec<String>,
-    pub obsoletes: Vec<String>,
-    pub conflicts: Vec<String>,
+    #[serde(flatten)]
+    pub dependencies: crate::model::DependencySet,
     pub scriptlets: crate::model::Scriptlets,
 }
 

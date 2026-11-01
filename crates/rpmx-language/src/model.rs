@@ -392,6 +392,27 @@ pub struct Attribute {
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
+pub struct DependencySet {
+    #[serde(default)]
+    pub requires: Vec<String>,
+    #[serde(default)]
+    pub recommends: Vec<String>,
+    #[serde(default)]
+    pub suggests: Vec<String>,
+    #[serde(default)]
+    pub supplements: Vec<String>,
+    #[serde(default)]
+    pub enhances: Vec<String>,
+    #[serde(default)]
+    pub provides: Vec<String>,
+    #[serde(default)]
+    pub obsoletes: Vec<String>,
+    #[serde(default)]
+    pub conflicts: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct OutputDependencies {
     #[serde(default)]
     pub run: Vec<String>,
@@ -409,6 +430,21 @@ pub struct OutputDependencies {
     pub obsoletes: Vec<String>,
     #[serde(default)]
     pub conflicts: Vec<String>,
+}
+
+impl OutputDependencies {
+    pub fn to_set(&self) -> DependencySet {
+        DependencySet {
+            requires: self.run.clone(),
+            recommends: self.recommends.clone(),
+            suggests: self.suggests.clone(),
+            supplements: self.supplements.clone(),
+            enhances: self.enhances.clone(),
+            provides: self.provides.clone(),
+            obsoletes: self.obsoletes.clone(),
+            conflicts: self.conflicts.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

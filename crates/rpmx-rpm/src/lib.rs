@@ -153,28 +153,28 @@ pub fn write_binary_rpm(spec: &BinaryPackageSpec, out: &Path) -> Result<(), Erro
             })?;
     }
 
-    for dep in &spec.requires {
+    for dep in &spec.dependencies.requires {
         builder.requires(parse_dependency(dep)?);
     }
-    for dep in &spec.recommends {
+    for dep in &spec.dependencies.recommends {
         builder.recommends(parse_dependency(dep)?);
     }
-    for dep in &spec.suggests {
+    for dep in &spec.dependencies.suggests {
         builder.suggests(parse_dependency(dep)?);
     }
-    for dep in &spec.supplements {
+    for dep in &spec.dependencies.supplements {
         builder.supplements(parse_dependency(dep)?);
     }
-    for dep in &spec.enhances {
+    for dep in &spec.dependencies.enhances {
         builder.enhances(parse_dependency(dep)?);
     }
-    for dep in &spec.provides {
+    for dep in &spec.dependencies.provides {
         builder.provides(parse_dependency(dep)?);
     }
-    for dep in &spec.obsoletes {
+    for dep in &spec.dependencies.obsoletes {
         builder.obsoletes(parse_dependency(dep)?);
     }
-    for dep in &spec.conflicts {
+    for dep in &spec.dependencies.conflicts {
         builder.conflicts(parse_dependency(dep)?);
     }
 

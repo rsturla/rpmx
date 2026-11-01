@@ -51,17 +51,14 @@ pub fn prepare_binary_packages(
             noreplace: Vec::new(),
             directories: Vec::new(),
             attributes: Vec::new(),
-            requires: vec![format!(
-                "{} = {}-{}",
-                options.cell.package, options.cell.version, options.cell.release
-            )],
-            recommends: Vec::new(),
-            suggests: Vec::new(),
-            supplements: Vec::new(),
-            enhances: Vec::new(),
-            provides: Vec::new(),
-            obsoletes: Vec::new(),
-            conflicts: Vec::new(),
+            dependencies: rpmx_language::model::DependencySet {
+                requires: vec![format!(
+                    "{} = {}-{}",
+                    options.cell.package, options.cell.version, options.cell.release
+                )],
+                provides: Vec::new(),
+                ..Default::default()
+            },
             scriptlets: Default::default(),
         });
     }
@@ -138,21 +135,14 @@ pub fn prepare_binary_packages(
                 source_date_epoch: options.source_date_epoch,
                 files,
                 directories,
-                requires: planned.requires.clone(),
-                recommends: planned.recommends.clone(),
-                suggests: planned.suggests.clone(),
-                supplements: planned.supplements.clone(),
-                enhances: planned.enhances.clone(),
-                provides: planned.provides.clone(),
-                obsoletes: planned.obsoletes.clone(),
-                conflicts: planned.conflicts.clone(),
+                dependencies: planned.dependencies.clone(),
                 scriptlets: planned.scriptlets.clone(),
             });
             continue;
         }
 
-        let mut provides = planned.provides.clone();
-        let mut requires = planned.requires.clone();
+        let mut provides = planned.dependencies.provides.clone();
+        let mut requires = planned.dependencies.requires.clone();
         let mut sonames: BTreeSet<String> = BTreeSet::new();
         for file in &files {
             if file.target.is_some() {
@@ -209,14 +199,16 @@ pub fn prepare_binary_packages(
             source_date_epoch: options.source_date_epoch,
             files,
             directories,
-            requires,
-            recommends: planned.recommends.clone(),
-            suggests: planned.suggests.clone(),
-            supplements: planned.supplements.clone(),
-            enhances: planned.enhances.clone(),
-            provides,
-            obsoletes: planned.obsoletes.clone(),
-            conflicts: planned.conflicts.clone(),
+            dependencies: rpmx_language::model::DependencySet {
+                requires,
+                recommends: planned.dependencies.recommends.clone(),
+                suggests: planned.dependencies.suggests.clone(),
+                supplements: planned.dependencies.supplements.clone(),
+                enhances: planned.dependencies.enhances.clone(),
+                provides,
+                obsoletes: planned.dependencies.obsoletes.clone(),
+                conflicts: planned.dependencies.conflicts.clone(),
+            },
             scriptlets: planned.scriptlets.clone(),
         });
     }

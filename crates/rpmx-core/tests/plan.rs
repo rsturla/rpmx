@@ -412,7 +412,10 @@ outputs:
 "#;
     let plan = plan_with_policy(yaml, Some("fc44"), None).expect("valid");
     assert_eq!(plan.cells[0].release, "1.fc44");
-    assert_eq!(plan.cells[0].outputs[0].requires, ["bar = 1.0-1.fc44"]);
+    assert_eq!(
+        plan.cells[0].outputs[0].dependencies.requires,
+        ["bar = 1.0-1.fc44"]
+    );
 }
 
 #[test]
@@ -438,11 +441,11 @@ outputs:
 "#;
     let plan = plan_str(yaml).expect("valid");
     let output = &plan.cells[0].outputs[0];
-    assert_eq!(output.requires, ["bar"]);
-    assert_eq!(output.recommends, ["extra = 1.0-1"]);
-    assert_eq!(output.suggests, ["docs"]);
-    assert_eq!(output.supplements, ["plugin"]);
-    assert_eq!(output.enhances, ["host < 2.0"]);
+    assert_eq!(output.dependencies.requires, ["bar"]);
+    assert_eq!(output.dependencies.recommends, ["extra = 1.0-1"]);
+    assert_eq!(output.dependencies.suggests, ["docs"]);
+    assert_eq!(output.dependencies.supplements, ["plugin"]);
+    assert_eq!(output.dependencies.enhances, ["host < 2.0"]);
 }
 
 #[test]
@@ -523,7 +526,7 @@ outputs:
     let plan = plan_with_policy(yaml, Some("fc44"), Some(7)).expect("valid");
     assert_eq!(plan.cells[0].release, "1.fc44+build7");
     assert_eq!(
-        plan.cells[0].outputs[0].requires,
+        plan.cells[0].outputs[0].dependencies.requires,
         ["bar = 1.0-1.fc44+build7"]
     );
 }

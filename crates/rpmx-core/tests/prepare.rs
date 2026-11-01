@@ -199,19 +199,21 @@ outputs:
 
     assert!(
         packages[0]
+            .dependencies
             .requires
             .iter()
             .any(|dependency| dependency.starts_with("libc.so")),
         "requires: {:?}",
-        packages[0].requires
+        packages[0].dependencies.requires
     );
     assert!(
         packages[0]
+            .dependencies
             .provides
             .iter()
             .any(|dependency| dependency == "pkgconfig(demo) = 1.2.3"),
         "provides: {:?}",
-        packages[0].provides
+        packages[0].dependencies.provides
     );
 }
 
