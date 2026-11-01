@@ -8,6 +8,7 @@ use rpmx_core::{
 
 pub mod build;
 pub mod cache;
+pub mod emit;
 pub mod fetch;
 pub mod lint;
 pub mod plan;

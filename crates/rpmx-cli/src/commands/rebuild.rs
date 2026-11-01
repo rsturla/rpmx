@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
+use crate::commands::emit;
 use rpmx_core::binary_package::{prepare_binary_packages, BinaryPackageOptions};
 use rpmx_core::error::codes;
 use rpmx_core::package_spec::BinaryPackageFile;
@@ -12,7 +13,6 @@ use rpmx_core::srpm::load_lock_file;
 use rpmx_core::steps::validate_name;
 use rpmx_core::Error;
 use rpmx_rpm::extract::extract_srpm;
-use rpmx_rpm::write_binary_rpm;
 
 use crate::commands::{load_plan, reconcile_policy, PlanPolicy, RebuildArgs};
 
@@ -308,10 +308,6 @@ pub fn run(args: RebuildArgs<'_>) -> Result<Vec<PathBuf>, Error> {
     let mut written = Vec::new();
     let mut built = Vec::new();
     for mut package in packages {
-        let path = output.join(format!(
-            "{}-{}-{}.{}.rpm",
-            package.name, package.version, package.release, package.arch
-        ));
         if sbom_policy {
             let text = rpmx_core::sbom::native_spdx().package(&rpmx_core::sbom::PackageSbom {
                 name: &package.name,
@@ -345,6 +341,7 @@ pub fn run(args: RebuildArgs<'_>) -> Result<Vec<PathBuf>, Error> {
                 license: false,
             });
         }
+        let path = emit::binary(&package, output, signing.as_ref(), signature_timestamp)?;
         built.push((
             path.clone(),
             package.name.clone(),
@@ -352,10 +349,6 @@ pub fn run(args: RebuildArgs<'_>) -> Result<Vec<PathBuf>, Error> {
             package.release.clone(),
             package.arch.clone(),
         ));
-        write_binary_rpm(&package, &path)?;
-        if let Some(key) = &signing {
-            rpmx_rpm::sign::sign_package(&path, key, signature_timestamp)?;
-        }
         written.push(path);
     }
 

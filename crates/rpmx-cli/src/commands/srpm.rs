@@ -1,8 +1,8 @@
+use crate::commands::emit;
 use rpmx_core::error::codes;
 use rpmx_core::root::load_lock;
 use rpmx_core::source_package::{prepare_source_packages, SourcePackageOptions};
 use rpmx_core::Error;
-use rpmx_rpm::write_srpm;
 
 use crate::commands::{load_plan, reconcile_policy, step_root, PlanPolicy, SrpmArgs};
 
@@ -91,15 +91,12 @@ pub fn run(args: SrpmArgs<'_>) -> Result<Vec<std::path::PathBuf>, Error> {
 
     let mut written = Vec::new();
     for package in packages {
-        let path = output.join(format!(
-            "{}-{}-{}.src.rpm",
-            package.name, package.version, package.release
-        ));
-        write_srpm(&package, &path)?;
-        if let Some(key) = &signing {
-            rpmx_rpm::sign::sign_package(&path, key, signature_timestamp)?;
-        }
-        written.push(path);
+        written.push(emit::source(
+            &package,
+            output,
+            signing.as_ref(),
+            signature_timestamp,
+        )?);
     }
 
     if !quiet {

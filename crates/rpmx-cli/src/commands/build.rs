@@ -1,9 +1,9 @@
 use std::path::{Path, PathBuf};
 
+use crate::commands::emit;
 use rpmx_core::binary_package::{prepare_binary_packages, BinaryPackageOptions};
 use rpmx_core::error::codes;
 use rpmx_core::Error;
-use rpmx_rpm::write_binary_rpm;
 
 use crate::commands::{
     load_plan, rebuild, source, srpm, BuildArgs, RebuildArgs, SourceArgs, SrpmArgs,
@@ -75,15 +75,12 @@ fn package_stage(args: &BuildArgs<'_>, stage: &Path) -> Result<Vec<PathBuf>, Err
             debuginfo: false,
         })?;
         for package in packages {
-            let path = output.join(format!(
-                "{}-{}-{}.{}.rpm",
-                package.name, package.version, package.release, package.arch
-            ));
-            write_binary_rpm(&package, &path)?;
-            if let Some(key) = &signing {
-                rpmx_rpm::sign::sign_package(&path, key, signature_timestamp)?;
-            }
-            written.push(path);
+            written.push(emit::binary(
+                &package,
+                output,
+                signing.as_ref(),
+                signature_timestamp,
+            )?);
         }
     }
 
