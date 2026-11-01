@@ -79,6 +79,9 @@ pub struct BuildArgs {
     /// Do not write repository metadata after the build.
     #[arg(long)]
     pub no_index: bool,
+    /// Skip package policy checks.
+    #[arg(long)]
+    pub no_lint: bool,
     /// Run only the named test; repeat for several.
     #[arg(long = "test", value_name = "NAME")]
     pub test: Vec<String>,
@@ -143,6 +146,9 @@ pub struct RebuildArgs {
     /// Do not write repository metadata after the build.
     #[arg(long)]
     pub no_index: bool,
+    /// Skip package policy checks.
+    #[arg(long)]
+    pub no_lint: bool,
     /// Run only the named test; repeat for several.
     #[arg(long = "test", value_name = "NAME")]
     pub test: Vec<String>,

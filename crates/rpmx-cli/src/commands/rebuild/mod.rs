@@ -39,6 +39,7 @@ pub struct RebuildRequest<'a> {
     pub run_tests: bool,
     pub test_filter: &'a [String],
     pub no_index: bool,
+    pub no_lint: bool,
     pub junit: Option<&'a Path>,
     pub sbom: Option<&'a Path>,
     pub test_root_lock: Option<&'a Path>,
@@ -80,6 +81,7 @@ pub fn run(args: RebuildArgs) -> Result<Vec<PathBuf>, Error> {
         run_tests: args.run_tests,
         test_filter: &args.test,
         no_index: args.no_index,
+        no_lint: args.no_lint,
         junit: args.junit.as_deref(),
         sbom: args.sbom.as_deref(),
         test_root_lock: args.test_root_lock.as_deref(),
@@ -189,6 +191,11 @@ pub fn execute(request: RebuildRequest<'_>) -> Result<RebuildOutput, Error> {
         source_date_epoch: extracted.source_date_epoch,
         debuginfo,
     })?;
+
+    if !request.no_lint {
+        let findings = crate::commands::package_lint::check(&packages);
+        crate::commands::package_lint::enforce(&findings)?;
+    }
 
     let sbom_policy = sbom_enabled || sbom_path.is_some();
     let sbom = if sbom_policy {

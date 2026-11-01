@@ -95,6 +95,7 @@ pub fn run(args: TestArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
         run_tests: true,
         test_filter: &args.selected,
         junit: args.junit.as_deref(),
+        no_lint: false,
         sbom: None,
         test_root_lock: None,
         signing: &signing,

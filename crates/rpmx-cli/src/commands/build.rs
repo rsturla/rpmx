@@ -83,6 +83,10 @@ fn package_stage(
             source_date_epoch,
             debuginfo: false,
         })?;
+        if !args.no_lint {
+            let findings = crate::commands::package_lint::check(&packages);
+            crate::commands::package_lint::enforce(&findings)?;
+        }
         for package in packages {
             written.push(emit::binary(
                 &package,
@@ -128,6 +132,7 @@ fn build_from_recipe(
         test,
         junit,
         no_index,
+        no_lint,
         sbom,
         test_root_lock,
         signing,
@@ -205,6 +210,7 @@ fn build_from_recipe(
         run_tests,
         test_filter: &test,
         junit: junit.as_deref(),
+        no_lint,
         sbom: sbom.as_deref(),
         test_root_lock: test_root_lock.as_deref(),
         signing: &signing,

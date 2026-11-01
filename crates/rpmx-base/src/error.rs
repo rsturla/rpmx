@@ -125,6 +125,8 @@ pub mod codes {
         IO_001 = "RPMX-IO-001",
         /// An init target already exists and --force was not given.
         INIT_001 = "RPMX-INIT-001",
+        /// A built package violates package policy.
+        POLICY_001 = "RPMX-POLICY-001",
         /// The recipe has one or more lint errors.
         LINT_001 = "RPMX-LINT-001",
         /// A license is not a syntactically valid SPDX expression.

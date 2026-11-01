@@ -11,6 +11,7 @@ pub mod init;
 pub mod lint;
 mod loader;
 pub mod lock;
+pub mod package_lint;
 pub mod pipeline;
 pub mod plan;
 mod policy;
