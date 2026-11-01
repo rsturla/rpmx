@@ -231,60 +231,7 @@ pub fn run(cli: Cli) -> Result<(), Error> {
             })
             .map(|_| ())
         }
-        Command::Build {
-            file,
-            policy,
-            stage,
-            output,
-            arch,
-            runner,
-            source_date_epoch,
-            cell,
-            cache,
-            proxy,
-            offline,
-            root_lock,
-            root,
-            unsafe_host_root,
-            jobs,
-            step_timeout,
-            run_tests,
-            sbom,
-            test_root_lock,
-            signing_key,
-            signing_passphrase_env,
-            signing_timestamp,
-            json,
-        } => {
-            let resolved = resolve_policy(policy)?;
-            commands::build::run(commands::BuildArgs {
-                file: &file,
-                stage: stage.as_deref(),
-                output: &output,
-                arch: &arch,
-                runner: &runner,
-                source_date_epoch,
-                cell: cell.as_deref(),
-                pipeline_dir: pipeline_dir.as_deref(),
-                policy: resolved.plan_policy(),
-                cache: cache.as_deref(),
-                proxy: proxy.as_deref(),
-                offline,
-                root_lock: root_lock.as_deref(),
-                root: root.as_deref(),
-                unsafe_host_root,
-                jobs,
-                step_timeout,
-                run_tests,
-                sbom: sbom.as_deref(),
-                test_root_lock: test_root_lock.as_deref(),
-                signing_key: signing_key.as_deref(),
-                signing_passphrase_env: signing_passphrase_env.as_deref(),
-                signing_timestamp,
-                json,
-            })
-            .map(|_| ())
-        }
+        Command::Build(args) => commands::build::run(args, pipeline_dir.as_deref()).map(|_| ()),
         Command::Repo {
             rpms,
             output,

@@ -22,10 +22,10 @@ impl Cli {
             | Command::Source { json, .. }
             | Command::Srpm { json, .. }
             | Command::Rebuild { json, .. }
-            | Command::Build { json, .. }
             | Command::Keygen { json, .. }
             | Command::Sign { json, .. }
             | Command::Repo { json, .. } => *json,
+            Command::Build(args) => args.json,
             Command::Cache { command } => command.json(),
         }
     }
@@ -424,82 +424,5 @@ pub enum Command {
         json: bool,
     },
     /// Build a recipe end to end, or package an already-staged tree.
-    ///
-    /// Without --stage this runs the whole SRPM-first pipeline: fetch and
-    /// assemble sources, write the SRPM, then rebuild binary RPMs from it.
-    Build {
-        /// Recipe to build.
-        file: PathBuf,
-        #[command(flatten)]
-        policy: PolicyArgs,
-        /// Package an already-staged tree instead of running the full pipeline.
-        #[arg(
-            long,
-            conflicts_with_all = [
-                "root_lock", "root", "unsafe_host_root", "run_tests", "test_root_lock",
-                "cache", "proxy", "offline", "jobs", "step_timeout", "sbom",
-            ]
-        )]
-        stage: Option<PathBuf>,
-        /// Output directory for binary RPMs and build-level SBOMs.
-        #[arg(long, default_value = ".")]
-        output: PathBuf,
-        /// Architecture for outputs that do not declare one.
-        #[arg(long, default_value = rpmx_core::arch::native_arch())]
-        arch: String,
-        /// Runner: auto, bwrap or qemu.
-        #[arg(long, default_value = "auto", value_parser = ["auto", "bwrap", "qemu"])]
-        runner: String,
-        /// Reproducible timestamp in Unix seconds (default: package.source-date-epoch).
-        #[arg(long)]
-        source_date_epoch: Option<u32>,
-        /// Build one matrix cell.
-        #[arg(long)]
-        cell: Option<String>,
-        /// Content-addressed cache (default: $XDG_CACHE_HOME/rpmx/cas).
-        #[arg(long)]
-        cache: Option<PathBuf>,
-        /// Content-addressed acquisition proxy.
-        #[arg(long)]
-        proxy: Option<String>,
-        /// Do not use the network; fail on a cache miss.
-        #[arg(long)]
-        offline: bool,
-        /// Root lock for source assembly and rebuild.
-        #[arg(long)]
-        root_lock: Option<PathBuf>,
-        /// Assembled root for source assembly and rebuild.
-        #[arg(long)]
-        root: Option<PathBuf>,
-        /// Use the host root for source assembly (unsafe).
-        #[arg(long)]
-        unsafe_host_root: bool,
-        /// Parallelism exposed as JOBS.
-        #[arg(long, default_value_t = 1)]
-        jobs: u32,
-        /// Wall-clock limit for each step in seconds (0 disables).
-        #[arg(long, default_value_t = 3600)]
-        step_timeout: u64,
-        /// Run build-stage and installed-stage tests.
-        #[arg(long)]
-        run_tests: bool,
-        /// Override the build-level SPDX SBOM path.
-        #[arg(long)]
-        sbom: Option<PathBuf>,
-        /// Use a pinned test-root lock instead of resolving one.
-        #[arg(long, requires = "run_tests")]
-        test_root_lock: Option<PathBuf>,
-        /// Sign the SRPM and binary RPMs with this ASCII-armored OpenPGP secret key.
-        #[arg(long)]
-        signing_key: Option<PathBuf>,
-        /// Read the signing key passphrase from this environment variable.
-        #[arg(long, requires = "signing_key")]
-        signing_passphrase_env: Option<String>,
-        /// Signature creation time in Unix seconds (default: source date epoch, then now).
-        #[arg(long, requires = "signing_key")]
-        signing_timestamp: Option<u32>,
-        /// Emit machine-readable output.
-        #[arg(long)]
-        json: bool,
-    },
+    Build(crate::commands::BuildArgs),
 }
