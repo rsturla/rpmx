@@ -56,6 +56,7 @@ pub fn expand(matrix: Option<&Matrix>) -> Result<Vec<Cell>> {
 
     let mut combinations: Vec<Combination> = vec![(BTreeMap::new(), BTreeMap::new())];
 
+    let mut normalized = Vec::with_capacity(matrix.axes.len());
     for (axis, values) in &matrix.axes {
         if values.is_empty() {
             return Err(
@@ -63,16 +64,22 @@ pub fn expand(matrix: Option<&Matrix>) -> Result<Vec<Cell>> {
                     .at(format!("matrix.axes.{axis}")),
             );
         }
+        let values = values
+            .iter()
+            .map(|value| split_value(axis, value))
+            .collect::<Result<Vec<_>>>()?;
+        normalized.push((axis, values));
+    }
 
+    for (axis, values) in normalized {
         let mut next = Vec::new();
         for (identity, fields) in &combinations {
-            for value in values {
-                let (identity_value, value_fields) = split_value(axis, value)?;
+            for (identity_value, value_fields) in &values {
                 let mut next_identity = identity.clone();
-                next_identity.insert(axis.clone(), identity_value);
+                next_identity.insert(axis.clone(), identity_value.clone());
                 let mut next_fields = fields.clone();
                 if !value_fields.is_empty() {
-                    next_fields.insert(axis.clone(), value_fields);
+                    next_fields.insert(axis.clone(), value_fields.clone());
                 }
                 next.push((next_identity, next_fields));
             }

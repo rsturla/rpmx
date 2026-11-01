@@ -144,28 +144,14 @@ pub(crate) fn validate_cpe(recipe: &Recipe) -> Result<()> {
 pub(crate) fn validate_sources(recipe: &Recipe) -> Result<()> {
     for (index, source) in recipe.sources.iter().enumerate() {
         let path = format!("sources[{index}].digest");
-        let Some(hex) = source.digest.strip_prefix("sha512:") else {
-            let algorithm = source
-                .digest
-                .split_once(':')
-                .map(|(algorithm, _)| algorithm)
-                .unwrap_or("unprefixed");
-            return Err(Error::new(
-                codes::SOURCE_001,
-                format!(
-                    "source '{}' uses digest algorithm '{algorithm}'; rpmx requires sha512",
-                    source.name
-                ),
-            )
-            .at(path));
-        };
-        if hex.len() != 128 || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-            return Err(Error::new(
-                codes::SOURCE_002,
-                format!("source '{}' has an invalid sha512 digest", source.name),
-            )
-            .at(path));
-        }
+        validate_sha512(
+            &source.name,
+            &source.digest,
+            path,
+            codes::SOURCE_001,
+            codes::SOURCE_002,
+            "source",
+        )?;
         for (locator_index, locator) in source.locators.iter().enumerate() {
             if locator.kind != "git" {
                 continue;

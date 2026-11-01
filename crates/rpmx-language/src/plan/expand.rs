@@ -108,27 +108,45 @@ pub(crate) fn expand_pipeline(
     expand_steps(steps, scope, "build.pipeline")
 }
 
+fn expand_typed<T: serde::Serialize + serde::de::DeserializeOwned>(
+    value: &T,
+    scope: &BTreeMap<String, Value>,
+    path: &str,
+    encode_code: rpmx_base::error::Code,
+    decode_code: rpmx_base::error::Code,
+) -> Result<T> {
+    let raw =
+        serde_json::to_value(value).map_err(|error| Error::new(encode_code, error.to_string()))?;
+    let expanded = template::expand_json(&raw, scope).map_err(|error| error.at(path))?;
+    serde_json::from_value(expanded)
+        .map_err(|error| Error::new(decode_code, error.to_string()).at(path))
+}
+
 pub(crate) fn expand_steps(
     steps: &[Step],
     scope: &BTreeMap<String, Value>,
     path: &str,
 ) -> Result<Vec<Step>> {
-    let raw = serde_json::to_value(steps)
-        .map_err(|error| Error::new(codes::PLAN_009, error.to_string()))?;
-    let expanded = template::expand_json(&raw, scope).map_err(|error| error.at(path))?;
-    serde_json::from_value(expanded)
-        .map_err(|error| Error::new(codes::PLAN_010, error.to_string()).at(path))
+    expand_typed(
+        &steps.to_vec(),
+        scope,
+        path,
+        codes::PLAN_009,
+        codes::PLAN_010,
+    )
 }
 
 pub(crate) fn expand_outputs(
     outputs: &[Output],
     scope: &BTreeMap<String, Value>,
 ) -> Result<Vec<PlannedOutput>> {
-    let raw = serde_json::to_value(outputs)
-        .map_err(|error| Error::new(codes::PLAN_005, error.to_string()))?;
-    let expanded = template::expand_json(&raw, scope).map_err(|error| error.at("outputs"))?;
-    let outputs: Vec<Output> = serde_json::from_value(expanded)
-        .map_err(|error| Error::new(codes::PLAN_006, error.to_string()).at("outputs"))?;
+    let outputs: Vec<Output> = expand_typed(
+        &outputs.to_vec(),
+        scope,
+        "outputs",
+        codes::PLAN_005,
+        codes::PLAN_006,
+    )?;
 
     let mut planned = Vec::with_capacity(outputs.len());
     let mut seen = BTreeSet::new();
@@ -173,11 +191,13 @@ pub(crate) fn expand_tests(
     step_root: Option<&std::path::Path>,
     allow_builtin_override: bool,
 ) -> Result<Vec<PlannedTest>> {
-    let raw = serde_json::to_value(tests)
-        .map_err(|error| Error::new(codes::PLAN_007, error.to_string()))?;
-    let expanded = template::expand_json(&raw, scope).map_err(|error| error.at("tests"))?;
-    let tests: Vec<Test> = serde_json::from_value(expanded)
-        .map_err(|error| Error::new(codes::PLAN_008, error.to_string()).at("tests"))?;
+    let tests: Vec<Test> = expand_typed(
+        &tests.to_vec(),
+        scope,
+        "tests",
+        codes::PLAN_007,
+        codes::PLAN_008,
+    )?;
 
     let mut seen = BTreeSet::new();
     let mut planned = Vec::with_capacity(tests.len());
