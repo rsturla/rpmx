@@ -32,6 +32,14 @@ the tree.
 Use an absolute path that exists on the resolve host. It is mounted read-only
 during `root resolve`; `root assemble` uses the CAS, not the repository.
 
+**`RPMX-ROOT-019` during root resolution**  
+The repository needs credentials, a credential reference could not be read, or
+the server rejected them. Add an `auth` block to the profile, export the
+referenced environment variables, and make sure the profile is passed with
+`--profile FILE` or lives under `$XDG_CONFIG_HOME/rpmx/profiles`. A profile
+named by the recipe cannot carry credentials. If the repository uses signed
+metadata, set `repo-gpgcheck: true` and supply its `gpgkey`.
+
 **`--locked` reports drift**  
 Review `rpmx lock --check` output, run `rpmx lock`, and review the
 `package.lock.json` diff. Do not hand-edit step digests.

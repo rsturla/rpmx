@@ -10,7 +10,7 @@ architecture and contribution material lives in
 |---|---|
 | [`getting-started.md`](getting-started.md) | What rpmx does, requirements, first package, command map. |
 | [`recipes.md`](recipes.md) | The complete `package.yaml` reference and a worked example. |
-| [`profiles-and-roots.md`](profiles-and-roots.md) | Profiles, inline roots, local repositories, root resolution and caching. |
+| [`profiles-and-roots.md`](profiles-and-roots.md) | Profiles, inline roots, local and authenticated repositories, root resolution and caching. |
 | [`building.md`](building.md) | The build pipeline, artifacts, signing, the package lock, `bump`, repositories and SRPM plumbing. |
 | [`testing.md`](testing.md) | Build- and installed-stage tests, selection, JUnit, and `--install-dir`. |
 | [`debugging.md`](debugging.md) | `plan`, `explain`, `steps`, `doctor`, `shell`, `--keep-workdir` and `--debug`. |

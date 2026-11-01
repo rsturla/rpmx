@@ -59,6 +59,65 @@ The path must exist on the resolve host and be absolute. The resulting lock
 records the original repository id; for another machine, use `--root-lock` and
 `root assemble` from the CAS, or publish the repository over HTTPS.
 
+### Authenticated repositories
+
+A repository that needs a login can authenticate with a TLS client certificate
+(RHEL CDN), basic auth (Satellite or a private mirror), or a proxy. The profile
+holds only references, never the secret itself:
+
+```yaml
+repositories:
+  - id: rhel-baseos
+    baseurl: https://cdn.redhat.com/content/dist/rhel9/$releasever/$basearch/baseos/os
+    gpgkey: file:///etc/pki/rpm-gpg/RPM-GPG-KEY-redhat-release
+    repo-gpgcheck: true
+    auth:
+      ca: /etc/pki/entitlement/...-ca.pem
+      cert: env:RHEL_CLIENT_CERT
+      key: env:RHEL_CLIENT_KEY
+```
+
+Basic auth and proxy credentials use the same block:
+
+```yaml
+    auth:
+      username: builder
+      password: env:RHEL_PASSWORD
+      proxy: http://proxy.example:3128
+      proxy-username: builder
+      proxy-password: env:PROXY_PASSWORD
+```
+
+Rules:
+
+- `ca`, `cert`, `key`, `password` and `proxy-password` take an `env:NAME`
+  reference or an absolute path. `file:///absolute/path` is also accepted.
+  Passwords must not be literals.
+- `cert` and `key` are set together; `username` and `password` are set together;
+  `proxy-username` and `proxy-password` are set together.
+- Credentials are honoured only in a profile the user controls: one passed with
+  `--profile FILE` or found under `$XDG_CONFIG_HOME/rpmx/profiles`. A profile
+  selected by the recipe itself cannot carry `auth`; pass the profile explicitly
+  or move it into the config directory.
+- Do not put `user:password@` in a repository or proxy URL. Use the `auth` block.
+- Credential files are copied into a private temporary directory, mounted
+  read-only into the resolver container, and removed when resolution finishes.
+  The build sandbox still has no network and no credentials.
+- `repo-gpgcheck: true` verifies signed repository metadata as well as package
+  signatures. RHEL repositories usually need it.
+
+Resolve normally:
+
+```console
+RHEL_CLIENT_CERT=... RHEL_CLIENT_KEY=... \
+  rpmx root resolve profiles/rhel-9.yaml --output root.lock.yaml
+```
+
+The lock and the SRPM do not contain the `auth` block. `root assemble` and
+`rebuild` use the content-addressed cache, so they do not need the credentials.
+A host without entitlement can build from a cache populated by an entitled
+host. Authentication problems are reported as `RPMX-ROOT-019`.
+
 ---
 
 ## Roots
