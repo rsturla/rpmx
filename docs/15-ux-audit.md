@@ -27,9 +27,8 @@ gzip/xz/zstd, SHA-256 sources, package policy checks, and Melange-style step
 feedback.
 
 Still open from the proposal set: `features`, typed `actions` (systemd,
-sysusers, tmpfiles), `bump`/`update`, `--install-dir` test reuse, per-cell JUnit
-aggregation, and a config file. The multi-cell test report currently keeps the
-last cell's results.
+sysusers, tmpfiles), `bump`/`update`, `--install-dir` test reuse, and a config
+file. JUnit reports aggregate across matrix cells.
 
 ---
 

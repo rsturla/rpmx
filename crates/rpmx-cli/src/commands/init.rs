@@ -66,6 +66,8 @@ build:
     tools: [gcc, make, bash]
   pipeline:
     - uses: make
+    - runs: |
+        install -D -m 0644 LICENSE "$STAGE/usr/share/licenses/{name}/LICENSE"
     - uses: strip
 
 source-assembly:
@@ -88,6 +90,15 @@ source-assembly:
         install: hello
         	install -D -m 0755 hello $(DESTDIR)/usr/bin/hello
         SOURCE
+        cat > LICENSE <<'SOURCE'
+        MIT License
+
+        Copyright (c) {name} contributors
+
+        Permission is hereby granted, free of charge, to any person obtaining a copy
+        of this software and associated documentation files (the "Software"), to deal
+        in the Software without restriction.
+        SOURCE
 
 outputs:
   - name: {name}
@@ -95,6 +106,9 @@ outputs:
     files:
       include:
         - /usr/bin/hello
+        - /usr/share/licenses/{name}/LICENSE
+      license:
+        - /usr/share/licenses/{name}/LICENSE
 
 tests:
   - name: smoke
@@ -152,6 +166,7 @@ build:
   pipeline:
     - runs: |
         python3 -m pip install . --root "$STAGE" --prefix /usr --no-deps --no-build-isolation
+        install -D -m 0644 LICENSE "$STAGE/usr/share/licenses/{name}/LICENSE"
     - uses: strip
 
 source-assembly:
@@ -172,6 +187,15 @@ source-assembly:
         def main():
             return 0
         SOURCE
+        cat > LICENSE <<'SOURCE'
+        MIT License
+
+        Copyright (c) {name} contributors
+
+        Permission is hereby granted, free of charge, to any person obtaining a copy
+        of this software and associated documentation files (the "Software"), to deal
+        in the Software without restriction.
+        SOURCE
 
 outputs:
   - name: {name}
@@ -181,6 +205,9 @@ outputs:
       include:
         - /usr/lib/python3*/site-packages/{module}/**
         - /usr/lib/python3*/site-packages/{module}-*.dist-info/**
+        - /usr/share/licenses/{name}/LICENSE
+      license:
+        - /usr/share/licenses/{name}/LICENSE
 
 tests:
   - name: import
