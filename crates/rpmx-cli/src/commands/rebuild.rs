@@ -1,16 +1,18 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use crate::commands::emit;
 use rpmx_core::binary_package::{prepare_binary_packages, BinaryPackageOptions};
+use rpmx_core::build_env::check_build_tools;
 use rpmx_core::error::codes;
 use rpmx_core::package_spec::BinaryPackageFile;
-use rpmx_core::plan::PlannedStep;
 use rpmx_core::root::{load_lock, RootSelection};
-use rpmx_core::sandbox::Sandbox;
+use rpmx_core::sandbox::{RunnerKind, Sandbox};
 use rpmx_core::sbom::Generator;
 use rpmx_core::srpm::load_lock_file;
 use rpmx_core::steps::validate_name;
+use rpmx_core::test_root::{prepare as prepare_test_root, TestRootOptions};
+use rpmx_core::test_runner::{run_planned_tests, TestSandboxConfig};
 use rpmx_core::Error;
 use rpmx_rpm::extract::extract_srpm;
 
@@ -207,7 +209,8 @@ pub fn run(args: RebuildArgs<'_>) -> Result<Vec<PathBuf>, Error> {
 
     let host_arch = rpmx_core::arch::Arch::current()?;
     let target_arch = rpmx_core::arch::Arch::parse(arch)?;
-    let backend = runner.parse::<rpmx_core::sandbox::RunnerKind>()?.select(
+    let runner_kind = runner.parse::<RunnerKind>()?;
+    let backend = runner_kind.select(
         host_arch,
         target_arch,
         assembled_root.as_deref(),
@@ -395,6 +398,7 @@ pub fn run(args: RebuildArgs<'_>) -> Result<Vec<PathBuf>, Error> {
     }
 
     if run_tests {
+        let cache = crate::commands::fetch::default_cache()?;
         let prepared = if cells[0].tests.iter().any(|test| test.stage == "installed") {
             let lock = active_lock.as_ref().ok_or_else(|| {
                 Error::new(
@@ -402,42 +406,45 @@ pub fn run(args: RebuildArgs<'_>) -> Result<Vec<PathBuf>, Error> {
                     "installed-stage tests need an embedded or explicit root lock",
                 )
             })?;
-            Some(prepare_test_root(
+            Some(prepare_test_root(TestRootOptions {
                 lock,
-                test_root_lock,
-                &cells[0].test_tools,
-                &written,
-                builder_image.as_deref(),
-                work.path(),
-                runner,
-            )?)
+                pinned: test_root_lock,
+                tools: &cells[0].test_tools,
+                rpms: &written,
+                image: builder_image.as_deref(),
+                cache: &cache,
+                work: work.path(),
+                runner: runner_kind,
+            })?)
         } else {
             None
         };
-        let test_root = prepared.as_ref().map(|(root, _)| root.as_path());
+        let test_root = prepared.as_ref().map(|root| root.path.as_path());
         let result = run_planned_tests(
             &sandbox,
             &cells[0].tests,
             test_root,
-            TestSandbox {
+            TestSandboxConfig {
                 workspace: &build,
                 stage: &stage,
                 host_arch: rpmx_core::arch::Arch::current()?,
                 target_arch: rpmx_core::arch::Arch::parse(arch)?,
-                runner,
+                runner: runner_kind,
                 source_date_epoch: extracted.source_date_epoch,
                 jobs,
                 timeout: Some(step_timeout).filter(|seconds| *seconds > 0),
                 debuginfo,
             },
         );
-        if let Some((root, test_lock)) = prepared {
-            let _ = rpmx_core::root::remove_tree(&root);
+        if let Some(prepared) = prepared {
+            let _ = rpmx_core::root::remove_tree(&prepared.path);
             let path = output.join(format!(
                 "{}-{}-{}.test-root.lock.json",
                 cells[0].package, cells[0].version, cells[0].release
             ));
-            std::fs::write(&path, test_lock).map_err(|error| {
+            let text = serde_yaml_ng::to_string(&prepared.lock)
+                .map_err(|error| Error::new(codes::BUILD_007, error.to_string()))?;
+            std::fs::write(&path, text).map_err(|error| {
                 Error::new(
                     codes::BUILD_007,
                     format!("cannot write {}: {error}", path.display()),
@@ -466,383 +473,4 @@ pub fn run(args: RebuildArgs<'_>) -> Result<Vec<PathBuf>, Error> {
         }
     }
     Ok(written)
-}
-
-/// Fail before the first step if a declared build tool is neither a package in
-/// the locked root nor an executable inside it. Version constraints are parsed
-/// off the name and are not checked yet.
-fn check_build_tools(
-    sandbox: &Sandbox<'_>,
-    workspace: &Path,
-    tools: &[String],
-    host: &[String],
-    target: &[String],
-    test_tools: &[String],
-    locked_packages: &BTreeSet<String>,
-) -> Result<(), Error> {
-    let mut missing_packages = BTreeSet::new();
-    for dependency in host.iter().chain(target).chain(test_tools) {
-        let name = dependency.split_whitespace().next().unwrap_or(dependency);
-        if !name.is_empty() && !locked_packages.contains(name) {
-            missing_packages.insert(name.to_string());
-        }
-    }
-    if !missing_packages.is_empty() && !locked_packages.is_empty() {
-        return Err(Error::new(
-            codes::ROOT_018,
-            format!(
-                "build host/test dependencies missing from the selected root: {}; \
-                 add them to the profile's packages.install",
-                missing_packages.into_iter().collect::<Vec<_>>().join(", ")
-            ),
-        ));
-    }
-
-    let mut candidates = BTreeSet::new();
-    for tool in tools {
-        let name = tool.split_whitespace().next().unwrap_or(tool);
-        if name.is_empty() || locked_packages.contains(name) {
-            continue;
-        }
-        candidates.insert(name.to_string());
-    }
-    if candidates.is_empty() {
-        return Ok(());
-    }
-
-    let marker = workspace.join(".rpmx-missing-tools");
-    let _ = std::fs::remove_file(&marker);
-    let mut args = vec![
-        "-c".to_string(),
-        "for tool do command -v \"$tool\" >/dev/null 2>&1 || printf '%s\n' \"$tool\"; done > /tmp/build/.rpmx-missing-tools".to_string(),
-        "sh".to_string(),
-    ];
-    args.extend(candidates.iter().cloned());
-    let step = PlannedStep {
-        uses: "tool-probe".to_string(),
-        command: Some("sh".to_string()),
-        args,
-        cwd: None,
-        env: BTreeMap::new(),
-        needs: Vec::new(),
-        tool_digest: None,
-        step_digest: None,
-        builtin: false,
-        inputs: BTreeMap::new(),
-        input: None,
-        input_file: None,
-    };
-    sandbox.run(&step).map_err(|error| {
-        Error::new(
-            codes::ROOT_018,
-            format!("cannot probe the build root for tools: {error}"),
-        )
-    })?;
-
-    let report = std::fs::read_to_string(&marker).unwrap_or_default();
-    let _ = std::fs::remove_file(&marker);
-    let missing = report.lines().map(str::to_string).collect::<Vec<_>>();
-    if missing.is_empty() {
-        Ok(())
-    } else {
-        Err(Error::new(
-            codes::ROOT_018,
-            format!(
-                "build tools missing from the selected root: {}; add them to the profile's packages.install",
-                missing.join(", ")
-            ),
-        ))
-    }
-}
-
-struct TestSandbox<'a> {
-    workspace: &'a Path,
-    stage: &'a Path,
-    host_arch: rpmx_core::arch::Arch,
-    target_arch: rpmx_core::arch::Arch,
-    runner: &'a str,
-    source_date_epoch: u32,
-    jobs: u32,
-    timeout: Option<u64>,
-    debuginfo: bool,
-}
-
-fn run_planned_tests(
-    sandbox: &Sandbox<'_>,
-    tests: &[rpmx_core::plan::PlannedTest],
-    test_root: Option<&Path>,
-    settings: TestSandbox<'_>,
-) -> Result<(), Error> {
-    let build_tests: Vec<_> = tests.iter().filter(|test| test.stage == "build").collect();
-    let installed_tests: Vec<_> = tests
-        .iter()
-        .filter(|test| test.stage == "installed")
-        .collect();
-    if let Some(test) = tests
-        .iter()
-        .find(|test| test.stage != "build" && test.stage != "installed")
-    {
-        return Err(Error::new(
-            codes::BUILD_007,
-            format!(
-                "test '{}' uses unsupported stage '{}'",
-                test.name, test.stage
-            ),
-        ));
-    }
-
-    for test in build_tests {
-        run_one_test(sandbox, test)?;
-    }
-    if installed_tests.is_empty() {
-        return Ok(());
-    }
-    let root = test_root.ok_or_else(|| {
-        Error::new(
-            codes::BUILD_007,
-            "installed-stage tests need a test root, which requires a root lock",
-        )
-    })?;
-    let test_backend = settings
-        .runner
-        .parse::<rpmx_core::sandbox::RunnerKind>()?
-        .select(settings.host_arch, settings.target_arch, Some(root), None)?;
-    let test_sandbox = Sandbox {
-        backend: test_backend,
-        workspace: settings.workspace,
-        stage: settings.stage,
-        host_arch: settings.host_arch,
-        target_arch: settings.target_arch,
-        source_date_epoch: settings.source_date_epoch,
-        jobs: settings.jobs,
-        timeout: settings.timeout,
-        debuginfo: settings.debuginfo,
-        session: std::cell::RefCell::new(None),
-    };
-    for test in installed_tests {
-        run_one_test(&test_sandbox, test)?;
-    }
-    Ok(())
-}
-
-fn run_one_test(sandbox: &Sandbox<'_>, test: &rpmx_core::plan::PlannedTest) -> Result<(), Error> {
-    if let Some(argv) = &test.argv {
-        let command = argv.first().ok_or_else(|| {
-            Error::new(
-                codes::BUILD_007,
-                format!("test '{}' has an empty argv", test.name),
-            )
-        })?;
-        let step = PlannedStep {
-            uses: format!("test:{}", test.name),
-            command: Some(command.clone()),
-            args: argv[1..].to_vec(),
-            cwd: None,
-            env: BTreeMap::new(),
-            needs: Vec::new(),
-            tool_digest: None,
-            step_digest: None,
-            builtin: false,
-            inputs: BTreeMap::new(),
-            input: None,
-            input_file: None,
-        };
-        sandbox.run(&step)?;
-    }
-    for step in &test.pipeline {
-        sandbox.run(step)?;
-    }
-    Ok(())
-}
-
-fn prepare_test_root(
-    lock: &rpmx_core::root::RootLock,
-    pinned: Option<&Path>,
-    test_tools: &[String],
-    rpms: &[PathBuf],
-    builder_image: Option<&str>,
-    work: &Path,
-    runner: &str,
-) -> Result<(PathBuf, String), Error> {
-    let target = rpmx_core::arch::Arch::parse(
-        lock.archs
-            .first()
-            .ok_or_else(|| Error::new(codes::BUILD_007, "the test root has no architecture"))?,
-    )?;
-    let host = rpmx_core::arch::Arch::current()?;
-    let foreign = host != target || runner == "qemu";
-    if host != target && !rpmx_core::sandbox::emulation_available(target) {
-        return Err(Error::new(
-            codes::RUNNER_002,
-            format!(
-                "cannot prepare a {target} test root on a {host} host; \
-                 no qemu-user binfmt handler is available"
-            ),
-        ));
-    }
-    let image =
-        builder_image.or_else(|| lock.builder.as_ref().map(|builder| builder.image.as_str()));
-    let image = image.ok_or_else(|| {
-        Error::new(
-            codes::BUILD_007,
-            "installed-stage tests need a builder image in the root lock",
-        )
-    })?;
-
-    let mut install = vec!["bash".to_string(), "coreutils".to_string()];
-    if foreign {
-        // A QEMU-backed test root must boot itself, so it needs a kernel,
-        // initramfs, 9p modules and the mount helpers used by the guest init.
-        install.extend(
-            [
-                "kernel-core",
-                "kernel-modules-core",
-                "kernel-modules",
-                "dracut",
-                "kmod",
-                "util-linux",
-                "systemd",
-                "systemd-networkd",
-                "openssh-server",
-                "tar",
-            ]
-            .iter()
-            .map(|package| package.to_string()),
-        );
-    }
-    for tool in test_tools {
-        let name = tool.split_whitespace().next().unwrap_or(tool);
-        if !name.is_empty() && !install.iter().any(|package| package == name) {
-            install.push(name.to_string());
-        }
-    }
-
-    let profile = rpmx_core::profile::Profile {
-        document: rpmx_core::profile::DOCUMENT.to_string(),
-        version: rpmx_core::profile::VERSION,
-        name: Some("test-root".to_string()),
-        releasever: lock.releasever.clone(),
-        dist_tag: lock.dist_tag.clone(),
-        archs: lock.archs.clone(),
-        builder: rpmx_core::profile::Builder {
-            image: Some(image.to_string()),
-        },
-        repositories: lock.repositories.clone(),
-        packages: rpmx_core::profile::Packages {
-            install: install.clone(),
-            reinstall: Vec::new(),
-        },
-        modules: Default::default(),
-        options: lock.options.clone(),
-        debuginfo: false,
-        sbom: false,
-    };
-
-    let cache = crate::commands::fetch::default_cache()?;
-    let resolve_work = work.join("test-resolve");
-    let assemble_work = work.join("test-assemble");
-    let root = work.join("test-root");
-    let test_lock = match pinned {
-        Some(path) => {
-            let pinned = load_lock(path)?;
-            check_test_lock(path, &pinned, &install, &lock.archs)?;
-            pinned
-        }
-        None => rpmx_core::root::resolve_profile(&profile, "test-root", &resolve_work, &cache)?,
-    };
-    let test_lock_text = serde_yaml_ng::to_string(&test_lock)
-        .map_err(|error| Error::new(codes::BUILD_007, error.to_string()))?;
-    rpmx_core::root::assemble(
-        &test_lock,
-        rpmx_core::root::AssembleOptions {
-            cache: &cache,
-            work: &assemble_work,
-            root: &root,
-        },
-    )?;
-
-    let rpms_dir = rpms
-        .first()
-        .and_then(|path| path.parent())
-        .ok_or_else(|| Error::new(codes::BUILD_007, "no binary RPMs were written"))?;
-    let mut command = std::process::Command::new("podman");
-    command.args([
-        "run",
-        "--rm",
-        "--network=none",
-        "--cap-drop=all",
-        "--cap-add=CHOWN,DAC_OVERRIDE,FOWNER,FSETID,SETGID,SETUID,SYS_CHROOT",
-        "--security-opt=no-new-privileges",
-    ]);
-    command.arg("--arch").arg(target.to_string());
-    let output = command
-        .arg("-v")
-        .arg(format!("{}:/root:Z", root.display()))
-        .arg("-v")
-        .arg(format!("{}:/rpms:ro,Z", rpms_dir.display()))
-        .arg(image)
-        .args([
-            "sh",
-            "-c",
-            "rpm --root /root -i --replacefiles --replacepkgs --oldpackage --noscripts /rpms/*.rpm",
-        ])
-        .output()
-        .map_err(|error| {
-            Error::new(
-                codes::BUILD_007,
-                format!("cannot install test packages: {error}"),
-            )
-        })?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(Error::new(
-            codes::BUILD_007,
-            format!(
-                "cannot install the built RPMs into the test root: {}; \
-                 add missing runtime packages to build.dependencies.tests \
-                 or pass a pinned --test-root-lock",
-                stderr.trim()
-            ),
-        ));
-    }
-    Ok((root, test_lock_text))
-}
-
-/// A pinned test root must contain the packages the recipe asks tests to install,
-/// otherwise the lock and the recipe have drifted apart.
-fn check_test_lock(
-    path: &Path,
-    lock: &rpmx_core::root::RootLock,
-    required: &[String],
-    archs: &[String],
-) -> Result<(), Error> {
-    let arch = archs
-        .first()
-        .ok_or_else(|| Error::new(codes::BUILD_007, "the test root lock has no architectures"))?;
-    let installed = lock.packages.get(arch).ok_or_else(|| {
-        Error::new(
-            codes::BUILD_007,
-            format!("the test root lock has no packages for {arch}"),
-        )
-    })?;
-    let names: BTreeSet<&str> = installed
-        .iter()
-        .map(|package| package.name.as_str())
-        .collect();
-    let missing: Vec<&str> = required
-        .iter()
-        .map(|dependency| dependency.split_whitespace().next().unwrap_or(dependency))
-        .filter(|name| !name.is_empty() && !names.contains(name))
-        .collect();
-    if !missing.is_empty() {
-        return Err(Error::new(
-            codes::BUILD_007,
-            format!(
-                "test root lock {} is missing test dependencies: {}",
-                path.display(),
-                missing.join(", ")
-            ),
-        ));
-    }
-    Ok(())
 }

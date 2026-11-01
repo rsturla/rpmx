@@ -1,5 +1,6 @@
 pub mod arch;
 pub mod binary_package;
+pub mod build_env;
 pub mod cas;
 pub mod elf;
 pub mod error;
@@ -21,6 +22,8 @@ pub mod source_package;
 pub mod srpm;
 pub mod steps;
 pub mod template;
+pub mod test_root;
+pub mod test_runner;
 pub mod tree;
 pub mod yaml;
 
