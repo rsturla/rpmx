@@ -33,16 +33,18 @@ pub fn gc(args: GcArgs) -> Result<(), Error> {
     )?;
 
     if args.json {
-        let value = serde_json::json!({
-            "ok": true,
-            "cache": cache.display().to_string(),
-            "protected": keep.len(),
-            "kept": report.kept,
-            "removed": report.removed,
-            "bytes": report.bytes,
-            "dry_run": args.dry_run,
-            "blobs": report.blobs,
-        });
+        let value = crate::commands::report::success(
+            "cache",
+            serde_json::json!({
+                "cache": cache.display().to_string(),
+                "protected": keep.len(),
+                "kept": report.kept,
+                "removed": report.removed,
+                "bytes": report.bytes,
+                "dry_run": args.dry_run,
+                "blobs": report.blobs,
+            }),
+        );
         println!(
             "{}",
             serde_json::to_string_pretty(&value)

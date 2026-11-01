@@ -39,6 +39,11 @@ pub struct RebuildRequest<'a> {
     pub quiet: bool,
 }
 
+pub struct RebuildOutput {
+    pub rpms: Vec<PathBuf>,
+    pub evidence: Vec<PathBuf>,
+}
+
 pub fn run(args: RebuildArgs) -> Result<Vec<PathBuf>, Error> {
     let resolved = crate::commands::resolve_policy(crate::commands::PolicyInput {
         profile: args.policy.profile.as_deref(),
@@ -64,9 +69,10 @@ pub fn run(args: RebuildArgs) -> Result<Vec<PathBuf>, Error> {
         json: args.json,
         quiet: args.quiet,
     })
+    .map(|output| output.rpms)
 }
 
-pub fn execute(request: RebuildRequest<'_>) -> Result<Vec<PathBuf>, Error> {
+pub fn execute(request: RebuildRequest<'_>) -> Result<RebuildOutput, Error> {
     let signing = crate::commands::load_signing_key(
         request.signing.signing_key.as_deref(),
         request.signing.signing_passphrase_env.as_deref(),
@@ -174,6 +180,7 @@ pub fn execute(request: RebuildRequest<'_>) -> Result<Vec<PathBuf>, Error> {
     };
 
     let mut written = Vec::new();
+    let mut evidence = Vec::new();
     let mut built = Vec::new();
     for mut package in packages {
         if let Some(sbom) = &sbom {
@@ -222,10 +229,11 @@ pub fn execute(request: RebuildRequest<'_>) -> Result<Vec<PathBuf>, Error> {
             signing_key: signing.as_ref().map(|key| key.fingerprint()),
             path: &path,
         })?;
+        evidence.push(path);
     }
 
     if run_tests {
-        tests::run(tests::TestRunOptions {
+        if let Some(path) = tests::run(tests::TestRunOptions {
             sandbox: &sandbox,
             cell: &cell,
             written: &written,
@@ -242,14 +250,20 @@ pub fn execute(request: RebuildRequest<'_>) -> Result<Vec<PathBuf>, Error> {
             jobs,
             timeout: step_timeout,
             debuginfo,
-        })?;
+        })? {
+            evidence.push(path);
+        }
     }
 
     report::print_artifacts(
         quiet,
         json,
         &written,
+        &evidence,
         signing.as_ref().map(|key| key.fingerprint()),
     )?;
-    Ok(written)
+    Ok(RebuildOutput {
+        rpms: written,
+        evidence,
+    })
 }

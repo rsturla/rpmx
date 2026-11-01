@@ -82,7 +82,11 @@ pub(super) fn take_stdout_echo(child: &mut Child) -> Option<Receiver<std::io::Re
     child.stdout.take().map(|mut stdout| {
         let (done, finished) = mpsc::channel();
         std::thread::spawn(move || {
-            let mut out = std::io::stdout().lock();
+            let mut out: Box<dyn std::io::Write + Send> = if crate::output::logs_to_stderr() {
+                Box::new(std::io::stderr())
+            } else {
+                Box::new(std::io::stdout())
+            };
             let mut error = None;
             let mut clean = Vec::new();
             let mut sanitizer = Sanitizer::default();

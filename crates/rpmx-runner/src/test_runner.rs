@@ -38,7 +38,7 @@ pub fn run_planned_tests(
         .find(|test| test.stage != "build" && test.stage != "installed")
     {
         return Err(Error::new(
-            codes::BUILD_007,
+            codes::TEST_004,
             format!(
                 "test '{}' uses unsupported stage '{}'",
                 test.name, test.stage
@@ -54,7 +54,7 @@ pub fn run_planned_tests(
     }
     let root = test_root.ok_or_else(|| {
         Error::new(
-            codes::BUILD_007,
+            codes::TEST_005,
             "installed-stage tests need a test root, which requires a root lock",
         )
     })?;
@@ -81,7 +81,7 @@ fn run_one_test(sandbox: &Sandbox<'_>, test: &rpmx_language::plan::PlannedTest) 
     if let Some(argv) = &test.argv {
         let command = argv.first().ok_or_else(|| {
             Error::new(
-                codes::BUILD_007,
+                codes::TEST_004,
                 format!("test '{}' has an empty argv", test.name),
             )
         })?;
@@ -99,10 +99,15 @@ fn run_one_test(sandbox: &Sandbox<'_>, test: &rpmx_language::plan::PlannedTest) 
             input: None,
             input_file: None,
         };
-        sandbox.run(&step)?;
+        sandbox.run(&step).map_err(test_failure)?;
     }
     for step in &test.pipeline {
-        sandbox.run(step)?;
+        sandbox.run(step).map_err(test_failure)?;
     }
     Ok(())
+}
+
+/// A step failure inside a test is a test failure, not a build failure.
+fn test_failure(error: Error) -> Error {
+    error.with_code(codes::TEST_003)
 }

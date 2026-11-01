@@ -33,15 +33,17 @@ pub fn run(args: FetchArgs) -> Result<(), Error> {
     )?;
 
     if args.json {
-        let value = serde_json::json!({
-            "ok": true,
-            "cache": cache.display().to_string(),
-            "sources": fetched.iter().map(|source| serde_json::json!({
-                "name": source.name,
-                "digest": source.digest,
-                "path": source.path.display().to_string(),
-            })).collect::<Vec<_>>(),
-        });
+        let value = crate::commands::report::success(
+            "fetch",
+            serde_json::json!({
+                "cache": cache.display().to_string(),
+                "sources": fetched.iter().map(|source| serde_json::json!({
+                    "name": source.name,
+                    "digest": source.digest,
+                    "path": source.path.display().to_string(),
+                })).collect::<Vec<_>>(),
+            }),
+        );
         println!(
             "{}",
             serde_json::to_string_pretty(&value)

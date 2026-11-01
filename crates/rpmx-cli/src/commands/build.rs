@@ -87,7 +87,7 @@ fn package_stage(
         }
     }
 
-    report(args.json, &written, &[])
+    report(args.json, &written, &[], &[])
 }
 
 /// Run the full SRPM-first pipeline: source snapshot, SRPM, binary RPMs.
@@ -160,10 +160,15 @@ fn build_from_recipe(
         pipeline_dir,
     };
     let built = pipeline.execute(&selected)?;
-    report(json, &built.rpms, &built.srpms)
+    report(json, &built.rpms, &built.srpms, &built.evidence)
 }
 
-fn report(json: bool, rpms: &[PathBuf], srpms: &[PathBuf]) -> Result<Vec<PathBuf>, Error> {
+fn report(
+    json: bool,
+    rpms: &[PathBuf],
+    srpms: &[PathBuf],
+    evidence: &[PathBuf],
+) -> Result<Vec<PathBuf>, Error> {
     crate::commands::report::print(
         json,
         "build",
@@ -175,6 +180,10 @@ fn report(json: bool, rpms: &[PathBuf], srpms: &[PathBuf]) -> Result<Vec<PathBuf
             crate::commands::report::ArtifactGroup {
                 kind: "rpm",
                 paths: rpms,
+            },
+            crate::commands::report::ArtifactGroup {
+                kind: "evidence",
+                paths: evidence,
             },
         ],
         None,

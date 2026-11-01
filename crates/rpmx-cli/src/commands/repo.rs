@@ -23,14 +23,16 @@ pub fn run(args: RepoArgs) -> Result<(), Error> {
     })?;
 
     if args.json {
-        let value = serde_json::json!({
-            "ok": true,
-            "packages": report.packages,
-            "repo": args.output.display().to_string(),
-            "repomd": report.repomd.display().to_string(),
-            "signature": report.signature.as_ref().map(|path| path.display().to_string()),
-            "signing_key": key.as_ref().map(|key| key.fingerprint()),
-        });
+        let value = crate::commands::report::success(
+            "repo",
+            serde_json::json!({
+                "packages": report.packages,
+                "repo": args.output.display().to_string(),
+                "repomd": report.repomd.display().to_string(),
+                "signature": report.signature.as_ref().map(|path| path.display().to_string()),
+                "signing_key": key.as_ref().map(|key| key.fingerprint()),
+            }),
+        );
         println!(
             "{}",
             serde_json::to_string_pretty(&value)

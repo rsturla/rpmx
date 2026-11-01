@@ -23,12 +23,14 @@ pub fn keygen(args: KeygenArgs) -> Result<(), Error> {
     })?;
 
     if args.json {
-        let value = serde_json::json!({
-            "ok": true,
-            "fingerprint": key.fingerprint,
-            "secret_key": args.output.display().to_string(),
-            "public_key": public.display().to_string(),
-        });
+        let value = crate::commands::report::success(
+            "keygen",
+            serde_json::json!({
+                "fingerprint": key.fingerprint,
+                "secret_key": args.output.display().to_string(),
+                "public_key": public.display().to_string(),
+            }),
+        );
         println!(
             "{}",
             serde_json::to_string_pretty(&value)
@@ -53,11 +55,13 @@ pub fn run(args: SignArgs) -> Result<(), Error> {
     }
 
     if args.json {
-        let value = serde_json::json!({
-            "ok": true,
-            "fingerprint": key.fingerprint(),
-            "signed": signed,
-        });
+        let value = crate::commands::report::success(
+            "sign",
+            serde_json::json!({
+                "fingerprint": key.fingerprint(),
+                "signed": signed,
+            }),
+        );
         println!(
             "{}",
             serde_json::to_string_pretty(&value)

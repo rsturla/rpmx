@@ -9,6 +9,23 @@ pub struct ArtifactGroup<'a> {
     pub paths: &'a [PathBuf],
 }
 
+/// Wrap command-specific fields in the success envelope every JSON command
+/// shares.
+pub fn success(command: &'static str, value: serde_json::Value) -> serde_json::Value {
+    let mut document = match value {
+        serde_json::Value::Object(map) => map,
+        other => {
+            let mut map = serde_json::Map::new();
+            map.insert("value".to_string(), other);
+            map
+        }
+    };
+    document.insert("schema".to_string(), serde_json::json!(1));
+    document.insert("ok".to_string(), serde_json::json!(true));
+    document.insert("command".to_string(), serde_json::json!(command));
+    serde_json::Value::Object(document)
+}
+
 /// Build the JSON document for a successful command.
 ///
 /// The shape is the CLI contract: one document, one schema version, and one
@@ -73,7 +90,10 @@ mod tests {
 
     #[test]
     fn json_documents_carry_a_schema_and_typed_artifacts() {
-        let rpms = vec![std::path::PathBuf::from("out/a.rpm")];
+        let rpms = vec![
+            std::path::PathBuf::from("out/a.rpm"),
+            std::path::PathBuf::from("out/b.rpm"),
+        ];
         let srpms = vec![std::path::PathBuf::from("out/a.src.rpm")];
         let value = document(
             "build",
@@ -86,14 +106,24 @@ mod tests {
                     kind: "rpm",
                     paths: &rpms,
                 },
+                ArtifactGroup {
+                    kind: "evidence",
+                    paths: &[],
+                },
             ],
             Some("sha256:key"),
         );
         assert_eq!(value["schema"], 1);
         assert_eq!(value["ok"], true);
         assert_eq!(value["command"], "build");
-        assert_eq!(value["artifacts"][0]["kind"], "srpm");
-        assert_eq!(value["artifacts"][1]["kind"], "rpm");
+        assert_eq!(
+            value["artifacts"],
+            serde_json::json!([
+                {"kind": "srpm", "path": "out/a.src.rpm"},
+                {"kind": "rpm", "path": "out/a.rpm"},
+                {"kind": "rpm", "path": "out/b.rpm"},
+            ])
+        );
         assert_eq!(value["signing_key"], "sha256:key");
     }
 }

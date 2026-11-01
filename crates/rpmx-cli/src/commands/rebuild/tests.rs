@@ -30,7 +30,7 @@ pub(super) struct TestRunOptions<'a> {
 }
 
 /// Run build- and installed-stage tests and persist the test-root lock.
-pub(super) fn run(options: TestRunOptions<'_>) -> Result<(), Error> {
+pub(super) fn run(options: TestRunOptions<'_>) -> Result<Option<PathBuf>, Error> {
     let cache = crate::commands::fetch::default_cache()?;
     let prepared = if options
         .cell
@@ -40,7 +40,7 @@ pub(super) fn run(options: TestRunOptions<'_>) -> Result<(), Error> {
     {
         let lock = options.active_lock.ok_or_else(|| {
             Error::new(
-                codes::BUILD_007,
+                codes::TEST_005,
                 "installed-stage tests need an embedded or explicit root lock",
             )
         })?;
@@ -74,20 +74,23 @@ pub(super) fn run(options: TestRunOptions<'_>) -> Result<(), Error> {
             debuginfo: options.debuginfo,
         },
     );
-    if let Some(prepared) = prepared {
+    let evidence = if let Some(prepared) = prepared {
         let _ = rpmx_core::root::remove_tree(&prepared.path);
         let path = options.output.join(format!(
             "{}-{}-{}.test-root.lock.json",
             options.cell.package, options.cell.version, options.cell.release
         ));
         let text = serde_yaml_ng::to_string(&prepared.lock)
-            .map_err(|error| Error::new(codes::BUILD_007, error.to_string()))?;
+            .map_err(|error| Error::new(codes::TEST_003, error.to_string()))?;
         std::fs::write(&path, text).map_err(|error| {
             Error::new(
-                codes::BUILD_007,
+                codes::TEST_003,
                 format!("cannot write {}: {error}", path.display()),
             )
         })?;
-    }
-    result
+        Some(path)
+    } else {
+        None
+    };
+    result.map(|()| evidence)
 }

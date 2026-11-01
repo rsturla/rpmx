@@ -330,6 +330,8 @@ pub fn remove_tree(path: &Path) -> Result<()> {
                 .arg("rm")
                 .arg("-rf")
                 .arg(path)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
                 .status();
             match status {
                 Ok(status) if status.success() => Ok(()),

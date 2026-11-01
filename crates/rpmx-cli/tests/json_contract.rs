@@ -78,6 +78,71 @@ fn root_resolution_errors_exit_4() {
 }
 
 #[test]
+fn srpm_json_lists_typed_artifacts_with_paths() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let recipe = directory.path().join("package.yaml");
+    let sources = directory.path().join("sources");
+    let out = directory.path().join("out");
+    write(&recipe, VALID);
+    std::fs::create_dir(&sources).expect("sources");
+    std::fs::create_dir(&out).expect("out");
+    let output = rpmx(&[
+        "srpm",
+        recipe.to_str().unwrap(),
+        "--sources",
+        sources.to_str().unwrap(),
+        "--output",
+        out.to_str().unwrap(),
+        "--json",
+    ]);
+    assert!(output.status.success(), "{output:?}");
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("stdout is one JSON document");
+    assert_eq!(value["schema"], 1);
+    assert_eq!(value["ok"], true);
+    assert_eq!(value["command"], "srpm");
+    let artifacts = value["artifacts"].as_array().expect("artifacts");
+    assert_eq!(artifacts.len(), 1, "{value}");
+    assert_eq!(artifacts[0]["kind"], "srpm");
+    let path = artifacts[0]["path"].as_str().expect("path");
+    assert!(Path::new(path).is_file(), "missing artifact {path}");
+}
+
+#[test]
+fn failing_guest_step_exits_5_and_keeps_stdout_clean() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let recipe = directory.path().join("package.yaml");
+    write(
+        &recipe,
+        &VALID.replace(
+            "build:\n  pipeline:\n    - runs: \"true\"\n",
+            "source-assembly:\n  pipeline:\n    - runs: \"echo before-fail; exit 17\"\nbuild:\n  pipeline:\n    - runs: \"true\"\n",
+        ),
+    );
+    let out = directory.path().join("out");
+    let output = rpmx(&[
+        "source",
+        recipe.to_str().unwrap(),
+        "--unsafe-host-root",
+        "--output",
+        out.to_str().unwrap(),
+        "--json",
+    ]);
+    assert_eq!(output.status.code(), Some(5), "{output:?}");
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("stdout is one JSON document");
+    assert_eq!(value["schema"], 1);
+    assert_eq!(value["ok"], false);
+    assert_eq!(value["command"], "source");
+    assert_eq!(value["diagnostics"][0]["severity"], "error");
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("before-fail"),
+        "guest output missing from stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
 fn guest_output_goes_to_stderr_when_json_is_set() {
     let directory = tempfile::tempdir().expect("tempdir");
     let recipe = directory.path().join("package.yaml");

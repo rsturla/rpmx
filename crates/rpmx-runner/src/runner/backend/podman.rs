@@ -101,6 +101,8 @@ impl Session for PodmanSession {
         if timed_out(&completion, self.timeout) {
             let _ = Command::new("podman")
                 .args(["rm", "-f", &self.name])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
                 .status();
         }
         finish(completion, self.timeout, request.label, "container ")
@@ -113,6 +115,8 @@ impl Session for PodmanSession {
     fn stop(&mut self) -> Result<()> {
         let _ = Command::new("podman")
             .args(["rm", "-f", &self.name])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
             .status();
         Ok(())
     }

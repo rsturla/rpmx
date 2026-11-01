@@ -40,6 +40,7 @@ pub struct BuildPipeline<'a> {
 pub struct PipelineOutput {
     pub rpms: Vec<PathBuf>,
     pub srpms: Vec<PathBuf>,
+    pub evidence: Vec<PathBuf>,
 }
 
 impl BuildPipeline<'_> {
@@ -89,6 +90,7 @@ impl BuildPipeline<'_> {
         let mut output = PipelineOutput {
             rpms: Vec::new(),
             srpms: Vec::new(),
+            evidence: Vec::new(),
         };
         for planned in cells {
             let written = srpm::execute(SrpmRequest {
@@ -108,7 +110,7 @@ impl BuildPipeline<'_> {
             output.srpms.extend(written.iter().cloned());
 
             for srpm_path in written {
-                output.rpms.extend(rebuild::execute(RebuildRequest {
+                let rebuilt = rebuild::execute(RebuildRequest {
                     file: &srpm_path,
                     output: self.output,
                     arch: self.arch,
@@ -126,7 +128,9 @@ impl BuildPipeline<'_> {
                     signing: self.signing,
                     json: false,
                     quiet: true,
-                })?);
+                })?;
+                output.rpms.extend(rebuilt.rpms);
+                output.evidence.extend(rebuilt.evidence);
             }
         }
         Ok(output)

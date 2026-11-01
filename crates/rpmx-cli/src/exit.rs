@@ -22,8 +22,12 @@ pub fn code_for(code: Code) -> u8 {
         // Installed-test setup or execution failed.
         return TEST;
     }
-    if code == codes::SRPM_011 || code == codes::SRPM_012 {
-        // A rebuild disagrees with the lock recorded in the SRPM.
+    if code == codes::SRPM_011
+        || code == codes::SRPM_012
+        || code == codes::ROOT_013
+        || code == codes::ROOT_017
+    {
+        // A rebuild or root disagrees with its lock.
         return LOCK_DRIFT;
     }
     match domain(code) {
@@ -34,7 +38,7 @@ pub fn code_for(code: Code) -> u8 {
         "POLICY" | "SIGN" => POLICY,
         "SBOM" | "EXTRACT" => EVIDENCE,
         "YAML" | "SCHEMA" | "PLAN" | "OUTPUT" | "STEP" | "TEMPLATE" | "MATRIX" | "TOOL"
-        | "SOURCE" | "STAGE" => RECIPE,
+        | "ASSEMBLY" | "SOURCE" | "STAGE" => RECIPE,
         _ => INTERNAL,
     }
 }
@@ -48,29 +52,33 @@ fn domain(code: Code) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        code_for, BUILD, EVIDENCE, INTERNAL, LOCK_DRIFT, POLICY, RECIPE, RESOLUTION, TEST,
-    };
+    use super::code_for;
     use rpmx_core::error::codes;
 
+    // Published numbers, not the constants: changing the taxonomy must fail
+    // here as well as in the CLI contract.
     #[test]
     fn domains_map_to_stable_exit_codes() {
-        assert_eq!(code_for(codes::YAML_001), RECIPE);
-        assert_eq!(code_for(codes::OUTPUT_011), RECIPE);
-        assert_eq!(code_for(codes::ROOT_007), RESOLUTION);
-        assert_eq!(code_for(codes::FETCH_004), RESOLUTION);
-        assert_eq!(code_for(codes::SANDBOX_002), BUILD);
-        assert_eq!(code_for(codes::RUNNER_002), BUILD);
-        assert_eq!(code_for(codes::TEST_001), TEST);
-        assert_eq!(code_for(codes::SIGN_002), POLICY);
-        assert_eq!(code_for(codes::SBOM_001), EVIDENCE);
-        assert_eq!(code_for(codes::IO_001), INTERNAL);
+        assert_eq!(code_for(codes::YAML_001), 2);
+        assert_eq!(code_for(codes::OUTPUT_011), 2);
+        assert_eq!(code_for(codes::ASSEMBLY_016), 2);
+        assert_eq!(code_for(codes::ROOT_007), 4);
+        assert_eq!(code_for(codes::FETCH_004), 4);
+        assert_eq!(code_for(codes::SANDBOX_002), 5);
+        assert_eq!(code_for(codes::RUNNER_002), 5);
+        assert_eq!(code_for(codes::TEST_001), 6);
+        assert_eq!(code_for(codes::TEST_003), 6);
+        assert_eq!(code_for(codes::SIGN_002), 7);
+        assert_eq!(code_for(codes::SBOM_001), 8);
+        assert_eq!(code_for(codes::IO_001), 9);
     }
 
     #[test]
     fn stage_specific_overrides_win_over_the_domain() {
-        assert_eq!(code_for(codes::BUILD_007), TEST);
-        assert_eq!(code_for(codes::SRPM_011), LOCK_DRIFT);
-        assert_eq!(code_for(codes::SRPM_012), LOCK_DRIFT);
+        assert_eq!(code_for(codes::BUILD_007), 6);
+        assert_eq!(code_for(codes::SRPM_011), 3);
+        assert_eq!(code_for(codes::SRPM_012), 3);
+        assert_eq!(code_for(codes::ROOT_013), 3);
+        assert_eq!(code_for(codes::ROOT_017), 3);
     }
 }

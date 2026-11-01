@@ -9,6 +9,7 @@ pub(super) fn print_artifacts(
     quiet: bool,
     json: bool,
     written: &[PathBuf],
+    evidence: &[PathBuf],
     signing_key: Option<&str>,
 ) -> Result<(), Error> {
     if quiet {
@@ -17,10 +18,16 @@ pub(super) fn print_artifacts(
     report::print(
         json,
         "rebuild",
-        &[ArtifactGroup {
-            kind: "rpm",
-            paths: written,
-        }],
+        &[
+            ArtifactGroup {
+                kind: "rpm",
+                paths: written,
+            },
+            ArtifactGroup {
+                kind: "evidence",
+                paths: evidence,
+            },
+        ],
         signing_key,
     )
 }

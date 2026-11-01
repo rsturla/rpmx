@@ -30,7 +30,7 @@ pub fn resolve(args: RootResolveArgs) -> Result<(), Error> {
         emit_lock(&lock, output)?;
         if args.output.is_some() {
             if args.json {
-                print_json(&lock)?;
+                print_json("root-resolve", &lock)?;
             } else {
                 println!(
                     "{} {} {} packages closure={}",
@@ -82,7 +82,7 @@ pub fn assemble(args: RootAssembleArgs) -> Result<(), Error> {
         emit_lock(&lock, output)?;
         if output.is_some() {
             if args.json {
-                print_json(&lock)?;
+                print_json("root-assemble", &lock)?;
             } else {
                 println!(
                     "{} {} {} packages root={} root_digest={}",
@@ -104,7 +104,10 @@ pub fn assemble(args: RootAssembleArgs) -> Result<(), Error> {
 pub fn digest(args: RootDigestArgs) -> Result<(), Error> {
     let digest = tree_digest(&args.root)?;
     if args.json {
-        let value = serde_json::json!({ "root_digest": digest });
+        let value = crate::commands::report::success(
+            "root-digest",
+            serde_json::json!({ "root_digest": digest }),
+        );
         println!("{value}");
     } else {
         println!("{digest}");
@@ -220,10 +223,17 @@ fn package_count(lock: &RootLock) -> usize {
     lock.packages.values().map(Vec::len).sum()
 }
 
-fn print_json(lock: &RootLock) -> Result<(), Error> {
-    let text = serde_json::to_string_pretty(lock)
-        .map_err(|error| Error::new(codes::CLI_006, error.to_string()))?;
-    println!("{text}");
+fn print_json(command: &'static str, lock: &RootLock) -> Result<(), Error> {
+    let value = crate::commands::report::success(
+        command,
+        serde_json::to_value(lock)
+            .map_err(|error| Error::new(codes::CLI_006, error.to_string()))?,
+    );
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&value)
+            .map_err(|error| Error::new(codes::CLI_006, error.to_string()))?
+    );
     Ok(())
 }
 

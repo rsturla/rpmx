@@ -395,6 +395,12 @@ pub mod codes {
         TEST_001 = "RPMX-TEST-001",
         /// Two tests in one cell have the same name.
         TEST_002 = "RPMX-TEST-002",
+        /// A test step failed or timed out.
+        TEST_003 = "RPMX-TEST-003",
+        /// A test declaration uses an unsupported stage or has no command.
+        TEST_004 = "RPMX-TEST-004",
+        /// Installed-stage tests need a test root, which needs a root lock.
+        TEST_005 = "RPMX-TEST-005",
         /// A source-assembly tool uses a digest algorithm other than sha512.
         TOOL_001 = "RPMX-TOOL-001",
         /// A source-assembly tool has a malformed sha512 digest.
@@ -446,6 +452,15 @@ impl Error {
     pub fn with_location(mut self, line: Option<usize>, column: Option<usize>) -> Self {
         self.line = line;
         self.column = column;
+        self
+    }
+
+    /// Reclassify an error that escaped from a later stage.
+    ///
+    /// A sandbox step failure during a test is a test failure, not a build
+    /// failure, even though both surface as `RPMX-SANDBOX-002`.
+    pub fn with_code(mut self, code: Code) -> Self {
+        self.code = code;
         self
     }
 }
