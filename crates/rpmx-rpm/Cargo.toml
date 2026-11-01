@@ -10,7 +10,6 @@ pgp.workspace = true
 rand.workspace = true
 flate2 = "1"
 sha2.workspace = true
-tar.workspace = true
 zstd = "0.14"
 rpmx-core = { path = "../rpmx-core" }
 serde_json.workspace = true

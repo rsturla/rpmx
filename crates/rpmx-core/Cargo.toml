@@ -19,5 +19,3 @@ goblin.workspace = true
 zstd = "0.14"
 tempfile = "3"
 
-[dev-dependencies]
-serde_yaml_ng.workspace = true

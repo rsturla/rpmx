@@ -249,11 +249,11 @@ impl Profile {
     }
 }
 
-/// Normalize an architecture name to the RPM spelling used in NEVRAs.
 pub fn default_sbom() -> bool {
     true
 }
 
+/// Normalize an architecture name to the RPM spelling used in NEVRAs.
 pub fn normalize_arch(arch: &str) -> Result<&'static str> {
     crate::arch::Arch::parse(arch)
         .map(crate::arch::Arch::as_str)
