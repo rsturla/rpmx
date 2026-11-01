@@ -1171,9 +1171,9 @@ The writer options should be evaluated in M1:
 - `librpmbuild` bindings, if they expose source-package construction without a spec;
 - a minimal writer for the source header + compressed payload.
 
-The spike in [`spikes/01-native-srpm`](../spikes/01-native-srpm/README.md) answered this for `rpm` 0.30.2: the crate writes a readable, digest-valid package, but marks every package binary. A 12-line patch that sets `SOURCEPACKAGE=1` and omits `SOURCERPM` is enough for RPM 6 to accept it as a source package and for `rpm2cpio` to extract it. The production writer still has to set the real build architecture and normalise payload paths; deriving "source" from `arch: src` is a spike shortcut, not the design.
+The spike in [`spikes/01-native-srpm`](../../spikes/01-native-srpm/README.md) answered this for `rpm` 0.30.2: the crate writes a readable, digest-valid package, but marks every package binary. A 12-line patch that sets `SOURCEPACKAGE=1` and omits `SOURCERPM` is enough for RPM 6 to accept it as a source package and for `rpm2cpio` to extract it. The production writer still has to set the real build architecture and normalise payload paths; deriving "source" from `arch: src` is a spike shortcut, not the design.
 
-The binary spike in [`spikes/02-native-binary`](../spikes/02-native-binary/README.md) confirms the same crate can produce an installable binary RPM, but its `SOURCERPM` is hardcoded to `(none)`. The production writer must set the actual SRPM NEVRA, or rebuild traceability breaks.
+The binary spike in [`spikes/02-native-binary`](../../spikes/02-native-binary/README.md) confirms the same crate can produce an installable binary RPM, but its `SOURCERPM` is hardcoded to `(none)`. The production writer must set the actual SRPM NEVRA, or rebuild traceability breaks.
 
 If none can produce a valid source package without a spec, the writer milestone is blocked; there is no spec-based fallback.
 

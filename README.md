@@ -228,7 +228,7 @@ Basic auth uses `auth.username` and `auth.password`. The password must be an
 Proxy credentials use `auth.proxy`, `auth.proxy-username` and
 `auth.proxy-password`.
 
-Credential files are copied into a private resolver directory, mounted
+Credential files are copied into a private temporary directory, mounted
 read-only into the resolver container, and removed when resolution finishes.
 They are never mounted into the build sandbox, which has no network. Repository
 URLs must not embed a user name or password; use the `auth` block instead.
@@ -362,22 +362,17 @@ explicit escape hatch.
 
 ## Documentation
 
-- [`docs/00-design-study.md`](docs/00-design-study.md) — the design study and
-  rationale.
-- [`docs/03-design.md`](docs/03-design.md) — the detailed model, CLI and
-  semantics.
-- [`docs/06-build-inputs.md`](docs/06-build-inputs.md) — sources, CAS and
-  source assembly.
-- [`docs/07-srpm-first.md`](docs/07-srpm-first.md) — the SRPM-first build
-  model.
-- [`docs/09-sandboxing.md`](docs/09-sandboxing.md) — the sandbox contract.
-- [`docs/14-build-root.md`](docs/14-build-root.md) — root resolution and
-  assembly.
-- [`docs/15-ux-audit.md`](docs/15-ux-audit.md) — UX audit against Melange,
-  with prioritized proposals.
-- [`docs/16-usage.md`](docs/16-usage.md) — detailed day-to-day usage, recipe
-  reference and troubleshooting.
+Usage:
+
+- [`docs/usage/`](docs/usage/) — start here: getting started, recipe reference,
+  profiles and roots, building, testing, debugging and troubleshooting.
 - [`examples/README.md`](examples/README.md) — the tested example corpus.
+
+Contributing and design:
+
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) — build/test commands and design rules.
+- [`docs/contributing/`](docs/contributing/) — the design study, format
+  choices, build model, sandbox contract and the UX audit against Melange.
 
 ## License
 

@@ -10,7 +10,7 @@ The short answer:
 
 Working name for the tool: **`rpmx`**. Working name for the recipe: **`package.yaml`**. Both are placeholders; the design does not depend on the names.
 
-> **Surface syntax note.** The first draft used TOML. It is typed and easy to parse, but the `curl` example showed that TOML's array-of-tables and inline-table syntax fight the package tree. The recommendation is now **strict YAML 1.2** for the human-facing recipe, with JSON for the generated lock. YAML and JSON are first-class codecs over one canonical model; TOML and KDL can be supported as import/export converters without becoming separate authoring surfaces. See [`docs/05-format-choice.md`](05-format-choice.md) and [`examples/curl/package.yaml`](../examples/curl/package.yaml). The TOML example remains only as a comparison.
+> **Surface syntax note.** The first draft used TOML. It is typed and easy to parse, but the `curl` example showed that TOML's array-of-tables and inline-table syntax fight the package tree. The recommendation is now **strict YAML 1.2** for the human-facing recipe, with JSON for the generated lock. YAML and JSON are first-class codecs over one canonical model; TOML and KDL can be supported as import/export converters without becoming separate authoring surfaces. See [`docs/05-format-choice.md`](05-format-choice.md) and [`examples/curl/package.yaml`](../../examples/curl/package.yaml). The TOML example remains only as a comparison.
 
 ## What is here
 
@@ -30,26 +30,26 @@ Working name for the tool: **`rpmx`**. Working name for the recipe: **`package.y
 | [`docs/12-templates.md`](12-templates.md) | The closed template scope: package identity, profile, matrix cell and user variables, expansion order, escaping and validation. |
 | [`docs/13-pipelines.md`](13-pipelines.md) | The build pipeline contract: named steps and bundles, typed inputs, `needs`, inline `argv`/`runs`, lock entries and plan output. |
 | [`docs/14-build-root.md`](14-build-root.md) | Build-root resolution and assembly: dnf in a rootless container, lock shape, offline assembly and open questions. |
-| [`examples/README.md`](../examples/README.md) | Index of the worked examples. |
-| [`examples/curl/package.yaml`](../examples/curl/package.yaml) | The same recipe in the proposed human-facing YAML syntax. |
-| [`examples/curl/package.toml`](../examples/curl/package.toml) | The provisional TOML version, kept for comparison only. |
-| [`examples/curl/curl.spec`](../examples/curl/curl.spec) | The same package as a conventional spec, for comparison. Not a complete production spec. |
-| [`examples/curl/plan.md`](../examples/curl/plan.md) | A worked elaboration from recipe to build plan and output manifest. |
-| [`examples/hello-go/package.yaml`](../examples/hello-go/package.yaml) | A Go package pulled from a module proxy, vendored, and rebuilt from an SRPM. |
-| [`examples/go-bump/package.yaml`](../examples/go-bump/package.yaml) | CVE remediation with targeted Go module bumps via omnibump in source assembly. |
-| [`examples/libfoo/package.yaml`](../examples/libfoo/package.yaml) | Deterministic generated source in the source-assembly stage. |
-| [`examples/python-matrix/package.yaml`](../examples/python-matrix/package.yaml) | A Python library built as a matrix across Python 3.10–3.12, with per-cell SRPMs and outputs. |
-| [`examples/c-hello/package.yaml`](../examples/c-hello/package.yaml) | A tested C fixture built with the `make` step; used to verify symlinks and the reusable pipeline. |
-| [`examples/zstd/package.yaml`](../examples/zstd/package.yaml) | A tested real package: zstd as `libzstd`, `libzstd-devel` and `zstd`, rebuilt byte-identically from a locked root. |
-| [`examples/libgreet/package.yaml`](../examples/libgreet/package.yaml) | A tested shared library with a devel subpackage, pkgconfig metadata and an installed test that compiles a consumer. |
-| [`examples/zlib/package.yaml`](../examples/zlib/package.yaml) | A tested autotools library with a devel split. |
-| [`examples/xz/package.yaml`](../examples/xz/package.yaml) | A tested autotools package with `xz-libs`, `xz-devel`, `xz` and versioned symbol provides. |
-| [`examples/lua/package.yaml`](../examples/lua/package.yaml) | A tested Makefile-based interpreter package. |
-| [`examples/jq/package.yaml`](../examples/jq/package.yaml) | A tested autotools package with a system library dependency and a JSON CLI test. |
-| [`examples/pyhello/package.yaml`](../examples/pyhello/package.yaml) | A tested pure-Python noarch wheel package with separately resolved test dependencies. |
-| [`examples/hello-daemon/package.yaml`](../examples/hello-daemon/package.yaml) | A tested systemd service with sysusers/tmpfiles, scriptlets and `%config(noreplace)` upgrade semantics. |
-| [`examples/python-matrix/plan.md`](../examples/python-matrix/plan.md) | Worked plan for the matrix example: expansion, per-cell dependencies, lock entries and naming. |
-| [`spikes/README.md`](../spikes/README.md) | Runnable prototypes that test the riskiest claims: native SRPM, native binary RPM, and the bwrap sandbox. |
+| [`examples/README.md`](../../examples/README.md) | Index of the worked examples. |
+| [`examples/curl/package.yaml`](../../examples/curl/package.yaml) | The same recipe in the proposed human-facing YAML syntax. |
+| [`examples/curl/package.toml`](../../examples/curl/package.toml) | The provisional TOML version, kept for comparison only. |
+| [`examples/curl/curl.spec`](../../examples/curl/curl.spec) | The same package as a conventional spec, for comparison. Not a complete production spec. |
+| [`examples/curl/plan.md`](../../examples/curl/plan.md) | A worked elaboration from recipe to build plan and output manifest. |
+| [`examples/hello-go/package.yaml`](../../examples/hello-go/package.yaml) | A Go package pulled from a module proxy, vendored, and rebuilt from an SRPM. |
+| [`examples/go-bump/package.yaml`](../../examples/go-bump/package.yaml) | CVE remediation with targeted Go module bumps via omnibump in source assembly. |
+| [`examples/libfoo/package.yaml`](../../examples/libfoo/package.yaml) | Deterministic generated source in the source-assembly stage. |
+| [`examples/python-matrix/package.yaml`](../../examples/python-matrix/package.yaml) | A Python library built as a matrix across Python 3.10–3.12, with per-cell SRPMs and outputs. |
+| [`examples/c-hello/package.yaml`](../../examples/c-hello/package.yaml) | A tested C fixture built with the `make` step; used to verify symlinks and the reusable pipeline. |
+| [`examples/zstd/package.yaml`](../../examples/zstd/package.yaml) | A tested real package: zstd as `libzstd`, `libzstd-devel` and `zstd`, rebuilt byte-identically from a locked root. |
+| [`examples/libgreet/package.yaml`](../../examples/libgreet/package.yaml) | A tested shared library with a devel subpackage, pkgconfig metadata and an installed test that compiles a consumer. |
+| [`examples/zlib/package.yaml`](../../examples/zlib/package.yaml) | A tested autotools library with a devel split. |
+| [`examples/xz/package.yaml`](../../examples/xz/package.yaml) | A tested autotools package with `xz-libs`, `xz-devel`, `xz` and versioned symbol provides. |
+| [`examples/lua/package.yaml`](../../examples/lua/package.yaml) | A tested Makefile-based interpreter package. |
+| [`examples/jq/package.yaml`](../../examples/jq/package.yaml) | A tested autotools package with a system library dependency and a JSON CLI test. |
+| [`examples/pyhello/package.yaml`](../../examples/pyhello/package.yaml) | A tested pure-Python noarch wheel package with separately resolved test dependencies. |
+| [`examples/hello-daemon/package.yaml`](../../examples/hello-daemon/package.yaml) | A tested systemd service with sysusers/tmpfiles, scriptlets and `%config(noreplace)` upgrade semantics. |
+| [`examples/python-matrix/plan.md`](../../examples/python-matrix/plan.md) | Worked plan for the matrix example: expansion, per-cell dependencies, lock entries and naming. |
+| [`spikes/README.md`](../../spikes/README.md) | Runnable prototypes that test the riskiest claims: native SRPM, native binary RPM, and the bwrap sandbox. |
 
 ## The eleven findings that shaped the design
 

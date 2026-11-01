@@ -189,7 +189,7 @@ It also makes `rpmx` a bootstrap dependency. That has to be explicit:
 - the bootstrap path is documented and audited;
 - downstreams that require stock `rpmbuild` are not supported.
 
-**Implementation note:** native SRPM writing is an early milestone, not a late optimization. M1 evaluates `rpm-rs`/`rpm` `PackageBuilder`, `librpmbuild` bindings and a minimal header+payload writer. There is no spec fallback: if none can construct a valid source package without a spec, the milestone is blocked. The binary writer is a release gate, not a later optimization. [`spikes/01-native-srpm`](../spikes/01-native-srpm/README.md) shows `rpm` 0.30.2 works with a small tag patch; [`spikes/02-native-binary`](../spikes/02-native-binary/README.md) shows the same for installable binary packages.
+**Implementation note:** native SRPM writing is an early milestone, not a late optimization. M1 evaluates `rpm-rs`/`rpm` `PackageBuilder`, `librpmbuild` bindings and a minimal header+payload writer. There is no spec fallback: if none can construct a valid source package without a spec, the milestone is blocked. The binary writer is a release gate, not a later optimization. [`spikes/01-native-srpm`](../../spikes/01-native-srpm/README.md) shows `rpm` 0.30.2 works with a small tag patch; [`spikes/02-native-binary`](../../spikes/02-native-binary/README.md) shows the same for installable binary packages.
 
 ## 4. Building from an SRPM
 

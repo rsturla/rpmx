@@ -160,7 +160,7 @@ and the build root is not resolved or digest-pinned yet.
 
 `/sys` must be a fresh or empty mount, not the host's. `--unshare-all` unshares
 the network namespace, but a host `/sys` bind still exposes the host's interface
-names (confirmed in [`spikes/03-bwrap`](../spikes/03-bwrap/README.md)). Mount
+names (confirmed in [`spikes/03-bwrap`](../../spikes/03-bwrap/README.md)). Mount
 `--tmpfs /sys` or use a guest root that already has its own. Loopback remains
 available and reachable, which installed tests need; external egress is blocked.
 

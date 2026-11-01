@@ -154,7 +154,7 @@ The recipe becomes `package.yaml`. The lock becomes `package.lock.json` (machine
 
 ### The same recipe, readable
 
-See [`examples/curl/package.yaml`](../examples/curl/package.yaml) for the full version. A representative slice:
+See [`examples/curl/package.yaml`](../../examples/curl/package.yaml) for the full version. A representative slice:
 
 ```yaml
 package:

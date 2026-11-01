@@ -3,6 +3,11 @@
 `rpmx` is an early prototype. Small, focused changes with evidence are much
 more useful than broad rewrites.
 
+User-facing instructions live in [`docs/usage/`](docs/usage/). The design
+study, build model, sandbox contract and UX audit live in
+[`docs/contributing/`](docs/contributing/). Read the relevant design document
+before changing behaviour it describes.
+
 ## Build and test
 
 ```console
