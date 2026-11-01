@@ -10,6 +10,11 @@ mod render;
 use cli::Cli;
 
 fn main() -> ExitCode {
+    // Behave like a normal Unix filter when the reader closes the pipe.
+    #[cfg(unix)]
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
     let cli = Cli::parse();
     let json = cli.json();
     let command = cli.command_name();

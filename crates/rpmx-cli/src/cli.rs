@@ -19,6 +19,10 @@ impl Cli {
     /// Stable command name for machine-readable documents.
     pub fn command_name(&self) -> &'static str {
         match &self.command {
+            Command::Explain(_) => "explain",
+            Command::Steps { .. } => "steps",
+            Command::Doctor(_) => "doctor",
+            Command::Init(_) => "init",
             Command::Lint(_) => "lint",
             Command::Lock(_) => "lock",
             Command::Plan(_) => "plan",
@@ -42,6 +46,10 @@ impl Cli {
             Command::Keygen(args) => args.json,
             Command::Sign(args) => args.json,
             Command::Repo(args) => args.json,
+            Command::Explain(args) => args.json,
+            Command::Steps { command } => command.json(),
+            Command::Doctor(args) => args.json,
+            Command::Init(_) => false,
             Command::Lint(args) => args.json,
             Command::Lock(_) => false,
             Command::Plan(args) => args.json,
@@ -82,6 +90,23 @@ impl RootCommand {
 }
 
 #[derive(Debug, Subcommand)]
+pub enum StepsCommand {
+    /// List every built-in step.
+    List(crate::commands::StepsListArgs),
+    /// Print one built-in step definition.
+    Show(crate::commands::StepsShowArgs),
+}
+
+impl StepsCommand {
+    pub fn json(&self) -> bool {
+        match self {
+            StepsCommand::List(args) => args.json,
+            StepsCommand::Show(args) => args.json,
+        }
+    }
+}
+
+#[derive(Debug, Subcommand)]
 pub enum CacheCommand {
     /// Remove cached payloads not referenced by the given locks and recipes.
     Gc(crate::commands::GcArgs),
@@ -111,6 +136,17 @@ pub struct PolicyArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
+    /// Explain a resolved policy, root, step list, matrix or dependency set.
+    Explain(crate::commands::ExplainArgs),
+    /// Inspect the built-in step library.
+    Steps {
+        #[command(subcommand)]
+        command: StepsCommand,
+    },
+    /// Check the host features rpmx depends on.
+    Doctor(crate::commands::DoctorArgs),
+    /// Create a package that builds on the first try.
+    Init(crate::commands::InitArgs),
     /// Validate a recipe and expand its matrix.
     Lint(crate::commands::LintArgs),
     /// Write or check the package lock.

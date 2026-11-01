@@ -138,6 +138,11 @@ const BUILTINS: &[(&str, &str)] = &[
     ),
 ];
 
+/// Every built-in step name, in declaration order.
+pub fn builtin_names() -> impl Iterator<Item = &'static str> {
+    BUILTINS.iter().map(|(name, _)| *name)
+}
+
 pub fn builtin_source(name: &str) -> Option<&'static str> {
     BUILTINS
         .iter()

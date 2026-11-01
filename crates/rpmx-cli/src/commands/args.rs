@@ -178,6 +178,65 @@ pub struct LintArgs {
 }
 
 #[derive(Debug, clap::Args)]
+pub struct ExplainArgs {
+    /// What to explain.
+    #[arg(value_parser = ["policy", "root", "steps", "matrix", "requires", "files"])]
+    pub topic: String,
+    /// Recipe to explain (default: ./package.yaml).
+    #[arg(default_value = "package.yaml")]
+    pub file: PathBuf,
+    /// Target architecture used for templates.
+    #[arg(long, default_value = rpmx_core::arch::native_arch())]
+    pub arch: String,
+    #[command(flatten)]
+    pub policy: crate::cli::PolicyArgs,
+    /// Emit machine-readable output.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct StepsListArgs {
+    /// Emit machine-readable output.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct StepsShowArgs {
+    /// Step name, such as cmake/configure.
+    pub name: String,
+    /// Emit machine-readable output.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct DoctorArgs {
+    /// Emit machine-readable output.
+    #[arg(long)]
+    pub json: bool,
+    /// Exit non-zero when a check fails.
+    #[arg(long)]
+    pub strict: bool,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct InitArgs {
+    /// Directory to create (default: the current directory).
+    pub directory: Option<PathBuf>,
+    /// Package template.
+    #[arg(long, default_value = "c", value_parser = ["c", "python", "metapackage"])]
+    pub template: String,
+    /// Profile name written to profiles/<name>.yaml.
+    #[arg(long, default_value = "fedora-44")]
+    pub profile: String,
+    /// Overwrite files that already exist.
+    #[arg(long)]
+    pub force: bool,
+}
+
+#[derive(Debug, clap::Args)]
 pub struct TestArgs {
     /// Recipe to test (default: ./package.yaml).
     #[arg(default_value = "package.yaml")]

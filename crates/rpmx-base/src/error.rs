@@ -123,6 +123,8 @@ pub mod codes {
         FETCH_007 = "RPMX-FETCH-007",
         /// A recipe file cannot be read from disk.
         IO_001 = "RPMX-IO-001",
+        /// An init target already exists and --force was not given.
+        INIT_001 = "RPMX-INIT-001",
         /// The recipe has one or more lint errors.
         LINT_001 = "RPMX-LINT-001",
         /// A license is not a syntactically valid SPDX expression.

@@ -9,6 +9,13 @@ pub fn run(cli: Cli) -> Result<(), Error> {
         command,
     } = cli;
     match command {
+        Command::Explain(args) => commands::explain::run(args, pipeline_dir.as_deref()),
+        Command::Steps { command } => match command {
+            cli::StepsCommand::List(args) => commands::steps::list(args),
+            cli::StepsCommand::Show(args) => commands::steps::show(args),
+        },
+        Command::Doctor(args) => commands::doctor::run(args),
+        Command::Init(args) => commands::init::run(args),
         Command::Lint(args) => commands::lint::run(args, pipeline_dir.as_deref()),
         Command::Lock(args) => commands::lock::run(args, pipeline_dir.as_deref()),
         Command::Plan(args) => commands::plan::run(args, pipeline_dir.as_deref()),

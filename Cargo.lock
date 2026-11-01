@@ -1813,6 +1813,7 @@ name = "rpmx"
 version = "0.0.0"
 dependencies = [
  "clap",
+ "libc",
  "rpmx-core",
  "rpmx-rpm",
  "serde",
