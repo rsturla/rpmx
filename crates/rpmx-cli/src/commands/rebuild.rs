@@ -6,8 +6,7 @@ use rpmx_core::binary_package::{
 };
 use rpmx_core::error::codes;
 use rpmx_core::plan::PlannedStep;
-use rpmx_core::profile::normalize_arch;
-use rpmx_core::root::load_lock;
+use rpmx_core::root::{load_lock, RootSelection};
 use rpmx_core::sandbox::Sandbox;
 use rpmx_core::sbom::Generator;
 use rpmx_core::srpm::load_lock_file;
@@ -16,7 +15,7 @@ use rpmx_core::Error;
 use rpmx_rpm::extract::extract_srpm;
 use rpmx_rpm::{write_binary_rpm, BinaryDirectory, BinaryFile, BinarySpec};
 
-use crate::commands::{digest_root, load_plan, reconcile_policy, PlanPolicy, RebuildArgs};
+use crate::commands::{load_plan, reconcile_policy, PlanPolicy, RebuildArgs};
 
 pub fn run(args: RebuildArgs<'_>) -> Result<Vec<PathBuf>, Error> {
     let RebuildArgs {
@@ -188,43 +187,8 @@ pub fn run(args: RebuildArgs<'_>) -> Result<Vec<PathBuf>, Error> {
                 locked_packages.insert(package.name.clone());
             }
         }
-        let expected = lock.root_digest.as_deref().ok_or_else(|| {
-            Error::new(
-                codes::ROOT_016,
-                "the root lock has no root_digest; run `rpmx root assemble` first",
-            )
-        })?;
-        let wanted = normalize_arch(arch)?;
-        let matches = lock
-            .archs
-            .iter()
-            .any(|candidate| normalize_arch(candidate).ok() == Some(wanted));
-        if !matches {
-            return Err(Error::new(
-                codes::ROOT_016,
-                format!(
-                    "root lock is for {}, but --arch is {wanted}",
-                    lock.archs.join(", ")
-                ),
-            ));
-        }
-        let root_path = std::fs::canonicalize(root_path).map_err(|error| {
-            Error::new(
-                codes::ROOT_017,
-                format!("cannot resolve {}: {error}", root_path.display()),
-            )
-        })?;
-        let actual = digest_root(&root_path)?;
-        if actual != expected {
-            return Err(Error::new(
-                codes::ROOT_017,
-                format!(
-                    "root digest mismatch: lock records {expected}, {} is {actual}",
-                    root_path.display()
-                ),
-            ));
-        }
-        Some(root_path)
+        let selection = RootSelection::verify(lock, root_path, arch)?;
+        Some(selection.path)
     } else {
         if root.is_some() {
             return Err(Error::new(

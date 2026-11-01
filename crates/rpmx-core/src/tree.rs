@@ -3,6 +3,7 @@ use std::io::Read;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
+use std::process::Command;
 
 use sha2::{Digest, Sha512};
 
@@ -149,4 +150,47 @@ fn is_skipped(relative: &str) -> bool {
                 .strip_prefix(prefix)
                 .is_some_and(|rest| rest.starts_with('/'))
     })
+}
+
+/// Digest a root, re-entering a user namespace when rpm left mode-000 trees
+/// behind. The fallback re-executes this binary so the walk still sees root.
+pub fn digest_root(root: &Path) -> Result<String> {
+    match tree_digest(root) {
+        Ok(digest) => Ok(digest),
+        Err(direct) => {
+            let executable = std::env::current_exe().map_err(|error| {
+                Error::new(
+                    codes::ROOT_014,
+                    format!("cannot locate this executable: {error}"),
+                )
+            })?;
+            let attempts = [
+                Command::new("unshare")
+                    .arg("-Ur")
+                    .arg("--")
+                    .arg(&executable)
+                    .arg("root")
+                    .arg("digest")
+                    .arg(root)
+                    .output(),
+                Command::new("podman")
+                    .arg("unshare")
+                    .arg("--")
+                    .arg(&executable)
+                    .arg("root")
+                    .arg("digest")
+                    .arg(root)
+                    .output(),
+            ];
+            for output in attempts.into_iter().flatten() {
+                if output.status.success() {
+                    let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                    if text.starts_with("sha512:") {
+                        return Ok(text);
+                    }
+                }
+            }
+            Err(direct)
+        }
+    }
 }

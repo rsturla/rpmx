@@ -1,9 +1,10 @@
 use rpmx_core::error::codes;
+use rpmx_core::root::RootSelection;
 use rpmx_core::source::{assemble, SourceOptions};
 use rpmx_core::Error;
 
 use crate::commands::fetch::default_cache;
-use crate::commands::{digest_root, load_plan, SourceArgs};
+use crate::commands::{load_plan, SourceArgs};
 
 pub fn run(args: SourceArgs<'_>) -> Result<std::path::PathBuf, Error> {
     let SourceArgs {
@@ -59,45 +60,9 @@ pub fn run(args: SourceArgs<'_>) -> Result<std::path::PathBuf, Error> {
         ));
     }
 
-    let mut selected_lock: Option<rpmx_core::root::RootLock> = None;
-    let selected_root = match (root_lock, root) {
+    let selected = match (root_lock, root) {
         (Some(lock_path), Some(root_path)) => {
-            let lock = rpmx_core::root::load_lock(lock_path)?;
-            let expected = lock.root_digest.as_deref().ok_or_else(|| {
-                Error::new(
-                    codes::ROOT_016,
-                    "the source root lock has no root_digest; run `rpmx root assemble` first",
-                )
-            })?;
-            let wanted = rpmx_core::profile::normalize_arch(arch)?;
-            if !lock
-                .archs
-                .iter()
-                .any(|arch| rpmx_core::profile::normalize_arch(arch).ok() == Some(wanted))
-            {
-                return Err(Error::new(
-                    codes::ROOT_016,
-                    format!("source root lock is for {}", lock.archs.join(", ")),
-                ));
-            }
-            let root_path = std::fs::canonicalize(root_path).map_err(|error| {
-                Error::new(
-                    codes::ROOT_017,
-                    format!("cannot resolve {}: {error}", root_path.display()),
-                )
-            })?;
-            let actual = digest_root(&root_path)?;
-            if actual != expected {
-                return Err(Error::new(
-                    codes::ROOT_017,
-                    format!(
-                        "root digest mismatch: lock records {expected}, {} is {actual}",
-                        root_path.display()
-                    ),
-                ));
-            }
-            selected_lock = Some(lock);
-            Some(root_path)
+            Some(RootSelection::load(lock_path, root_path, arch)?)
         }
         (Some(_), None) => {
             return Err(Error::new(
@@ -113,6 +78,7 @@ pub fn run(args: SourceArgs<'_>) -> Result<std::path::PathBuf, Error> {
         }
         (None, None) => None,
     };
+    let selected_root = selected.as_ref().map(|selection| selection.path.as_path());
 
     let snapshot = assemble(SourceOptions {
         recipe: &recipe,
@@ -127,13 +93,13 @@ pub fn run(args: SourceArgs<'_>) -> Result<std::path::PathBuf, Error> {
         source_date_epoch,
         jobs,
         step_timeout,
-        root: selected_root.as_deref(),
+        root: selected_root,
         runner,
         recipe_dir: file.parent().unwrap_or_else(|| std::path::Path::new(".")),
     })?;
 
-    if let Some(lock) = &selected_lock {
-        let text = serde_yaml_ng::to_string(lock)
+    if let Some(selection) = &selected {
+        let text = serde_yaml_ng::to_string(&selection.lock)
             .map_err(|error| Error::new(codes::CLI_006, error.to_string()))?;
         let path = output.join("source-root.lock.json");
         std::fs::write(&path, text).map_err(|error| {

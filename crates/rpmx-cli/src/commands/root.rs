@@ -6,12 +6,12 @@ use rpmx_core::profile::load_profile;
 use rpmx_core::root::{
     assemble as assemble_root, load_lock, resolve_profile, write_lock, AssembleOptions, RootLock,
 };
-use rpmx_core::tree::tree_digest;
+use rpmx_core::tree::{digest_root, tree_digest};
 
 use rpmx_core::Error;
 
 use crate::commands::{
-    digest_root, RootAssembleArgs, RootDigestArgs, RootExportArgs, RootImportArgs, RootResolveArgs,
+    RootAssembleArgs, RootDigestArgs, RootExportArgs, RootImportArgs, RootResolveArgs,
 };
 
 pub fn resolve(args: RootResolveArgs<'_>) -> Result<(), Error> {

@@ -45,6 +45,78 @@ pub struct RootLock {
     pub builder: Option<LockedBuilder>,
 }
 
+impl RootLock {
+    /// The lock must describe the architecture being built.
+    pub fn require_target(&self, arch: &str) -> Result<()> {
+        let wanted = normalize_arch(arch)?;
+        if self
+            .archs
+            .iter()
+            .any(|candidate| normalize_arch(candidate).ok() == Some(wanted))
+        {
+            Ok(())
+        } else {
+            Err(Error::new(
+                codes::ROOT_016,
+                format!(
+                    "root lock is for {}, but --arch is {wanted}",
+                    self.archs.join(", ")
+                ),
+            ))
+        }
+    }
+
+    /// The lock must have an assembled root digest before it can be used.
+    pub fn require_digest(&self) -> Result<&str> {
+        self.root_digest.as_deref().ok_or_else(|| {
+            Error::new(
+                codes::ROOT_016,
+                "the root lock has no root_digest; run `rpmx root assemble` first",
+            )
+        })
+    }
+}
+
+/// A lock plus the verified assembled root it describes.
+pub struct RootSelection {
+    pub lock: RootLock,
+    pub path: std::path::PathBuf,
+    pub digest: String,
+}
+
+impl RootSelection {
+    pub fn verify(lock: &RootLock, root: &Path, arch: &str) -> Result<Self> {
+        lock.require_target(arch)?;
+        let expected = lock.require_digest()?;
+        let path = std::fs::canonicalize(root).map_err(|error| {
+            Error::new(
+                codes::ROOT_017,
+                format!("cannot resolve {}: {error}", root.display()),
+            )
+        })?;
+        let digest = crate::tree::digest_root(&path)?;
+        if digest != expected {
+            return Err(Error::new(
+                codes::ROOT_017,
+                format!(
+                    "root digest mismatch: lock records {expected}, {} is {digest}",
+                    path.display()
+                ),
+            ));
+        }
+        Ok(Self {
+            lock: lock.clone(),
+            path,
+            digest,
+        })
+    }
+
+    pub fn load(lock_path: &Path, root_path: &Path, arch: &str) -> Result<Self> {
+        let lock = load_lock(lock_path)?;
+        Self::verify(&lock, root_path, arch)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LockedBuilder {

@@ -1,9 +1,7 @@
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use rpmx_core::error::codes;
 use rpmx_core::profile::load_profile;
-use rpmx_core::tree::tree_digest;
 use rpmx_core::{
     load_recipe, normalize_dist_tag, plan_with_options, Error, Plan, PlanOptions, Recipe,
 };
@@ -336,49 +334,6 @@ pub struct RootImportArgs<'a> {
 
 /// Compute a root digest, re-entering the user namespace when package files are
 /// not readable by the caller.
-pub(crate) fn digest_root(root: &Path) -> Result<String, Error> {
-    match tree_digest(root) {
-        Ok(digest) => Ok(digest),
-        Err(direct) => {
-            let executable = std::env::current_exe().map_err(|error| {
-                Error::new(
-                    codes::ROOT_014,
-                    format!("cannot locate this executable: {error}"),
-                )
-            })?;
-            // util-linux first: it does not need podman. Fall back to podman's
-            // user namespace when the kernel or container policy blocks it.
-            let attempts = [
-                Command::new("unshare")
-                    .arg("-Ur")
-                    .arg("--")
-                    .arg(&executable)
-                    .arg("root")
-                    .arg("digest")
-                    .arg(root)
-                    .output(),
-                Command::new("podman")
-                    .arg("unshare")
-                    .arg("--")
-                    .arg(&executable)
-                    .arg("root")
-                    .arg("digest")
-                    .arg(root)
-                    .output(),
-            ];
-            for output in attempts.into_iter().flatten() {
-                if output.status.success() {
-                    let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                    if text.starts_with("sha512:") {
-                        return Ok(text);
-                    }
-                }
-            }
-            Err(direct)
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::{reconcile_policy, resolve_policy, PlanPolicy, PolicyInput};
