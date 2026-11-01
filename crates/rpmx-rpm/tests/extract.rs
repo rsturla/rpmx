@@ -1,10 +1,11 @@
 use std::fs;
 
+use rpmx_core::package_spec::{SourcePackageFile, SourcePackageSpec};
 use rpmx_rpm::extract::extract_srpm;
-use rpmx_rpm::{write_srpm, SrpmFile, SrpmSpec};
+use rpmx_rpm::write_srpm;
 
-fn spec() -> SrpmSpec {
-    SrpmSpec {
+fn spec() -> SourcePackageSpec {
+    SourcePackageSpec {
         name: "extract-demo".to_string(),
         version: "1.0".to_string(),
         release: "1".to_string(),
@@ -15,28 +16,28 @@ fn spec() -> SrpmSpec {
         description: "extract demo".to_string(),
         source_date_epoch: 1_700_000_000,
         files: vec![
-            SrpmFile {
+            SourcePackageFile {
                 path: "package.yaml".to_string(),
                 data: b"schema: 1\n".to_vec(),
                 mode: 0o644,
             },
-            SrpmFile {
+            SourcePackageFile {
                 path: "demo-1.0.tar.gz".to_string(),
                 data: b"source\n".to_vec(),
                 mode: 0o644,
             },
-            SrpmFile {
+            SourcePackageFile {
                 path: "package.lock.json".to_string(),
                 data: br#"{"schema":1,"steps":[{"name":"go/build","digest":"sha512:abc"}]}"#
                     .to_vec(),
                 mode: 0o644,
             },
-            SrpmFile {
+            SourcePackageFile {
                 path: "RPMX-MANIFEST.json".to_string(),
                 data: br#"{"schema":1,"source_date_epoch":1700000000}"#.to_vec(),
                 mode: 0o644,
             },
-            SrpmFile {
+            SourcePackageFile {
                 path: "RPMX-STEPS.json".to_string(),
                 data: br#"{"acme/strip":"name: acme/strip\n"}"#.to_vec(),
                 mode: 0o644,

@@ -1,10 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use rpmx_core::binary_package::{
-    prepare_binary_packages, BinaryPackageOptions, PreparedBinaryFile,
-};
+use rpmx_core::binary_package::{prepare_binary_packages, BinaryPackageOptions};
 use rpmx_core::error::codes;
+use rpmx_core::package_spec::BinaryPackageFile;
 use rpmx_core::plan::PlannedStep;
 use rpmx_core::root::{load_lock, RootSelection};
 use rpmx_core::sandbox::Sandbox;
@@ -13,7 +12,7 @@ use rpmx_core::srpm::load_lock_file;
 use rpmx_core::steps::validate_name;
 use rpmx_core::Error;
 use rpmx_rpm::extract::extract_srpm;
-use rpmx_rpm::{write_binary_rpm, BinaryDirectory, BinaryFile, BinarySpec};
+use rpmx_rpm::write_binary_rpm;
 
 use crate::commands::{load_plan, reconcile_policy, PlanPolicy, RebuildArgs};
 
@@ -326,7 +325,7 @@ pub fn run(args: RebuildArgs<'_>) -> Result<Vec<PathBuf>, Error> {
                 sources: &sbom_refs,
                 cpe: recipe.package.cpe.as_ref(),
             })?;
-            package.files.push(PreparedBinaryFile {
+            package.files.push(BinaryPackageFile {
                 path: format!(
                     "{}/{}-{}-{}.spdx.json",
                     rpmx_core::sbom::SBOM_DIR,
@@ -353,52 +352,7 @@ pub fn run(args: RebuildArgs<'_>) -> Result<Vec<PathBuf>, Error> {
             package.release.clone(),
             package.arch.clone(),
         ));
-        let spec = BinarySpec {
-            name: package.name,
-            version: package.version,
-            release: package.release,
-            epoch: package.epoch,
-            arch: package.arch,
-            summary: package.summary,
-            license: package.license,
-            description: package.description,
-            url: package.url,
-            source_rpm: package.source_rpm,
-            source_date_epoch: package.source_date_epoch,
-            files: package
-                .files
-                .into_iter()
-                .map(|file| BinaryFile {
-                    path: file.path,
-                    data: file.data,
-                    mode: file.mode,
-                    target: file.target,
-                    user: file.user,
-                    group: file.group,
-                    caps: file.caps,
-                    config: file.config,
-                    noreplace: file.noreplace,
-                    doc: file.doc,
-                    license: file.license,
-                })
-                .collect(),
-            directories: package
-                .directories
-                .into_iter()
-                .map(|directory| BinaryDirectory {
-                    path: directory.path,
-                    mode: directory.mode,
-                    user: directory.user,
-                    group: directory.group,
-                })
-                .collect(),
-            requires: package.requires,
-            provides: package.provides,
-            obsoletes: package.obsoletes,
-            conflicts: package.conflicts,
-            scriptlets: package.scriptlets,
-        };
-        write_binary_rpm(&spec, &path)?;
+        write_binary_rpm(&package, &path)?;
         if let Some(key) = &signing {
             rpmx_rpm::sign::sign_package(&path, key, signature_timestamp)?;
         }

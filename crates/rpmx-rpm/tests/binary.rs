@@ -1,10 +1,11 @@
 use std::fs;
 use std::process::Command;
 
-use rpmx_rpm::{write_binary_rpm, BinaryDirectory, BinaryFile, BinarySpec};
+use rpmx_core::package_spec::{BinaryPackageDirectory, BinaryPackageFile, BinaryPackageSpec};
+use rpmx_rpm::write_binary_rpm;
 
-fn spec() -> BinarySpec {
-    BinarySpec {
+fn spec() -> BinaryPackageSpec {
+    BinaryPackageSpec {
         name: "demo-bin".to_string(),
         version: "1.0".to_string(),
         release: "1".to_string(),
@@ -17,7 +18,7 @@ fn spec() -> BinarySpec {
         source_rpm: "demo-bin-1.0-1.src.rpm".to_string(),
         source_date_epoch: 1_700_000_000,
         files: vec![
-            BinaryFile {
+            BinaryPackageFile {
                 path: "/usr/bin/demo-bin".to_string(),
                 data: b"#!/bin/sh\necho demo\n".to_vec(),
                 mode: 0o755,
@@ -30,7 +31,7 @@ fn spec() -> BinarySpec {
                 doc: false,
                 license: false,
             },
-            BinaryFile {
+            BinaryPackageFile {
                 path: "/usr/bin/demo-alias".to_string(),
                 data: Vec::new(),
                 mode: 0o777,
@@ -43,7 +44,7 @@ fn spec() -> BinarySpec {
                 doc: false,
                 license: false,
             },
-            BinaryFile {
+            BinaryPackageFile {
                 path: "/etc/demo.conf".to_string(),
                 data: b"setting=1\n".to_vec(),
                 mode: 0o644,
@@ -57,7 +58,7 @@ fn spec() -> BinarySpec {
                 license: false,
             },
         ],
-        directories: vec![BinaryDirectory {
+        directories: vec![BinaryPackageDirectory {
             path: "/var/lib/demo".to_string(),
             mode: 0o750,
             user: Some("demo".to_string()),

@@ -1,11 +1,12 @@
 use std::fs;
 use std::process::Command;
 
+use rpmx_core::package_spec::{BinaryPackageFile, BinaryPackageSpec};
 use rpmx_rpm::sign::{generate_key, load_key, sign_package, KeygenOptions};
-use rpmx_rpm::{write_binary_rpm, BinaryFile, BinarySpec};
+use rpmx_rpm::write_binary_rpm;
 
-fn spec() -> BinarySpec {
-    BinarySpec {
+fn spec() -> BinaryPackageSpec {
+    BinaryPackageSpec {
         name: "signed-demo".to_string(),
         version: "1.0".to_string(),
         release: "1".to_string(),
@@ -17,7 +18,7 @@ fn spec() -> BinarySpec {
         url: None,
         source_rpm: "signed-demo-1.0-1.src.rpm".to_string(),
         source_date_epoch: 1_700_000_000,
-        files: vec![BinaryFile {
+        files: vec![BinaryPackageFile {
             path: "/usr/share/signed-demo".to_string(),
             data: b"hello\n".to_vec(),
             mode: 0o644,

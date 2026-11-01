@@ -2,7 +2,7 @@ use rpmx_core::error::codes;
 use rpmx_core::root::load_lock;
 use rpmx_core::source_package::{prepare_source_packages, SourcePackageOptions};
 use rpmx_core::Error;
-use rpmx_rpm::{write_srpm, SrpmFile, SrpmSpec};
+use rpmx_rpm::write_srpm;
 
 use crate::commands::{load_plan, reconcile_policy, step_root, PlanPolicy, SrpmArgs};
 
@@ -95,27 +95,7 @@ pub fn run(args: SrpmArgs<'_>) -> Result<Vec<std::path::PathBuf>, Error> {
             "{}-{}-{}.src.rpm",
             package.name, package.version, package.release
         ));
-        let spec = SrpmSpec {
-            name: package.name,
-            version: package.version,
-            release: package.release,
-            epoch: package.epoch,
-            arch: arch.to_string(),
-            summary: package.summary,
-            license: package.license,
-            description: package.description,
-            source_date_epoch,
-            files: package
-                .files
-                .into_iter()
-                .map(|file| SrpmFile {
-                    path: file.path,
-                    data: file.data,
-                    mode: file.mode,
-                })
-                .collect(),
-        };
-        write_srpm(&spec, &path)?;
+        write_srpm(&package, &path)?;
         if let Some(key) = &signing {
             rpmx_rpm::sign::sign_package(&path, key, signature_timestamp)?;
         }

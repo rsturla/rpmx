@@ -9,6 +9,7 @@ pub mod hash;
 pub mod matrix;
 pub mod model;
 pub mod package;
+pub mod package_spec;
 pub mod pkgmanifest;
 pub mod plan;
 pub mod profile;

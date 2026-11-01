@@ -3,29 +3,11 @@ use std::path::Path;
 
 use crate::error::{codes, Error, Result};
 use crate::model::Recipe;
+use crate::package_spec::{SourcePackageFile, SourcePackageSpec};
 use crate::plan::{Plan, PlannedStep};
 use crate::root::RootLock;
 use crate::srpm::{self, LockStep};
 use crate::steps;
-
-#[derive(Debug, Clone)]
-pub struct PreparedSourceFile {
-    pub path: String,
-    pub data: Vec<u8>,
-    pub mode: u32,
-}
-
-#[derive(Debug, Clone)]
-pub struct PreparedSourcePackage {
-    pub name: String,
-    pub version: String,
-    pub release: String,
-    pub epoch: Option<u32>,
-    pub summary: String,
-    pub license: String,
-    pub description: String,
-    pub files: Vec<PreparedSourceFile>,
-}
 
 pub struct SourcePackageOptions<'a> {
     pub recipe: &'a Recipe,
@@ -41,7 +23,7 @@ pub struct SourcePackageOptions<'a> {
 
 pub fn prepare_source_packages(
     options: SourcePackageOptions<'_>,
-) -> Result<Vec<PreparedSourcePackage>> {
+) -> Result<Vec<SourcePackageSpec>> {
     let snapshot = srpm::snapshot_dir(options.sources)?;
     for source in &snapshot {
         if matches!(
@@ -114,17 +96,17 @@ pub fn prepare_source_packages(
         )?;
 
         let mut files = vec![
-            PreparedSourceFile {
+            SourcePackageFile {
                 path: "package.yaml".to_string(),
                 data: options.recipe_bytes.to_vec(),
                 mode: 0o644,
             },
-            PreparedSourceFile {
+            SourcePackageFile {
                 path: "package.lock.json".to_string(),
                 data: lock.into_bytes(),
                 mode: 0o644,
             },
-            PreparedSourceFile {
+            SourcePackageFile {
                 path: "RPMX-MANIFEST.json".to_string(),
                 data: manifest.into_bytes(),
                 mode: 0o644,
@@ -132,21 +114,21 @@ pub fn prepare_source_packages(
         ];
         files.extend(step_files.iter().cloned());
         if let Some((text, _)) = &root_lock {
-            files.push(PreparedSourceFile {
+            files.push(SourcePackageFile {
                 path: "root.lock.json".to_string(),
                 data: text.as_bytes().to_vec(),
                 mode: 0o644,
             });
         }
         for source in &snapshot {
-            files.push(PreparedSourceFile {
+            files.push(SourcePackageFile {
                 path: source.path.clone(),
                 data: source.data.clone(),
                 mode: source.mode,
             });
         }
 
-        packages.push(PreparedSourcePackage {
+        packages.push(SourcePackageSpec {
             name: cell.package.clone(),
             version: cell.version.clone(),
             release: cell.release.clone(),
@@ -159,6 +141,8 @@ pub fn prepare_source_packages(
                 .description
                 .clone()
                 .unwrap_or_else(|| options.recipe.package.summary.clone()),
+            arch: options.plan.arch.clone(),
+            source_date_epoch: options.source_date_epoch,
             files,
         });
     }
@@ -168,7 +152,7 @@ pub fn prepare_source_packages(
 fn collect_local_steps(
     plan: &Plan,
     step_root: Option<&Path>,
-) -> Result<(Vec<LockStep>, Vec<PreparedSourceFile>)> {
+) -> Result<(Vec<LockStep>, Vec<SourcePackageFile>)> {
     let mut refs: Vec<&PlannedStep> = Vec::new();
     if let Some(source) = &plan.source_assembly {
         refs.extend(source.steps.iter());
@@ -251,7 +235,7 @@ fn collect_local_steps(
         let mut text = serde_json::to_string_pretty(&contents)
             .map_err(|error| Error::new(codes::SRPM_006, error.to_string()))?;
         text.push('\n');
-        files.push(PreparedSourceFile {
+        files.push(SourcePackageFile {
             path: "RPMX-STEPS.json".to_string(),
             data: text.into_bytes(),
             mode: 0o644,

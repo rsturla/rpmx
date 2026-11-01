@@ -1,10 +1,11 @@
 use std::fs;
 use std::process::Command;
 
-use rpmx_rpm::{write_srpm, SrpmFile, SrpmSpec};
+use rpmx_core::package_spec::{SourcePackageFile, SourcePackageSpec};
+use rpmx_rpm::write_srpm;
 
-fn spec() -> SrpmSpec {
-    SrpmSpec {
+fn spec() -> SourcePackageSpec {
+    SourcePackageSpec {
         name: "demo".to_string(),
         version: "1.0".to_string(),
         release: "1".to_string(),
@@ -15,12 +16,12 @@ fn spec() -> SrpmSpec {
         description: "demo".to_string(),
         source_date_epoch: 1_700_000_000,
         files: vec![
-            SrpmFile {
+            SourcePackageFile {
                 path: "package.yaml".to_string(),
                 data: b"schema: 1\n".to_vec(),
                 mode: 0o644,
             },
-            SrpmFile {
+            SourcePackageFile {
                 path: "demo-1.0.tar.gz".to_string(),
                 data: b"source bytes\n".to_vec(),
                 mode: 0o644,

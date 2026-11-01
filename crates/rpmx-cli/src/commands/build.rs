@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use rpmx_core::binary_package::{prepare_binary_packages, BinaryPackageOptions};
 use rpmx_core::error::codes;
 use rpmx_core::Error;
-use rpmx_rpm::{write_binary_rpm, BinaryDirectory, BinaryFile, BinarySpec};
+use rpmx_rpm::write_binary_rpm;
 
 use crate::commands::{
     load_plan, rebuild, source, srpm, BuildArgs, RebuildArgs, SourceArgs, SrpmArgs,
@@ -79,52 +79,7 @@ fn package_stage(args: &BuildArgs<'_>, stage: &Path) -> Result<Vec<PathBuf>, Err
                 "{}-{}-{}.{}.rpm",
                 package.name, package.version, package.release, package.arch
             ));
-            let spec = BinarySpec {
-                name: package.name,
-                version: package.version,
-                release: package.release,
-                epoch: package.epoch,
-                arch: package.arch,
-                summary: package.summary,
-                license: package.license,
-                description: package.description,
-                url: package.url,
-                source_rpm: package.source_rpm,
-                source_date_epoch: package.source_date_epoch,
-                files: package
-                    .files
-                    .into_iter()
-                    .map(|file| BinaryFile {
-                        path: file.path,
-                        data: file.data,
-                        mode: file.mode,
-                        target: file.target,
-                        user: file.user,
-                        group: file.group,
-                        caps: file.caps,
-                        config: file.config,
-                        noreplace: file.noreplace,
-                        doc: file.doc,
-                        license: file.license,
-                    })
-                    .collect(),
-                directories: package
-                    .directories
-                    .into_iter()
-                    .map(|directory| BinaryDirectory {
-                        path: directory.path,
-                        mode: directory.mode,
-                        user: directory.user,
-                        group: directory.group,
-                    })
-                    .collect(),
-                requires: package.requires,
-                provides: package.provides,
-                obsoletes: package.obsoletes,
-                conflicts: package.conflicts,
-                scriptlets: package.scriptlets,
-            };
-            write_binary_rpm(&spec, &path)?;
+            write_binary_rpm(&package, &path)?;
             if let Some(key) = &signing {
                 rpmx_rpm::sign::sign_package(&path, key, signature_timestamp)?;
             }

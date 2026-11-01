@@ -5,30 +5,10 @@ pub mod sign;
 use std::path::Path;
 
 use rpm::{BuildConfig, CompressionType, FileMode, FileOptions, PackageBuilder, Scriptlet};
+use rpmx_core::package_spec::{BinaryPackageSpec, SourcePackageSpec};
 use rpmx_core::{error::codes, Error};
 
-#[derive(Debug, Clone)]
-pub struct SrpmFile {
-    pub path: String,
-    pub data: Vec<u8>,
-    pub mode: u32,
-}
-
-#[derive(Debug, Clone)]
-pub struct SrpmSpec {
-    pub name: String,
-    pub version: String,
-    pub release: String,
-    pub epoch: Option<u32>,
-    pub arch: String,
-    pub summary: String,
-    pub license: String,
-    pub description: String,
-    pub source_date_epoch: u32,
-    pub files: Vec<SrpmFile>,
-}
-
-pub fn write_srpm(spec: &SrpmSpec, out: &Path) -> Result<(), Error> {
+pub fn write_srpm(spec: &SourcePackageSpec, out: &Path) -> Result<(), Error> {
     let mut builder = PackageBuilder::new(
         &spec.name,
         &spec.version,
@@ -83,53 +63,7 @@ pub fn write_srpm(spec: &SrpmSpec, out: &Path) -> Result<(), Error> {
     })
 }
 
-#[derive(Debug, Clone)]
-pub struct BinaryFile {
-    pub path: String,
-    pub data: Vec<u8>,
-    pub mode: u32,
-    /// Target when this entry is a symbolic link; `data` is ignored then.
-    pub target: Option<String>,
-    pub user: Option<String>,
-    pub group: Option<String>,
-    pub caps: Option<String>,
-    pub config: bool,
-    pub noreplace: bool,
-    pub doc: bool,
-    pub license: bool,
-}
-
-#[derive(Debug, Clone)]
-pub struct BinaryDirectory {
-    pub path: String,
-    pub mode: u32,
-    pub user: Option<String>,
-    pub group: Option<String>,
-}
-
-#[derive(Debug, Clone)]
-pub struct BinarySpec {
-    pub name: String,
-    pub version: String,
-    pub release: String,
-    pub epoch: Option<u32>,
-    pub arch: String,
-    pub summary: String,
-    pub license: String,
-    pub description: String,
-    pub url: Option<String>,
-    pub source_rpm: String,
-    pub source_date_epoch: u32,
-    pub files: Vec<BinaryFile>,
-    pub directories: Vec<BinaryDirectory>,
-    pub requires: Vec<String>,
-    pub provides: Vec<String>,
-    pub obsoletes: Vec<String>,
-    pub conflicts: Vec<String>,
-    pub scriptlets: rpmx_core::model::Scriptlets,
-}
-
-pub fn write_binary_rpm(spec: &BinarySpec, out: &Path) -> Result<(), Error> {
+pub fn write_binary_rpm(spec: &BinaryPackageSpec, out: &Path) -> Result<(), Error> {
     let mut builder = PackageBuilder::new(
         &spec.name,
         &spec.version,

@@ -5,52 +5,8 @@ use crate::elf;
 use crate::error::{codes, Error, Result};
 use crate::model::Recipe;
 use crate::package::{self, OutputSpec};
+use crate::package_spec::{BinaryPackageDirectory, BinaryPackageFile, BinaryPackageSpec};
 use crate::plan::PlannedCell;
-
-#[derive(Debug, Clone)]
-pub struct PreparedBinaryFile {
-    pub path: String,
-    pub data: Vec<u8>,
-    pub mode: u32,
-    pub target: Option<String>,
-    pub user: Option<String>,
-    pub group: Option<String>,
-    pub caps: Option<String>,
-    pub config: bool,
-    pub noreplace: bool,
-    pub doc: bool,
-    pub license: bool,
-}
-
-#[derive(Debug, Clone)]
-pub struct PreparedDirectory {
-    pub path: String,
-    pub mode: u32,
-    pub user: Option<String>,
-    pub group: Option<String>,
-}
-
-#[derive(Debug, Clone)]
-pub struct PreparedBinaryPackage {
-    pub name: String,
-    pub version: String,
-    pub release: String,
-    pub epoch: Option<u32>,
-    pub arch: String,
-    pub summary: String,
-    pub license: String,
-    pub description: String,
-    pub url: Option<String>,
-    pub source_rpm: String,
-    pub source_date_epoch: u32,
-    pub files: Vec<PreparedBinaryFile>,
-    pub directories: Vec<PreparedDirectory>,
-    pub requires: Vec<String>,
-    pub provides: Vec<String>,
-    pub obsoletes: Vec<String>,
-    pub conflicts: Vec<String>,
-    pub scriptlets: crate::model::Scriptlets,
-}
 
 pub struct BinaryPackageOptions<'a> {
     pub recipe: &'a Recipe,
@@ -63,7 +19,7 @@ pub struct BinaryPackageOptions<'a> {
 
 pub fn prepare_binary_packages(
     options: BinaryPackageOptions<'_>,
-) -> Result<Vec<PreparedBinaryPackage>> {
+) -> Result<Vec<BinaryPackageSpec>> {
     let staged = package::scan_stage(options.stage)?;
     let mut outputs = options.cell.outputs.clone();
     let debug_name = format!("{}-debuginfo", options.recipe.package.name);
@@ -130,10 +86,10 @@ pub fn prepare_binary_packages(
         let doc = package::matcher(&planned.doc)?;
         let config = package::matcher(&planned.config)?;
         let noreplace = package::matcher(&planned.noreplace)?;
-        let mut files: Vec<PreparedBinaryFile> = output_files
+        let mut files: Vec<BinaryPackageFile> = output_files
             .files
             .into_iter()
-            .map(|file| PreparedBinaryFile {
+            .map(|file| BinaryPackageFile {
                 config: config.as_ref().is_some_and(|set| set.is_match(&file.path))
                     || noreplace
                         .as_ref()
@@ -155,7 +111,7 @@ pub fn prepare_binary_packages(
         let directories = apply_file_metadata(planned, &mut files)?;
 
         if planned.name == debug_name {
-            packages.push(PreparedBinaryPackage {
+            packages.push(BinaryPackageSpec {
                 name: planned.name.clone(),
                 version: options.cell.version.clone(),
                 release: options.cell.release.clone(),
@@ -221,7 +177,7 @@ pub fn prepare_binary_packages(
         let provides = sorted_unique(provides);
         let requires = sorted_unique(requires);
 
-        packages.push(PreparedBinaryPackage {
+        packages.push(BinaryPackageSpec {
             name: planned.name.clone(),
             version: options.cell.version.clone(),
             release: options.cell.release.clone(),
@@ -257,8 +213,8 @@ pub fn prepare_binary_packages(
 
 fn apply_file_metadata(
     planned: &crate::plan::PlannedOutput,
-    files: &mut [PreparedBinaryFile],
-) -> Result<Vec<PreparedDirectory>> {
+    files: &mut [BinaryPackageFile],
+) -> Result<Vec<BinaryPackageDirectory>> {
     let attributes = planned
         .attributes
         .iter()
@@ -322,7 +278,7 @@ fn apply_file_metadata(
                     ),
                 ));
             }
-            Ok(PreparedDirectory {
+            Ok(BinaryPackageDirectory {
                 path: directory.path.clone(),
                 mode: match &directory.mode {
                     Some(mode) => parse_octal_mode(mode)?,
