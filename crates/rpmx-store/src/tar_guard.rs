@@ -1,6 +1,6 @@
 use std::io::{Read, Seek, SeekFrom};
 
-use crate::error::{Error, Result};
+use rpmx_base::error::{Error, Result};
 
 /// GNU long-name/link and PAX extension headers are read fully into memory by
 /// the tar crate; keep that allocation small.
@@ -24,7 +24,7 @@ fn read_tar_header<R: Read>(reader: &mut R, header: &mut [u8; 512]) -> std::io::
     Ok(true)
 }
 
-fn parse_tar_size(field: &[u8], subject: &str, code: crate::error::Code) -> Result<u64> {
+fn parse_tar_size(field: &[u8], subject: &str, code: rpmx_base::error::Code) -> Result<u64> {
     if field.first().is_some_and(|byte| byte & 0x80 != 0) {
         let mut value = u64::from(field[0] & 0x7f);
         for byte in &field[1..] {
@@ -60,7 +60,7 @@ fn parse_tar_size(field: &[u8], subject: &str, code: crate::error::Code) -> Resu
 /// and the "first match wins" rule mirror tar-rs; malformed records fail
 /// closed. Sparse PAX records are rejected because neither the guest transfer
 /// nor a source snapshot needs them.
-fn parse_pax_size(data: &[u8], subject: &str, code: crate::error::Code) -> Result<Option<u64>> {
+fn parse_pax_size(data: &[u8], subject: &str, code: rpmx_base::error::Code) -> Result<Option<u64>> {
     let mut size = None;
     for line in data.split(|byte| *byte == b'\n') {
         if line.is_empty() {
@@ -119,7 +119,7 @@ fn skip<R: Seek>(
     archive: &mut R,
     bytes: u64,
     subject: &str,
-    code: crate::error::Code,
+    code: rpmx_base::error::Code,
 ) -> Result<()> {
     let skip = i64::try_from(bytes)
         .map_err(|_| Error::new(code, format!("{subject} has an entry too large to skip")))?;
@@ -133,7 +133,7 @@ fn check_entry_size(
     size: u64,
     max_entry: Option<u64>,
     subject: &str,
-    code: crate::error::Code,
+    code: rpmx_base::error::Code,
 ) -> Result<()> {
     if let Some(limit) = max_entry {
         if size > limit {
@@ -150,10 +150,10 @@ fn check_entry_size(
 /// the configured caps. The walk mirrors tar-rs 0.4.46 for the rules that
 /// affect block advancement: magic-gated extension headers, typeflag-only PAX
 /// size overrides, and first-`size`-record wins.
-pub(crate) fn validate<R: Read + Seek>(
+pub fn validate<R: Read + Seek>(
     archive: &mut R,
     subject: &str,
-    code: crate::error::Code,
+    code: rpmx_base::error::Code,
     max_entry: Option<u64>,
 ) -> Result<()> {
     archive
@@ -265,7 +265,7 @@ pub(crate) fn validate<R: Read + Seek>(
 #[cfg(test)]
 mod tests {
     use super::validate;
-    use crate::error::codes;
+    use rpmx_base::error::codes;
     use std::io::{Seek, SeekFrom, Write};
 
     fn archive_file(root: &std::path::Path) -> std::fs::File {
@@ -306,7 +306,7 @@ mod tests {
         }
     }
 
-    fn check(archive: &mut std::fs::File) -> crate::error::Result<()> {
+    fn check(archive: &mut std::fs::File) -> rpmx_base::error::Result<()> {
         validate(archive, "archive from remote", codes::RUNNER_003, None)
     }
 

@@ -7,7 +7,7 @@ use std::process::Command;
 
 use sha2::{Digest, Sha512};
 
-use crate::error::{codes, Error, Result};
+use rpmx_base::error::{codes, Error, Result};
 
 /// Top-level directories that are always volatile or not part of the root.
 const SKIP_TOP: &[&str] = &["dev", "proc", "run", "sys", "tmp"];

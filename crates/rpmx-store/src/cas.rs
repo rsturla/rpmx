@@ -2,8 +2,8 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
-use crate::error::{codes, Error, Result};
-use crate::hash::sha512_hex;
+use rpmx_base::error::{codes, Error, Result};
+use rpmx_base::hash::sha512_hex;
 
 /// The on-disk name for a content-addressed payload.
 pub fn path(cache: &Path, digest: &str) -> Result<PathBuf> {

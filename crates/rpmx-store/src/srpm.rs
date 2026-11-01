@@ -2,9 +2,13 @@ use std::collections::BTreeMap;
 use std::io::Read;
 use std::path::Path;
 
-use crate::error::{codes, Code, Error, Result};
-pub use crate::hash::sha512_hex;
+use rpmx_base::error::{codes, Code, Error, Result};
+pub use rpmx_base::hash::sha512_hex;
 use serde::{Deserialize, Serialize};
+
+fn default_sbom() -> bool {
+    true
+}
 
 /// Bundle documents are JSON metadata; a few MiB is already generous.
 const MAX_BUNDLE_BYTES: u64 = 8 * 1024 * 1024;
@@ -273,7 +277,7 @@ pub struct LockBuild {
     pub tests: Vec<String>,
     #[serde(default)]
     pub debuginfo: bool,
-    #[serde(default = "crate::profile::default_sbom")]
+    #[serde(default = "default_sbom")]
     pub sbom: bool,
 }
 
@@ -440,7 +444,7 @@ fn json(value: impl Serialize) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::read_text_with_limit;
-    use crate::error::codes;
+    use rpmx_base::error::codes;
 
     #[test]
     fn bundle_text_over_the_limit_is_rejected() {
