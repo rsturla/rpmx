@@ -78,11 +78,7 @@ fn source_package_rejects_reserved_source_names() {
 #[test]
 fn binary_package_prepares_one_package_per_output() {
     let (recipe, plan) = common::load(RECIPE);
-    let stage = tempfile::tempdir().expect("tempdir");
-    fs::create_dir_all(stage.path().join("usr/bin")).expect("bin");
-    fs::create_dir_all(stage.path().join("usr/share/doc/demo")).expect("doc");
-    fs::write(stage.path().join("usr/bin/demo"), b"bin").expect("bin file");
-    fs::write(stage.path().join("usr/share/doc/demo/README"), b"doc").expect("doc file");
+    let stage = common::stage();
 
     let packages = prepare_binary_packages(BinaryPackageOptions {
         recipe: &recipe,

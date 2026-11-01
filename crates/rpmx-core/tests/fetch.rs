@@ -28,6 +28,25 @@ outputs:
     )
 }
 
+/// Serve one HTTP GET with `body`, returning the bound port and server thread.
+fn one_shot_http(body: Vec<u8>) -> (u16, std::thread::JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("listener");
+    let port = listener.local_addr().expect("addr").port();
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("accept");
+        let mut request = [0u8; 2048];
+        let _ = stream.read(&mut request);
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            body.len()
+        )
+        .expect("headers");
+        stream.write_all(&body).expect("body");
+    });
+    (port, server)
+}
+
 #[test]
 fn file_locator_rejects_a_non_regular_file() {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -127,21 +146,7 @@ fn offline_fails_on_a_cache_miss() {
 fn https_locator_downloads_and_verifies() {
     let bytes = b"http source".to_vec();
     let digest = sha512_hex(&bytes);
-    let listener = TcpListener::bind("127.0.0.1:0").expect("listener");
-    let port = listener.local_addr().expect("addr").port();
-    let body = bytes.clone();
-    let server = std::thread::spawn(move || {
-        let (mut stream, _) = listener.accept().expect("accept");
-        let mut request = [0u8; 1024];
-        let _ = stream.read(&mut request);
-        write!(
-            stream,
-            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-            body.len()
-        )
-        .expect("headers");
-        stream.write_all(&body).expect("body");
-    });
+    let (port, server) = one_shot_http(bytes.clone());
 
     let dir = tempfile::tempdir().expect("tempdir");
     let yaml = recipe(
@@ -170,21 +175,7 @@ fn https_locator_downloads_and_verifies() {
 fn content_addressed_proxy_is_used_first() {
     let bytes = b"proxied source".to_vec();
     let digest = sha512_hex(&bytes);
-    let listener = TcpListener::bind("127.0.0.1:0").expect("listener");
-    let port = listener.local_addr().expect("addr").port();
-    let body = bytes.clone();
-    let server = std::thread::spawn(move || {
-        let (mut stream, _) = listener.accept().expect("accept");
-        let mut request = [0u8; 2048];
-        let _ = stream.read(&mut request);
-        write!(
-            stream,
-            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-            body.len()
-        )
-        .expect("headers");
-        stream.write_all(&body).expect("body");
-    });
+    let (port, server) = one_shot_http(bytes.clone());
 
     let dir = tempfile::tempdir().expect("tempdir");
     let yaml = recipe(&digest, "      - kind: file\n        path: missing");

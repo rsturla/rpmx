@@ -4,6 +4,16 @@ use std::path::Path;
 
 use rpmx_core::{load_recipe, plan_with_options, Error, Plan, PlanOptions, Recipe};
 
+/// A stage tree with one binary and one documentation file.
+pub fn stage() -> tempfile::TempDir {
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::create_dir_all(dir.path().join("usr/bin")).expect("bin");
+    std::fs::create_dir_all(dir.path().join("usr/share/doc/demo")).expect("doc");
+    std::fs::write(dir.path().join("usr/bin/demo"), b"bin").expect("bin file");
+    std::fs::write(dir.path().join("usr/share/doc/demo/README"), b"doc").expect("doc file");
+    dir
+}
+
 /// Load a recipe from inline YAML and plan it for x86_64.
 pub fn load(yaml: &str) -> (Recipe, Plan) {
     try_load(yaml).expect("recipe plans")

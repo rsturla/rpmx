@@ -1,15 +1,8 @@
-use std::fs;
-
 use rpmx_core::package::{scan_stage, split, OutputSpec};
 
-fn stage() -> tempfile::TempDir {
-    let dir = tempfile::tempdir().expect("tempdir");
-    fs::create_dir_all(dir.path().join("usr/bin")).expect("bin");
-    fs::create_dir_all(dir.path().join("usr/share/doc/demo")).expect("doc");
-    fs::write(dir.path().join("usr/bin/demo"), b"bin").expect("bin file");
-    fs::write(dir.path().join("usr/share/doc/demo/README"), b"doc").expect("doc file");
-    dir
-}
+mod common;
+
+use common::stage;
 
 #[test]
 fn stage_files_are_assigned_to_one_output() {
