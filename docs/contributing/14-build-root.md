@@ -142,6 +142,32 @@ builder:
   For QEMU, the root is a disposable writable disk copy: build steps can modify
   it, but those changes cannot escape the VM and do not persist.
 
+### 6.1 Authenticated repositories
+
+Resolution, not assembly, is the only phase that needs repository credentials.
+A profile repository may set `auth.ca`, `auth.cert` and `auth.key` for mutual
+TLS, `auth.username` and `auth.password` for basic auth, or a proxy. Path-valued
+credentials are an `env:NAME` reference or an absolute path; passwords may not
+be literals.
+
+- Credential files are copied into a private temporary directory with mode
+  `0600`, mounted read-only at `/run/rpmx-auth/<index>/...`, and removed when
+  resolution ends, including when `--keep` keeps the resolver work directory.
+- Basic-auth passwords are written into the generated `.repo` file with mode
+  `0600`, because dnf requires them there. TLS credentials are referenced by
+  their container paths only.
+- A repository URL that embeds `user:password@` is rejected; use `auth` instead.
+- Credentials are honoured only in a profile the user controls: one passed with
+  `--profile` or found under `$XDG_CONFIG_HOME/rpmx/profiles`. A profile selected
+  by the recipe itself may not carry `auth`, so an untrusted recipe cannot name a
+  credential-bearing profile and redirect it to its own repository.
+- Resolved credential values never reach the lock or the SRPM. The lock records
+  the repository URL, packages and signing policy, not the `auth` block.
+- The build sandbox remains `--network=none`; it never receives a credential or
+  a network route.
+- `repo-gpgcheck: true` enables signed repository metadata. Package signatures
+  are still controlled by `gpgcheck`, which follows `gpgkey`.
+
 ## 7. Offline assembly
 
 `rpmx root assemble` does not generate repository metadata. The lock already

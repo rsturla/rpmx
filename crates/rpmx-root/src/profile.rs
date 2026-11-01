@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use rpmx_base::error::{codes, Error, Result};
 use rpmx_base::yaml;
+pub use rpmx_language::model::RepositoryAuth;
 
 pub const DOCUMENT: &str = "rpmx-profile";
 pub const VERSION: u32 = 1;
@@ -61,6 +62,12 @@ pub struct Repository {
     /// repository is recorded as unsigned.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gpgkey: Option<String>,
+    /// Verify signed repository metadata in addition to package signatures.
+    #[serde(default, rename = "repo-gpgcheck")]
+    pub repo_gpgcheck: bool,
+    /// Credential references for an authenticated repository.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auth: Option<RepositoryAuth>,
 }
 
 impl Repository {
@@ -211,6 +218,29 @@ impl Profile {
                     ),
                 ));
             }
+            if let Some(auth) = &repository.auth {
+                validate_auth(&repository.id, auth)?;
+            }
+            let (kind, url) = repository.location();
+            if has_url_userinfo(url) {
+                return Err(Error::new(
+                    codes::ROOT_006,
+                    format!(
+                        "repository '{}' embeds credentials in its {kind} URL; use the auth block instead",
+                        repository.id
+                    ),
+                ));
+            }
+            for (field, value) in [
+                ("baseurl", repository.baseurl.as_deref()),
+                ("metalink", repository.metalink.as_deref()),
+                ("mirrorlist", repository.mirrorlist.as_deref()),
+                ("gpgkey", repository.gpgkey.as_deref()),
+            ] {
+                if let Some(value) = value {
+                    validate_config_value(&repository.id, field, value)?;
+                }
+            }
         }
         if self.packages.install.is_empty() {
             return Err(Error::new(
@@ -260,6 +290,113 @@ impl Profile {
 
 pub fn default_sbom() -> bool {
     true
+}
+
+fn validate_auth(repository: &str, auth: &RepositoryAuth) -> Result<()> {
+    if auth.is_empty() {
+        return Err(Error::new(
+            codes::ROOT_006,
+            format!("repository '{repository}' has an empty auth block"),
+        ));
+    }
+    for (field, value) in [
+        ("auth.ca", auth.ca.as_deref()),
+        ("auth.cert", auth.cert.as_deref()),
+        ("auth.key", auth.key.as_deref()),
+        ("auth.username", auth.username.as_deref()),
+        ("auth.password", auth.password.as_deref()),
+        ("auth.proxy", auth.proxy.as_deref()),
+        ("auth.proxy-username", auth.proxy_username.as_deref()),
+        ("auth.proxy-password", auth.proxy_password.as_deref()),
+    ] {
+        if let Some(value) = value {
+            validate_config_value(repository, field, value)?;
+        }
+    }
+    if auth.cert.is_some() != auth.key.is_some() {
+        return Err(Error::new(
+            codes::ROOT_006,
+            format!("repository '{repository}' must set auth.cert and auth.key together"),
+        ));
+    }
+    if auth.username.is_some() != auth.password.is_some() {
+        return Err(Error::new(
+            codes::ROOT_006,
+            format!("repository '{repository}' must set auth.username and auth.password together"),
+        ));
+    }
+    if auth.proxy_username.is_some() != auth.proxy_password.is_some() {
+        return Err(Error::new(
+            codes::ROOT_006,
+            format!(
+                "repository '{repository}' must set auth.proxy-username and auth.proxy-password together"
+            ),
+        ));
+    }
+    if auth.proxy_password.is_some() && auth.proxy.is_none() {
+        return Err(Error::new(
+            codes::ROOT_006,
+            format!("repository '{repository}' sets proxy credentials without auth.proxy"),
+        ));
+    }
+    if let Some(proxy) = &auth.proxy {
+        if proxy.contains('@') {
+            return Err(Error::new(
+                codes::ROOT_006,
+                format!(
+                    "repository '{repository}' embeds credentials in auth.proxy; use auth.proxy-username and auth.proxy-password instead"
+                ),
+            ));
+        }
+    }
+    for (field, value) in [
+        ("auth.password", auth.password.as_deref()),
+        ("auth.proxy-password", auth.proxy_password.as_deref()),
+    ] {
+        if let Some(value) = value {
+            if !is_secret_reference(value) {
+                return Err(Error::new(
+                    codes::ROOT_006,
+                    format!(
+                        "repository '{repository}' {field} must be an env:NAME reference or an absolute file path"
+                    ),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn is_secret_reference(value: &str) -> bool {
+    if value.starts_with("env:") {
+        return true;
+    }
+    let path = value.strip_prefix("file://").unwrap_or(value);
+    std::path::Path::new(path).is_absolute()
+}
+
+pub(crate) fn has_control_characters(value: &str) -> bool {
+    value.chars().any(char::is_control)
+}
+
+fn validate_config_value(repository: &str, field: &str, value: &str) -> Result<()> {
+    if has_control_characters(value) {
+        return Err(Error::new(
+            codes::ROOT_006,
+            format!(
+                "repository '{repository}' {field} contains a control character; repository values must be one line"
+            ),
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) fn has_url_userinfo(url: &str) -> bool {
+    let Some((_, rest)) = url.split_once("://") else {
+        return false;
+    };
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or(rest);
+    authority.contains('@')
 }
 
 /// Repository ids become file names under `repos.d`.

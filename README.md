@@ -233,6 +233,11 @@ read-only into the resolver container, and removed when resolution finishes.
 They are never mounted into the build sandbox, which has no network. Repository
 URLs must not embed a user name or password; use the `auth` block instead.
 
+Credentials are honoured only in a profile the user controls: one passed with
+`--profile` or found under `$XDG_CONFIG_HOME/rpmx/profiles`. A profile selected
+by a recipe cannot carry `auth`, so an untrusted recipe cannot redirect the
+user's credentials to its own repository.
+
 `root assemble` and `rebuild` use payloads from the content-addressed cache, so
 they do not need the credentials. A host without entitlement can build from a
 cache populated by an entitled host.

@@ -36,6 +36,7 @@ pub struct AutomaticRoot {
 }
 
 /// The merged root requirement for a recipe: profile, name and digest.
+#[derive(Debug)]
 pub struct Requirement {
     pub profile: Profile,
     pub name: String,
@@ -90,7 +91,9 @@ pub fn requirement(
                 .at("build.root"));
             }
             let path = discover_profile(spec.profile.as_deref().unwrap_or_default(), recipe_dir)?;
-            load_profile(&path)?
+            let profile = load_profile(&path)?;
+            reject_recipe_profile_credentials(&profile, &path)?;
+            profile
         }
         (Some(spec), _) => inline_profile(spec, arch)?,
         (None, Some(path)) => load_profile(path)?,
@@ -505,6 +508,8 @@ fn repository(source: &RootRepository) -> Repository {
         metalink: source.metalink.clone(),
         mirrorlist: source.mirrorlist.clone(),
         gpgkey: source.gpgkey.clone(),
+        repo_gpgcheck: source.repo_gpgcheck,
+        auth: None,
     }
 }
 
@@ -556,6 +561,42 @@ fn config_dir() -> Option<PathBuf> {
     std::env::var("HOME")
         .ok()
         .map(|home| PathBuf::from(home).join(".config").join("rpmx"))
+}
+
+/// A recipe chooses which profile file it loads. That file may contain
+/// repository credentials, so only a profile the user controls may carry them.
+fn reject_recipe_profile_credentials(profile: &Profile, path: &Path) -> Result<(), Error> {
+    if !profile.repositories.iter().any(|repo| repo.auth.is_some()) {
+        return Ok(());
+    }
+    let trusted = config_dir()
+        .map(|config| path_is_under(path, &config.join("profiles")))
+        .unwrap_or(false);
+    if trusted {
+        return Ok(());
+    }
+    Err(Error::new(
+        codes::ROOT_019,
+        format!(
+            "profile {} was selected by the recipe and carries repository credentials; \
+             pass --profile explicitly or place it under {}/profiles",
+            path.display(),
+            config_dir()
+                .map(|config| config.display().to_string())
+                .unwrap_or_else(|| "$XDG_CONFIG_HOME/rpmx".to_string())
+        ),
+    ))
+}
+
+/// Compare resolved paths: a lexical `starts_with` would accept `profiles/../..`.
+fn path_is_under(path: &Path, root: &Path) -> bool {
+    let Ok(path) = std::fs::canonicalize(path) else {
+        return false;
+    };
+    let Ok(root) = std::fs::canonicalize(root) else {
+        return false;
+    };
+    path.starts_with(root)
 }
 
 /// Every package the plan needs in the root.
@@ -710,6 +751,86 @@ outputs:
         .expect_err("conflicting root");
         assert_eq!(error.code, rpmx_core::error::codes::ROOT_006);
         assert_eq!(error.path.as_deref(), Some("build.root"));
+    }
+
+    #[test]
+    fn profile_trust_rejects_traversal_and_symlinks() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let trusted = directory.path().join("config/profiles");
+        std::fs::create_dir_all(&trusted).expect("profiles");
+        let inside = trusted.join("review.yaml");
+        std::fs::write(&inside, b"profile").expect("inside");
+        assert!(super::path_is_under(&inside, &trusted));
+
+        let outside = directory.path().join("outside.yaml");
+        std::fs::write(&outside, b"profile").expect("outside");
+        let traversal = trusted.join("../../outside.yaml");
+        assert!(!super::path_is_under(&traversal, &trusted));
+
+        #[cfg(unix)]
+        {
+            let link = trusted.join("linked.yaml");
+            std::os::unix::fs::symlink(&outside, &link).expect("symlink");
+            assert!(!super::path_is_under(&link, &trusted));
+        }
+    }
+
+    #[test]
+    fn a_recipe_selected_profile_cannot_carry_credentials() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let profiles = directory.path().join("profiles");
+        std::fs::create_dir_all(&profiles).expect("profiles");
+        std::fs::write(
+            profiles.join("review.yaml"),
+            r#"
+document: rpmx-profile
+version: 1
+name: review
+releasever: "44"
+archs: [x86_64]
+repositories:
+  - id: private
+    baseurl: https://example.invalid/private
+    auth:
+      username: builder
+      password: env:RPMX_TEST_RECIPE_PASSWORD
+packages:
+  install: [bash]
+"#,
+        )
+        .expect("profile");
+        let recipe = recipe(
+            r#"
+schema: 1
+package:
+  name: p
+  version: "1"
+  release: 1
+  summary: p
+  license: MIT
+build:
+  root:
+    profile: profiles/review.yaml
+outputs:
+  - name: p
+    metapackage: true
+"#,
+        );
+        let plan = plan(&recipe);
+        let error = super::requirement(
+            &recipe,
+            &plan,
+            &directory.path().join("package.yaml"),
+            None,
+            "x86_64",
+        )
+        .expect_err("credentials");
+        assert_eq!(error.code, rpmx_core::error::codes::ROOT_019);
+        assert!(
+            error.message.contains("pass --profile"),
+            "{}",
+            error.message
+        );
     }
 
     #[test]

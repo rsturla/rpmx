@@ -211,6 +211,64 @@ pub struct RootRepository {
     pub mirrorlist: Option<String>,
     #[serde(default)]
     pub gpgkey: Option<String>,
+    /// Verify signed repository metadata in addition to package signatures.
+    #[serde(default, rename = "repo-gpgcheck")]
+    pub repo_gpgcheck: bool,
+}
+
+/// How the resolver authenticates to a repository.
+///
+/// Path-valued fields accept an `env:NAME` reference or an absolute file path.
+/// Password fields must be an `env:NAME` reference or a file path, so a profile
+/// cannot carry a literal secret. User names and proxy URLs may be literals.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RepositoryAuth {
+    /// CA bundle used to verify the repository's TLS certificate.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ca: Option<String>,
+    /// PEM client certificate for mutual TLS.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cert: Option<String>,
+    /// PEM private key for the client certificate.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>,
+    /// Basic-auth user name. May be a literal.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub username: Option<String>,
+    /// Basic-auth password. Must be an `env:` reference or a file path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub password: Option<String>,
+    /// Proxy URL. May be a literal.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proxy: Option<String>,
+    /// Proxy user name. May be a literal.
+    #[serde(
+        default,
+        rename = "proxy-username",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub proxy_username: Option<String>,
+    /// Proxy password. Must be an `env:` reference or a file path.
+    #[serde(
+        default,
+        rename = "proxy-password",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub proxy_password: Option<String>,
+}
+
+impl RepositoryAuth {
+    pub fn is_empty(&self) -> bool {
+        self.ca.is_none()
+            && self.cert.is_none()
+            && self.key.is_none()
+            && self.username.is_none()
+            && self.password.is_none()
+            && self.proxy.is_none()
+            && self.proxy_username.is_none()
+            && self.proxy_password.is_none()
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

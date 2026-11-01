@@ -277,6 +277,9 @@ pub mod codes {
         ROOT_017 = "RPMX-ROOT-017",
         /// Required build tools or host/test packages are missing from the selected root.
         ROOT_018 = "RPMX-ROOT-018",
+        /// Repository credentials are missing, unreadable, rejected by the
+        /// server, or contain an invalid value.
+        ROOT_019 = "RPMX-ROOT-019",
         /// A file, symlink, or directory cannot be added to an RPM or SRPM.
         RPM_001 = "RPMX-RPM-001",
         /// The RPM library failed to build an SRPM.

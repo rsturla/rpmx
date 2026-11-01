@@ -28,6 +28,8 @@ fn repository() -> Repository {
         metalink: None,
         mirrorlist: None,
         gpgkey: None,
+        repo_gpgcheck: false,
+        auth: None,
     }
 }
 
@@ -190,4 +192,106 @@ fn profile_rejects_a_foreign_document() {
     let text = MINIMAL_PROFILE.replace("document: rpmx-profile", "document: rpmx-recipe");
     let error = parse_profile(&text).unwrap_err();
     assert!(error.message.contains("rpmx-profile"));
+}
+
+#[test]
+fn profile_accepts_authenticated_repository_credentials() {
+    let text = MINIMAL_PROFILE.replace(
+        "    baseurl: https://example.invalid/fedora",
+        "    baseurl: https://example.invalid/fedora\n\
+         \x20   repo-gpgcheck: true\n\
+         \x20   auth:\n\
+         \x20     ca: /etc/pki/entitlement/ca.pem\n\
+         \x20     cert: env:RHEL_CLIENT_CERT\n\
+         \x20     key: env:RHEL_CLIENT_KEY",
+    );
+    let profile = parse_profile(&text).unwrap();
+    let repository = &profile.repositories[0];
+    assert!(repository.repo_gpgcheck);
+    let auth = repository.auth.as_ref().expect("auth");
+    assert_eq!(auth.cert.as_deref(), Some("env:RHEL_CLIENT_CERT"));
+}
+
+#[test]
+fn profile_rejects_cert_without_key() {
+    let text = MINIMAL_PROFILE.replace(
+        "    baseurl: https://example.invalid/fedora",
+        "    baseurl: https://example.invalid/fedora\n\
+         \x20   auth:\n\
+         \x20     cert: env:RHEL_CLIENT_CERT",
+    );
+    let error = parse_profile(&text).unwrap_err();
+    assert!(error.message.contains("auth.cert and auth.key"));
+}
+
+#[test]
+fn profile_rejects_a_literal_password() {
+    let text = MINIMAL_PROFILE.replace(
+        "    baseurl: https://example.invalid/fedora",
+        "    baseurl: https://example.invalid/fedora\n\
+         \x20   auth:\n\
+         \x20     username: alice\n\
+         \x20     password: s3cret",
+    );
+    let error = parse_profile(&text).unwrap_err();
+    assert!(error.message.contains("env:NAME reference"));
+}
+
+#[test]
+fn profile_rejects_credentials_in_a_repository_url() {
+    let text = MINIMAL_PROFILE.replace(
+        "https://example.invalid/fedora",
+        "https://alice:s3cret@example.invalid/fedora",
+    );
+    let error = parse_profile(&text).unwrap_err();
+    assert_eq!(error.code, "RPMX-ROOT-006");
+    assert!(error.message.contains("use the auth block"));
+}
+
+#[test]
+fn profile_rejects_credentials_in_a_proxy_url() {
+    let text = MINIMAL_PROFILE.replace(
+        "    baseurl: https://example.invalid/fedora",
+        "    baseurl: https://example.invalid/fedora\n\
+         \x20   auth:\n\
+         \x20     proxy: http://alice:s3cret@proxy.invalid:3128",
+    );
+    let error = parse_profile(&text).unwrap_err();
+    assert!(error.message.contains("auth.proxy"));
+}
+
+#[test]
+fn profile_rejects_scheme_less_proxy_credentials() {
+    let text = MINIMAL_PROFILE.replace(
+        "    baseurl: https://example.invalid/fedora",
+        "    baseurl: https://example.invalid/fedora\n\
+         \x20   auth:\n\
+         \x20     proxy: alice:s3cret@proxy.invalid:3128",
+    );
+    let error = parse_profile(&text).unwrap_err();
+    assert!(error.message.contains("auth.proxy"));
+}
+
+#[test]
+fn profile_rejects_a_multiline_repository_url() {
+    let text = MINIMAL_PROFILE.replace(
+        "https://example.invalid/fedora",
+        "\"https://example.invalid/fedora\\nsslverify=0\"",
+    );
+    let error = parse_profile(&text).unwrap_err();
+    assert_eq!(error.code, "RPMX-ROOT-006");
+    assert!(error.message.contains("control character"));
+}
+
+#[test]
+fn profile_rejects_file_and_env_combined_in_a_password_reference() {
+    let text = MINIMAL_PROFILE.replace(
+        "    baseurl: https://example.invalid/fedora",
+        "    baseurl: https://example.invalid/fedora\n\
+         \x20   auth:\n\
+         \x20     username: alice\n\
+         \x20     password: file://env:FOO",
+    );
+    let error = parse_profile(&text).unwrap_err();
+    assert!(error.message.contains("env:NAME reference"));
 }

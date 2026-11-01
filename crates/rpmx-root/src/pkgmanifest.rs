@@ -138,6 +138,8 @@ pub fn to_lock(
             metalink: repository.metalink.clone(),
             mirrorlist: repository.mirrorlist.clone(),
             gpgkey: None,
+            repo_gpgcheck: false,
+            auth: None,
         })
         .collect::<Vec<_>>();
 
