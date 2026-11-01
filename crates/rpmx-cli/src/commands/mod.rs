@@ -1,6 +1,7 @@
 mod args;
 pub mod build;
 pub mod cache;
+pub mod dispatch;
 pub mod emit;
 pub mod fetch;
 pub mod lint;
