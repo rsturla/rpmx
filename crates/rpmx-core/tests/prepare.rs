@@ -2,6 +2,8 @@ use std::fs;
 
 use rpmx_core::binary_package::{prepare_binary_packages, BinaryPackageOptions};
 use rpmx_core::source_package::{prepare_source_packages, SourcePackageOptions};
+mod common;
+
 use rpmx_core::{parse_recipe, plan};
 
 const RECIPE: &str = r#"
@@ -23,8 +25,7 @@ outputs:
 
 #[test]
 fn source_package_contains_recipe_lock_manifest_and_sources() {
-    let recipe = parse_recipe(RECIPE).expect("recipe");
-    let plan = plan(&recipe, "x86_64").expect("plan");
+    let (recipe, plan) = common::load(RECIPE);
     let sources = tempfile::tempdir().expect("tempdir");
     fs::write(sources.path().join("demo-1.0.tar.gz"), b"source").expect("source");
 
@@ -55,8 +56,7 @@ fn source_package_contains_recipe_lock_manifest_and_sources() {
 
 #[test]
 fn source_package_rejects_reserved_source_names() {
-    let recipe = parse_recipe(RECIPE).expect("recipe");
-    let plan = plan(&recipe, "x86_64").expect("plan");
+    let (recipe, plan) = common::load(RECIPE);
     let sources = tempfile::tempdir().expect("tempdir");
     fs::write(sources.path().join("package.yaml"), b"collision").expect("source");
 
@@ -77,8 +77,7 @@ fn source_package_rejects_reserved_source_names() {
 
 #[test]
 fn binary_package_prepares_one_package_per_output() {
-    let recipe = parse_recipe(RECIPE).expect("recipe");
-    let plan = plan(&recipe, "x86_64").expect("plan");
+    let (recipe, plan) = common::load(RECIPE);
     let stage = tempfile::tempdir().expect("tempdir");
     fs::create_dir_all(stage.path().join("usr/bin")).expect("bin");
     fs::create_dir_all(stage.path().join("usr/share/doc/demo")).expect("doc");
@@ -173,8 +172,7 @@ outputs:
     files:
       include: ["/**"]
 "#;
-    let recipe = parse_recipe(RECIPE).expect("recipe");
-    let plan = plan(&recipe, "x86_64").expect("plan");
+    let (recipe, plan) = common::load(RECIPE);
     let stage = tempfile::tempdir().expect("tempdir");
     fs::create_dir_all(stage.path().join("usr/bin")).expect("bin");
     fs::create_dir_all(stage.path().join("usr/lib64/pkgconfig")).expect("pkgconfig");
@@ -236,8 +234,7 @@ outputs:
       config: ["/etc/**"]
       noreplace: ["/etc/**"]
 "#;
-    let recipe = parse_recipe(RECIPE).expect("recipe");
-    let plan = plan(&recipe, "x86_64").expect("plan");
+    let (recipe, plan) = common::load(RECIPE);
     let stage = tempfile::tempdir().expect("tempdir");
     fs::create_dir_all(stage.path().join("usr/share/licenses/demo")).expect("licenses");
     fs::create_dir_all(stage.path().join("usr/share/doc/demo")).expect("docs");

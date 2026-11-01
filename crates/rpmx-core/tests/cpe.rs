@@ -1,6 +1,4 @@
-use std::fs;
-
-use rpmx_core::{load_recipe, plan_with_options, PlanOptions};
+mod common;
 
 fn recipe(cpe: &str) -> String {
     format!(
@@ -9,21 +7,7 @@ fn recipe(cpe: &str) -> String {
 }
 
 fn plan(cpe: &str) -> Result<rpmx_core::Recipe, rpmx_core::Error> {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let path = dir.path().join("package.yaml");
-    fs::write(&path, recipe(cpe)).expect("write");
-    let recipe = load_recipe(&path)?;
-    plan_with_options(
-        &recipe,
-        PlanOptions {
-            arch: "x86_64",
-            step_root: None,
-            allow_builtin_override: false,
-            dist_tag: None,
-            build_release: None,
-        },
-    )?;
-    Ok(recipe)
+    common::try_load(&recipe(cpe)).map(|(recipe, _)| recipe)
 }
 
 #[test]

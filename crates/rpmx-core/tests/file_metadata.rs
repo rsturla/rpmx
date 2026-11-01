@@ -1,26 +1,10 @@
 use std::fs;
 
+mod common;
+
+use common::load;
 use rpmx_core::binary_package::{prepare_binary_packages, BinaryPackageOptions};
 use rpmx_core::{load_recipe, plan_with_options, PlanOptions};
-
-fn load(yaml: &str) -> (rpmx_core::Recipe, rpmx_core::Plan) {
-    let dir = tempfile::tempdir().expect("tempdir");
-    let path = dir.path().join("package.yaml");
-    fs::write(&path, yaml).expect("write recipe");
-    let recipe = load_recipe(&path).expect("load recipe");
-    let plan = plan_with_options(
-        &recipe,
-        PlanOptions {
-            arch: "x86_64",
-            step_root: None,
-            allow_builtin_override: false,
-            dist_tag: None,
-            build_release: None,
-        },
-    )
-    .expect("plan");
-    (recipe, plan)
-}
 
 fn recipe(files: &str) -> String {
     format!(

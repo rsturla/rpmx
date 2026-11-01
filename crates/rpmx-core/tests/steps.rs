@@ -1,21 +1,10 @@
 use std::fs;
 use std::path::Path;
 
-use rpmx_core::{parse_recipe, plan_with_options, Error, Plan, PlanOptions};
+mod common;
 
-fn plan_with_root(yaml: &str, root: &Path) -> Result<Plan, Error> {
-    let recipe = parse_recipe(yaml)?;
-    plan_with_options(
-        &recipe,
-        PlanOptions {
-            arch: "x86_64",
-            step_root: Some(root),
-            allow_builtin_override: false,
-            dist_tag: None,
-            build_release: None,
-        },
-    )
-}
+use common::plan_with_root;
+use rpmx_core::{parse_recipe, plan_with_options, PlanOptions};
 
 fn write_step(root: &Path, name: &str, body: &str) {
     let path = root.join(format!("{name}.yaml"));
