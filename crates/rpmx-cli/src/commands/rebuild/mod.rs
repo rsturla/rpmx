@@ -44,7 +44,6 @@ pub struct RebuildRequest<'a> {
     pub sbom: Option<&'a Path>,
     pub test_root_lock: Option<&'a Path>,
     pub signing: &'a OptionalSigningArgs,
-    pub json: bool,
     pub quiet: bool,
 }
 
@@ -73,12 +72,12 @@ pub fn run(args: RebuildArgs) -> Result<Vec<PathBuf>, Error> {
         runner: &args.runner,
         cell: args.cell.as_deref(),
         policy: resolved.plan_policy(),
-        jobs: args.jobs,
-        step_timeout: args.step_timeout,
+        jobs: args.runtime.jobs,
+        step_timeout: args.runtime.step_timeout,
         root_image: args.root_image.as_deref(),
         root_lock: args.root_lock.as_deref(),
         root: args.root.as_deref(),
-        cache: args.cache.as_deref(),
+        cache: args.runtime.cache.cache.as_deref(),
         offline: args.offline,
         verify_root: true,
         run_tests: args.run_tests || !args.test.is_empty(),
@@ -89,7 +88,6 @@ pub fn run(args: RebuildArgs) -> Result<Vec<PathBuf>, Error> {
         sbom: args.sbom.as_deref(),
         test_root_lock: args.test_root_lock.as_deref(),
         signing: &args.signing,
-        json: args.json,
         quiet: args.quiet,
     })
     .map(|output| output.rpms)
@@ -119,7 +117,7 @@ pub fn execute(request: RebuildRequest<'_>) -> Result<RebuildOutput, Error> {
     let run_tests = request.run_tests;
     let sbom_path = request.sbom;
     let quiet = request.quiet;
-    let json = request.json;
+    let json = rpmx_core::output::json();
     let jobs = request.jobs;
     let step_timeout = request.step_timeout;
     let runner = request.runner;

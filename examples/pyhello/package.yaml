@@ -10,6 +10,8 @@ package:
     product: pyhello
   source-date-epoch: 1704067200
 build:
+  root:
+    profile: ../fedora-44-build.profile.yaml
   dependencies:
     tools: [python3, bash]
     tests: [python3]

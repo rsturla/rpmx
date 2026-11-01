@@ -45,6 +45,44 @@ fn a_recipe_without_tests_is_a_recipe_error() {
 }
 
 #[test]
+fn an_empty_install_dir_fails_before_root_resolution() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let empty = tempfile::tempdir().expect("empty install dir");
+    let path = directory.path().join("package.yaml");
+    let recipe = BASE.replace(
+        "build:\n",
+        r#"build:
+  root:
+    releasever: "44"
+    archs: [x86_64]
+    repositories:
+      - id: unreachable
+        baseurl: https://example.invalid/fedora
+    packages: [definitely-not-a-package]
+"#,
+    ) + r#"tests:
+  - name: smoke
+    stage: installed
+    argv: ["true"]
+"#;
+    std::fs::write(&path, recipe).expect("recipe");
+    let output = rpmx(&[
+        "test",
+        path.to_str().unwrap(),
+        "--install-dir",
+        empty.path().to_str().unwrap(),
+        "--offline",
+    ]);
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("RPMX-TEST-004"), "{stderr}");
+    assert!(
+        !stderr.contains("root "),
+        "root resolution ran before local validation: {stderr}"
+    );
+}
+
+#[test]
 fn tests_without_a_root_are_a_resolution_error() {
     let (_directory, path) = recipe(&format!(
         "{}tests:\n  - name: smoke\n    stage: build\n    argv: [\"true\"]\n",

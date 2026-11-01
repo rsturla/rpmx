@@ -22,7 +22,7 @@ pub fn keygen(args: KeygenArgs) -> Result<(), Error> {
         )
     })?;
 
-    if args.json {
+    if rpmx_core::output::json() {
         let value = crate::commands::report::success(
             "keygen",
             serde_json::json!({
@@ -54,7 +54,7 @@ pub fn run(args: SignArgs) -> Result<(), Error> {
         signed.push(path.display().to_string());
     }
 
-    if args.json {
+    if rpmx_core::output::json() {
         let value = crate::commands::report::success(
             "sign",
             serde_json::json!({

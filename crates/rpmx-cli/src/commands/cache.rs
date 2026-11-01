@@ -9,7 +9,7 @@ use crate::commands::fetch::default_cache;
 use crate::commands::GcArgs;
 
 pub fn gc(args: GcArgs) -> Result<(), Error> {
-    let cache = match &args.cache {
+    let cache = match &args.cache.cache {
         Some(path) => path.clone(),
         None => default_cache()?,
     };
@@ -32,7 +32,7 @@ pub fn gc(args: GcArgs) -> Result<(), Error> {
         },
     )?;
 
-    if args.json {
+    if rpmx_core::output::json() {
         let value = crate::commands::report::success(
             "cache",
             serde_json::json!({

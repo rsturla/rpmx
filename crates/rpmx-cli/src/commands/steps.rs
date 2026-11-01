@@ -5,9 +5,9 @@ use rpmx_core::Error;
 
 use crate::commands::{StepsListArgs, StepsShowArgs};
 
-pub fn list(args: StepsListArgs) -> Result<(), Error> {
+pub fn list(_args: StepsListArgs) -> Result<(), Error> {
     let names: Vec<_> = rpmx_core::steps::builtin_names().collect();
-    if args.json {
+    if rpmx_core::output::json() {
         let document =
             crate::commands::report::success("steps", serde_json::json!({ "steps": names }));
         println!(
@@ -33,7 +33,7 @@ pub fn show(args: StepsShowArgs) -> Result<(), Error> {
             ),
         )
     })?;
-    if args.json {
+    if rpmx_core::output::json() {
         let document = crate::commands::report::success(
             "steps",
             serde_json::json!({ "name": args.name, "source": source }),

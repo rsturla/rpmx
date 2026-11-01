@@ -215,8 +215,10 @@ pub(crate) fn expand_tests(
                 format!("test '{}' is declared twice in one cell", test.name),
             ));
         }
+        let name = test.name;
+        let scope = format!("test:{name}");
         planned.push(PlannedTest {
-            name: test.name,
+            name,
             stage: test.stage,
             argv: test.argv,
             pipeline: match test.pipeline {
@@ -225,6 +227,7 @@ pub(crate) fn expand_tests(
                     step_root,
                     &format!("tests[{index}].pipeline"),
                     allow_builtin_override,
+                    &scope,
                 )?,
                 None => Vec::new(),
             },

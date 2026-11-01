@@ -14,7 +14,7 @@ pub fn run(args: ExplainArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> 
         build_release: args.policy.build_release,
     })?;
     let policy = resolved.plan_policy();
-    let (recipe, plan) = load_plan(&args.file, &args.arch, pipeline_dir, false, policy)?;
+    let (bundle, plan) = load_plan(&args.file, &args.arch, pipeline_dir, false, policy)?;
 
     let value = match args.topic.as_str() {
         "policy" => serde_json::json!({
@@ -25,14 +25,14 @@ pub fn run(args: ExplainArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> 
                 .profile
                 .as_ref()
                 .map(|path| path.display().to_string())
-                .or_else(|| recipe.build.root.as_ref().and_then(|root| root.profile.clone())),
+                .or_else(|| bundle.recipe.build.root.as_ref().and_then(|root| root.profile.clone())),
             "release": plan.cells.iter().map(|cell| &cell.release).collect::<Vec<_>>(),
-            "source_date_epoch": crate::commands::source_date_epoch(&recipe, None),
+            "source_date_epoch": crate::commands::source_date_epoch(&bundle.recipe, None),
         }),
         "root" => match autoroot::requirement(
-            &recipe,
+            &bundle.recipe,
             &plan,
-            &args.file,
+            &bundle.root,
             args.policy.profile.as_deref(),
             &args.arch,
         )? {
@@ -94,7 +94,7 @@ pub fn run(args: ExplainArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> 
         }
     };
 
-    if args.json {
+    if rpmx_core::output::json() {
         let document = crate::commands::report::success("explain", value);
         println!(
             "{}",
@@ -113,6 +113,7 @@ pub fn run(args: ExplainArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> 
 
 fn step(step: &rpmx_core::PlannedStep) -> serde_json::Value {
     serde_json::json!({
+        "label": step.label,
         "uses": step.uses,
         "command": step.command,
         "args": step.args,

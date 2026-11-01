@@ -123,6 +123,18 @@ pub mod codes {
         FETCH_007 = "RPMX-FETCH-007",
         /// A recipe file cannot be read from disk.
         IO_001 = "RPMX-IO-001",
+        /// A recipe file or an included fragment cannot be read or resolved.
+        INCLUDE_001 = "RPMX-INCLUDE-001",
+        /// A top-level section is defined in more than one recipe file.
+        INCLUDE_002 = "RPMX-INCLUDE-002",
+        /// The merged recipe has no `schema` or no `package` section.
+        INCLUDE_003 = "RPMX-INCLUDE-003",
+        /// An include path escapes the root recipe's directory.
+        INCLUDE_004 = "RPMX-INCLUDE-004",
+        /// Recipe includes form a cycle.
+        INCLUDE_005 = "RPMX-INCLUDE-005",
+        /// An included fragment declares `schema` instead of leaving it to the root.
+        INCLUDE_006 = "RPMX-INCLUDE-006",
         /// An init target already exists and --force was not given.
         INIT_001 = "RPMX-INIT-001",
         /// A built package violates package policy.

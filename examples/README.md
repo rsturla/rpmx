@@ -2,6 +2,13 @@
 
 Design artifacts, not tested builds.
 
+The buildable examples name `../fedora-44-build.profile.yaml` in `build.root`, so they
+resolve their own build root without extra flags:
+
+```console
+rpmx build examples/jq/package.yaml
+```
+
 | Example | Demonstrates |
 |---|---|
 | [`curl/`](curl/) | A conventional C/CMake package with features, subpackages, typed actions, tests, OCI/HTTPS locators, and a side-by-side spec. |
@@ -15,7 +22,7 @@ Design artifacts, not tested builds.
 | [`zlib/`](zlib/) | **Tested.** Autotools library + devel split; installed test compiles against the packaged headers. |
 | [`xz/`](xz/) | **Tested.** Autotools; `xz-libs`, `xz-devel` and `xz`; versioned `liblzma` provides and CLI symlinks. |
 | [`lua/`](lua/) | **Tested.** Makefile project; `lua` and `lua-devel`; installed interpreter test. |
-| [`jq/`](jq/) | **Tested.** Autotools with a system `oniguruma` dependency; `libjq`, `libjq-devel` and `jq`; installed JSON test. |
+| [`jq/`](jq/) | **Tested.** The split example: `source`, `build`, `outputs` and `tests` live in separate files; Autotools with a system `oniguruma` dependency; `libjq`, `libjq-devel` and `jq`; installed JSON test. |
 | [`pyhello/`](pyhello/) | **Tested.** Pure-Python wheel, noarch output, separately resolved test dependency. |
 | [`hello-daemon/`](hello-daemon/) | **Tested.** A systemd service with unit, sysusers, tmpfiles, scriptlets and `%config(noreplace)`. |
 

@@ -120,7 +120,7 @@ pub fn run(args: DoctorArgs) -> Result<(), rpmx_core::Error> {
 
     let failed = missing_core || checks.iter().any(|check| check.status == "fail");
 
-    if args.json {
+    if rpmx_core::output::json() {
         let value = serde_json::json!({
             "schema": 1,
             "ok": !failed,

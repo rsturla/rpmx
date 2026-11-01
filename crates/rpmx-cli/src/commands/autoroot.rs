@@ -676,6 +676,30 @@ outputs:
     }
 
     #[test]
+    fn examples_name_their_own_build_root() {
+        let examples = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples");
+        let mut checked = 0;
+        for entry in std::fs::read_dir(examples).expect("examples directory") {
+            let path = entry.expect("entry").path().join("package.yaml");
+            let Ok(bundle) = rpmx_core::load_recipe_bundle(&path) else {
+                // curl and libfoo are design artifacts for fields that do not
+                // exist yet; they cannot build and are not covered here.
+                continue;
+            };
+            let plan = plan(&bundle.recipe);
+            let root = super::requirement(&bundle.recipe, &plan, &bundle.root, None, "x86_64")
+                .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+            assert!(
+                root.is_some(),
+                "{} declares no build.root; examples must build with `rpmx build FILE`",
+                path.display()
+            );
+            checked += 1;
+        }
+        assert!(checked >= 10, "only checked {checked} examples");
+    }
+
+    #[test]
     fn inline_roots_are_validated_before_any_resolution() {
         let directory = tempfile::tempdir().expect("tempdir");
         let recipe = recipe(

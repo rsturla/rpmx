@@ -23,13 +23,13 @@ pub fn resolve(args: RootResolveArgs) -> Result<(), Error> {
         .and_then(|value| value.to_str())
         .unwrap_or("root");
     let name = profile.name(fallback);
-    let cache = cache_dir(args.cache.as_deref())?;
+    let cache = cache_dir(args.cache.cache.as_deref())?;
     let (work, temporary) = scratch(args.work.as_deref())?;
 
     let result = resolve_profile(&profile, &name, &work, &cache).and_then(|lock| {
         emit_lock(&lock, output)?;
         if args.output.is_some() {
-            if args.json {
+            if rpmx_core::output::json() {
                 print_json("root-resolve", &lock)?;
             } else {
                 println!(
@@ -65,7 +65,7 @@ pub fn assemble(args: RootAssembleArgs) -> Result<(), Error> {
             })?,
     };
     let root = absolute(&root)?;
-    let cache = cache_dir(args.cache.as_deref())?;
+    let cache = cache_dir(args.cache.cache.as_deref())?;
     let (work, temporary) = scratch(args.work.as_deref())?;
 
     let result = assemble_root(
@@ -81,7 +81,7 @@ pub fn assemble(args: RootAssembleArgs) -> Result<(), Error> {
         lock.root_digest = Some(digest.clone());
         emit_lock(&lock, output)?;
         if output.is_some() {
-            if args.json {
+            if rpmx_core::output::json() {
                 print_json("root-assemble", &lock)?;
             } else {
                 println!(
@@ -103,7 +103,7 @@ pub fn assemble(args: RootAssembleArgs) -> Result<(), Error> {
 
 pub fn digest(args: RootDigestArgs) -> Result<(), Error> {
     let digest = tree_digest(&args.root)?;
-    if args.json {
+    if rpmx_core::output::json() {
         let value = crate::commands::report::success(
             "root-digest",
             serde_json::json!({ "root_digest": digest }),

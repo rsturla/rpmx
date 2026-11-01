@@ -14,6 +14,8 @@ sources:
       - kind: https
         url: https://tukaani.org/xz/xz-5.6.4.tar.gz
 build:
+  root:
+    profile: ../fedora-44-build.profile.yaml
   dependencies:
     tools: [gcc, make, bash]
   pipeline:

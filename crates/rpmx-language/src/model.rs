@@ -637,3 +637,36 @@ pub struct Test {
     #[serde(default)]
     pub pipeline: Option<Vec<Step>>,
 }
+
+
+/// One YAML file in a recipe bundle.
+///
+/// The root recipe and every included fragment use this shape. A fragment may
+/// omit `schema`; it must not declare one. Every section may appear in only
+/// one file across the bundle.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RecipeFragment {
+    #[serde(default)]
+    pub schema: Option<u32>,
+    #[serde(default)]
+    pub include: Vec<String>,
+    #[serde(default)]
+    pub package: Option<Package>,
+    #[serde(default)]
+    pub vars: Option<BTreeMap<String, Value>>,
+    #[serde(default)]
+    pub build: Option<Build>,
+    #[serde(default)]
+    pub sources: Option<Vec<Source>>,
+    #[serde(default)]
+    pub patches: Option<Vec<Patch>>,
+    #[serde(default, rename = "source-assembly")]
+    pub source_assembly: Option<SourceAssembly>,
+    #[serde(default)]
+    pub matrix: Option<Matrix>,
+    #[serde(default)]
+    pub outputs: Option<Vec<Output>>,
+    #[serde(default)]
+    pub tests: Option<Vec<Test>>,
+}

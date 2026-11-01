@@ -26,6 +26,8 @@ sources:
         url: https://github.com/facebook/zstd/releases/download/v1.5.7/zstd-1.5.7.tar.gz
 
 build:
+  root:
+    profile: ../fedora-44-build.profile.yaml
   dependencies:
     tools: [gcc, make, bash]
   pipeline:

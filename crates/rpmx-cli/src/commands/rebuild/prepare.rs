@@ -31,7 +31,7 @@ pub(super) fn prepare(
     request: &RebuildRequest<'_>,
     signing: Option<&rpmx_rpm::sign::SigningKey>,
 ) -> Result<RebuildState, Error> {
-    let work = crate::commands::WorkDir::new()?;
+    let work = crate::commands::WorkDir::new("rebuild")?;
     let extracted = extract_srpm(request.file, work.path())?;
     // Read the authoritative lock before unpacking the snapshot. The snapshot
     // is user-controlled recipe data and must not be able to replace it.
@@ -85,7 +85,7 @@ pub(super) fn prepare(
     let policy = reconcile_policy(request.policy, locked_policy)?;
 
     let recipe_path = work.path().join("package.yaml");
-    let (recipe, plan) = load_plan(
+    let (bundle, plan) = load_plan(
         &recipe_path,
         request.arch,
         Some(pipelines.as_path()),
@@ -217,7 +217,7 @@ pub(super) fn prepare(
         work,
         extracted,
         package_lock,
-        recipe,
+        recipe: bundle.recipe,
         cell: selected_cell,
         build,
         stage,

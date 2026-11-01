@@ -72,3 +72,26 @@ fn every_template_lints_clean() {
         assert!(lint.status.success(), "{template}: {lint:?}");
     }
 }
+
+#[test]
+fn init_can_split_the_recipe_into_sections() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let target = directory.path().join("split-hello");
+    let output = rpmx_in(
+        directory.path(),
+        &["init", target.to_str().unwrap(), "--split"],
+    );
+    assert!(output.status.success(), "{output:?}");
+    let recipe = std::fs::read_to_string(target.join("package.yaml")).expect("recipe");
+    assert!(recipe.contains("include:"), "{recipe}");
+    for section in [
+        "build.yaml",
+        "outputs.yaml",
+        "tests.yaml",
+        "source-assembly.yaml",
+    ] {
+        assert!(target.join(section).is_file(), "missing {section}");
+    }
+    let lint = rpmx_in(&target, &["lint"]);
+    assert!(lint.status.success(), "{lint:?}");
+}

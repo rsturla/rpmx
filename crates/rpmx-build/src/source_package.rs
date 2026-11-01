@@ -9,10 +9,21 @@ use rpmx_language::steps;
 use rpmx_root::root::RootLock;
 use rpmx_store::srpm::{self, LockStep};
 
+/// One included recipe fragment embedded next to the root recipe.
+#[derive(Debug, Clone)]
+pub struct RecipeInclude {
+    /// Path relative to the root recipe, using `/`.
+    pub name: String,
+    pub bytes: Vec<u8>,
+}
+
 pub struct SourcePackageOptions<'a> {
     pub recipe: &'a Recipe,
     pub plan: &'a Plan,
     pub recipe_bytes: &'a [u8],
+    /// Bundle digest covering the root recipe and every fragment.
+    pub recipe_digest: Option<&'a str>,
+    pub recipe_includes: &'a [RecipeInclude],
     pub step_root: Option<&'a Path>,
     pub sources: &'a Path,
     pub source_date_epoch: u32,
@@ -33,7 +44,11 @@ pub fn prepare_source_packages(
                 | "RPMX-MANIFEST.json"
                 | "RPMX-STEPS.json"
                 | "root.lock.json"
-        ) {
+        ) || options
+            .recipe_includes
+            .iter()
+            .any(|include| include.name == source.path)
+        {
             return Err(Error::new(
                 codes::SRPM_007,
                 format!("source file '{}' uses a reserved SRPM name", source.path),
@@ -41,7 +56,10 @@ pub fn prepare_source_packages(
         }
     }
 
-    let recipe_digest = srpm::sha512_hex(options.recipe_bytes);
+    let recipe_digest = options
+        .recipe_digest
+        .map(str::to_string)
+        .unwrap_or_else(|| srpm::sha512_hex(options.recipe_bytes));
     let (steps, step_files) = collect_local_steps(options.plan, options.step_root)?;
     let root_lock = match options.root_lock {
         Some(lock) => {
@@ -112,6 +130,16 @@ pub fn prepare_source_packages(
                 mode: 0o644,
             },
         ];
+        files.extend(
+            options
+                .recipe_includes
+                .iter()
+                .map(|include| SourcePackageFile {
+                    path: include.name.clone(),
+                    data: include.bytes.clone(),
+                    mode: 0o644,
+                }),
+        );
         files.extend(step_files.iter().cloned());
         if let Some((text, _)) = &root_lock {
             files.push(SourcePackageFile {

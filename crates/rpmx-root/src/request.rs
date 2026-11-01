@@ -59,8 +59,29 @@ pub fn resolve(options: RootRequestOptions<'_>) -> Result<RootRequest> {
         (None, None) if options.allow_host => Ok(RootRequest::Host),
         (None, None) => Err(Error::new(
             codes::ROOT_016,
-            "a locked root is required; pass --root-lock and --root, \
-             or --unsafe-host-root",
+            "no build root: add `build.root` to the recipe, pass --profile FILE, \
+             pass --root-lock and --root, or use --unsafe-host-root",
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{resolve, RootRequestOptions};
+
+    #[test]
+    fn a_missing_root_points_at_the_recipe_field() {
+        let error = match resolve(RootRequestOptions {
+            lock: None,
+            root: None,
+            allow_host: false,
+            arch: "x86_64",
+            verify_digest: false,
+        }) {
+            Ok(_) => panic!("a root was resolved without any input"),
+            Err(error) => error,
+        };
+        assert!(error.message.contains("build.root"), "{}", error.message);
+        assert!(error.message.contains("--profile"), "{}", error.message);
     }
 }

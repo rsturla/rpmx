@@ -5,6 +5,7 @@ use serde::Serialize;
 
 use rpmx_core::error::codes;
 use rpmx_core::model::Recipe;
+use rpmx_core::RecipeBundle;
 use rpmx_core::plan::Plan;
 use rpmx_core::Error;
 
@@ -65,14 +66,15 @@ pub fn run(args: LintArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
         dist_tag: args.policy.dist_tag.as_deref(),
         build_release: args.policy.build_release,
     })?;
-    let (recipe, plan) = load_plan(
+    let (bundle, plan) = load_plan(
         &args.file,
         &args.arch,
         pipeline_dir,
         false,
         resolved.plan_policy(),
     )?;
-    let diagnostics = check(&recipe, &plan, &args.file);
+    let mut diagnostics = check(&bundle.recipe, &plan, &bundle.root);
+    attach_owners(&mut diagnostics, &bundle);
     let errors = diagnostics
         .iter()
         .filter(|diagnostic| diagnostic.severity == Severity::Error)
@@ -80,7 +82,7 @@ pub fn run(args: LintArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
     let warnings = diagnostics.len() - errors;
     let failed = errors > 0 || (args.strict && warnings > 0);
 
-    if args.json {
+    if rpmx_core::output::json() {
         let value = serde_json::json!({
             "schema": 1,
             "ok": !failed,
@@ -116,6 +118,33 @@ pub fn run(args: LintArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
         .reported());
     }
     Ok(())
+}
+
+/// Prefix a field path with the file that owns its top-level section.
+fn attach_owners(diagnostics: &mut [Diagnostic], bundle: &RecipeBundle) {
+    let root_dir = bundle.root.parent().unwrap_or(std::path::Path::new("."));
+    for diagnostic in diagnostics {
+        let Some(field) = &diagnostic.path else {
+            continue;
+        };
+        let section = field.split(['.', '[']).next().unwrap_or(field);
+        let key = if section == "source_assembly" {
+            "source-assembly"
+        } else {
+            section
+        };
+        let Some(owner) = bundle.owner(key) else {
+            continue;
+        };
+        if owner == bundle.root {
+            continue;
+        }
+        let name = owner
+            .strip_prefix(root_dir)
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|_| owner.display().to_string());
+        diagnostic.path = Some(format!("{name}: {field}"));
+    }
 }
 
 fn render_diagnostic(diagnostic: &Diagnostic) -> String {

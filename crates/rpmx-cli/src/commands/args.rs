@@ -14,6 +14,27 @@ pub struct OptionalSigningArgs {
     pub signing_timestamp: Option<u32>,
 }
 
+/// Cache selection shared by every command that reads or writes the CAS.
+#[derive(Debug, Clone, clap::Args)]
+pub struct CacheArgs {
+    /// Content-addressed cache (default: $XDG_CACHE_HOME/rpmx/cas).
+    #[arg(long, value_name = "DIR")]
+    pub cache: Option<PathBuf>,
+}
+
+/// Execution knobs shared by every command that runs build steps.
+#[derive(Debug, Clone, clap::Args)]
+pub struct RuntimeArgs {
+    #[command(flatten)]
+    pub cache: CacheArgs,
+    /// Parallelism exposed to build steps as JOBS.
+    #[arg(long, default_value_t = crate::commands::default_jobs())]
+    pub jobs: NonZeroU32,
+    /// Wall-clock limit for each step in seconds (must be at least 1).
+    #[arg(long, default_value_t = NonZeroU64::new(3600).unwrap())]
+    pub step_timeout: NonZeroU64,
+}
+
 #[derive(Debug, clap::Args)]
 pub struct BuildArgs {
     /// Recipe to build. (default: ./package.yaml).
@@ -46,9 +67,8 @@ pub struct BuildArgs {
     /// Build one matrix cell.
     #[arg(long)]
     pub cell: Option<String>,
-    /// Content-addressed cache (default: $XDG_CACHE_HOME/rpmx/cas).
-    #[arg(long)]
-    pub cache: Option<PathBuf>,
+    #[command(flatten)]
+    pub runtime: RuntimeArgs,
     /// Content-addressed acquisition proxy.
     #[arg(long)]
     pub proxy: Option<String>,
@@ -67,12 +87,6 @@ pub struct BuildArgs {
     /// Use the host root for source assembly (unsafe).
     #[arg(long)]
     pub unsafe_host_root: bool,
-    /// Parallelism exposed as JOBS.
-    #[arg(long, default_value_t = crate::commands::default_jobs())]
-    pub jobs: NonZeroU32,
-    /// Wall-clock limit for each step in seconds (must be at least 1).
-    #[arg(long, default_value_t = NonZeroU64::new(3600).unwrap())]
-    pub step_timeout: NonZeroU64,
     /// Run build-stage and installed-stage tests.
     #[arg(long)]
     pub run_tests: bool,
@@ -96,9 +110,6 @@ pub struct BuildArgs {
     pub test_root_lock: Option<PathBuf>,
     #[command(flatten)]
     pub signing: OptionalSigningArgs,
-    /// Emit machine-readable output.
-    #[arg(long)]
-    pub json: bool,
 }
 
 #[derive(Debug, clap::Args)]
@@ -119,12 +130,8 @@ pub struct RebuildArgs {
     /// Build one matrix cell (required when the plan has several).
     #[arg(long)]
     pub cell: Option<String>,
-    /// Parallelism exposed as JOBS.
-    #[arg(long, default_value_t = crate::commands::default_jobs())]
-    pub jobs: NonZeroU32,
-    /// Wall-clock limit for each step in seconds (must be at least 1).
-    #[arg(long, default_value_t = NonZeroU64::new(3600).unwrap())]
-    pub step_timeout: NonZeroU64,
+    #[command(flatten)]
+    pub runtime: RuntimeArgs,
     /// Run steps inside this builder image instead of host bwrap.
     #[arg(long, conflicts_with = "root_lock")]
     pub root_image: Option<String>,
@@ -134,9 +141,6 @@ pub struct RebuildArgs {
     /// Assembled root directory.
     #[arg(long)]
     pub root: Option<PathBuf>,
-    /// Content-addressed cache (default: $XDG_CACHE_HOME/rpmx/cas).
-    #[arg(long)]
-    pub cache: Option<PathBuf>,
     /// Do not use the network; fail if the root is not cached.
     #[arg(long)]
     pub offline: bool,
@@ -163,9 +167,6 @@ pub struct RebuildArgs {
     pub test_root_lock: Option<PathBuf>,
     #[command(flatten)]
     pub signing: OptionalSigningArgs,
-    /// Emit machine-readable output.
-    #[arg(long)]
-    pub json: bool,
     /// Suppress reporting when this command is used as a pipeline step.
     #[arg(skip)]
     pub quiet: bool,
@@ -184,9 +185,6 @@ pub struct LintArgs {
     /// Treat warnings as errors.
     #[arg(long)]
     pub strict: bool,
-    /// Emit machine-readable output.
-    #[arg(long)]
-    pub json: bool,
 }
 
 #[derive(Debug, clap::Args)]
@@ -202,22 +200,32 @@ pub struct BumpArgs {
     /// Do not download sources to refresh their digests.
     #[arg(long)]
     pub no_fetch: bool,
-    /// Emit machine-readable output.
-    #[arg(long)]
-    pub json: bool,
 }
 
 #[derive(Debug, clap::Args)]
 pub struct ShellArgs {
-    /// Assembled root to use as /.
+    /// Recipe whose build root to enter (default: ./package.yaml).
+    #[arg(default_value = "package.yaml")]
+    pub file: PathBuf,
+    #[command(flatten)]
+    pub policy: crate::cli::PolicyArgs,
+    /// Target architecture used for templates.
+    #[arg(long, default_value = rpmx_core::arch::native_arch())]
+    pub arch: String,
+    /// Assembled root to use as /. Resolved from the recipe when omitted.
     #[arg(long)]
-    pub root: PathBuf,
-    /// Host workspace, mounted at /tmp/build.
+    pub root: Option<PathBuf>,
+    /// Host workspace, mounted at /tmp/build (default: the current directory).
     #[arg(long)]
-    pub workspace: PathBuf,
-    /// Host stage, mounted at /tmp/stage.
+    pub workspace: Option<PathBuf>,
+    /// Host stage, mounted at /tmp/stage (default: a temporary directory).
     #[arg(long)]
-    pub stage: PathBuf,
+    pub stage: Option<PathBuf>,
+    #[command(flatten)]
+    pub cache: CacheArgs,
+    /// Do not use the network; fail if the root is not cached.
+    #[arg(long)]
+    pub offline: bool,
     /// Run this command instead of an interactive shell.
     #[arg(long, value_name = "COMMAND")]
     pub command: Option<String>,
@@ -236,32 +244,19 @@ pub struct ExplainArgs {
     pub arch: String,
     #[command(flatten)]
     pub policy: crate::cli::PolicyArgs,
-    /// Emit machine-readable output.
-    #[arg(long)]
-    pub json: bool,
 }
 
 #[derive(Debug, clap::Args)]
-pub struct StepsListArgs {
-    /// Emit machine-readable output.
-    #[arg(long)]
-    pub json: bool,
-}
+pub struct StepsListArgs {}
 
 #[derive(Debug, clap::Args)]
 pub struct StepsShowArgs {
     /// Step name, such as cmake/configure.
     pub name: String,
-    /// Emit machine-readable output.
-    #[arg(long)]
-    pub json: bool,
 }
 
 #[derive(Debug, clap::Args)]
 pub struct DoctorArgs {
-    /// Emit machine-readable output.
-    #[arg(long)]
-    pub json: bool,
     /// Exit non-zero when a check fails.
     #[arg(long)]
     pub strict: bool,
@@ -280,6 +275,9 @@ pub struct InitArgs {
     /// Overwrite files that already exist.
     #[arg(long)]
     pub force: bool,
+    /// Write one file per top-level section and compose them with `include:`.
+    #[arg(long)]
+    pub split: bool,
 }
 
 #[derive(Debug, clap::Args)]
@@ -310,18 +308,11 @@ pub struct TestArgs {
     /// Assembled root for the test environment.
     #[arg(long, requires = "root_lock")]
     pub root: Option<PathBuf>,
-    /// Content-addressed cache (default: $XDG_CACHE_HOME/rpmx/cas).
-    #[arg(long)]
-    pub cache: Option<PathBuf>,
+    #[command(flatten)]
+    pub runtime: RuntimeArgs,
     /// Do not use the network; fail on a cache miss.
     #[arg(long)]
     pub offline: bool,
-    /// Parallelism exposed as JOBS.
-    #[arg(long, default_value_t = crate::commands::default_jobs())]
-    pub jobs: NonZeroU32,
-    /// Emit machine-readable output.
-    #[arg(long)]
-    pub json: bool,
 }
 
 #[derive(Debug, clap::Args)]
@@ -355,9 +346,6 @@ pub struct PlanArgs {
     pub arch: String,
     #[command(flatten)]
     pub policy: crate::cli::PolicyArgs,
-    /// Emit the plan as JSON.
-    #[arg(long)]
-    pub json: bool,
 }
 
 #[derive(Debug, clap::Args)]
@@ -365,18 +353,14 @@ pub struct FetchArgs {
     /// Recipe whose sources should be fetched. (default: ./package.yaml).
     #[arg(default_value = "package.yaml")]
     pub file: PathBuf,
-    /// CAS directory (default: $XDG_CACHE_HOME/rpmx/cas).
-    #[arg(long)]
-    pub cache: Option<PathBuf>,
+    #[command(flatten)]
+    pub cache: CacheArgs,
     /// Content-addressed acquisition proxy.
     #[arg(long)]
     pub proxy: Option<String>,
     /// Do not use the network; fail on a cache miss.
     #[arg(long)]
     pub offline: bool,
-    /// Emit machine-readable output.
-    #[arg(long)]
-    pub json: bool,
 }
 
 #[derive(Debug, clap::Args)]
@@ -392,9 +376,8 @@ pub struct SourceArgs {
     pub runner: String,
     #[command(flatten)]
     pub policy: crate::cli::PolicyArgs,
-    /// CAS directory (default: $XDG_CACHE_HOME/rpmx/cas).
-    #[arg(long)]
-    pub cache: Option<PathBuf>,
+    #[command(flatten)]
+    pub runtime: RuntimeArgs,
     /// Content-addressed acquisition proxy.
     #[arg(long)]
     pub proxy: Option<String>,
@@ -419,15 +402,6 @@ pub struct SourceArgs {
     /// Reproducible timestamp in Unix seconds (default: package.source-date-epoch).
     #[arg(long)]
     pub source_date_epoch: Option<u32>,
-    /// Parallelism exposed as JOBS.
-    #[arg(long, default_value_t = crate::commands::default_jobs())]
-    pub jobs: NonZeroU32,
-    /// Wall-clock limit for each step in seconds (must be at least 1).
-    #[arg(long, default_value_t = NonZeroU64::new(3600).unwrap())]
-    pub step_timeout: NonZeroU64,
-    /// Emit machine-readable output.
-    #[arg(long)]
-    pub json: bool,
     /// Suppress reporting when this command is used as a pipeline step.
     #[arg(skip)]
     pub quiet: bool,
@@ -440,15 +414,18 @@ pub struct SrpmArgs {
     pub file: PathBuf,
     #[command(flatten)]
     pub policy: crate::cli::PolicyArgs,
-    /// Directory containing the source snapshot (flat files).
+    /// Directory containing a prebuilt source snapshot; omit to assemble one.
     #[arg(long)]
-    pub sources: PathBuf,
+    pub sources: Option<PathBuf>,
     /// Output directory.
     #[arg(long, default_value = ".")]
     pub output: PathBuf,
     /// Build architecture recorded in the source header.
     #[arg(long, default_value = rpmx_core::arch::native_arch())]
     pub arch: String,
+    /// Runner: auto, bwrap or qemu.
+    #[arg(long, default_value = "auto", value_parser = ["auto", "bwrap", "qemu"])]
+    pub runner: String,
     /// Reproducible timestamp in Unix seconds (default: package.source-date-epoch).
     #[arg(long)]
     pub source_date_epoch: Option<u32>,
@@ -458,11 +435,22 @@ pub struct SrpmArgs {
     /// Root lock to embed in the SRPM.
     #[arg(long)]
     pub root_lock: Option<PathBuf>,
+    /// Assembled root for source assembly.
+    #[arg(long)]
+    pub root: Option<PathBuf>,
+    /// Use the host root for source assembly (unsafe).
+    #[arg(long)]
+    pub unsafe_host_root: bool,
+    #[command(flatten)]
+    pub runtime: RuntimeArgs,
+    /// Content-addressed acquisition proxy.
+    #[arg(long)]
+    pub proxy: Option<String>,
+    /// Do not use the network; fail on a cache miss.
+    #[arg(long)]
+    pub offline: bool,
     #[command(flatten)]
     pub signing: OptionalSigningArgs,
-    /// Emit machine-readable output.
-    #[arg(long)]
-    pub json: bool,
     /// Suppress reporting when this command is used as a pipeline step.
     #[arg(skip)]
     pub quiet: bool,
@@ -481,12 +469,8 @@ pub struct RootResolveArgs {
     /// Keep the resolver scratch directory.
     #[arg(long)]
     pub keep: bool,
-    /// Content-addressed cache (default: $XDG_CACHE_HOME/rpmx/cas).
-    #[arg(long)]
-    pub cache: Option<PathBuf>,
-    /// Emit machine-readable output.
-    #[arg(long)]
-    pub json: bool,
+    #[command(flatten)]
+    pub cache: CacheArgs,
 }
 
 #[derive(Debug, clap::Args)]
@@ -499,27 +483,20 @@ pub struct RootAssembleArgs {
     /// Write the lock with root_digest here (default: standard output).
     #[arg(long, short)]
     pub output: Option<PathBuf>,
-    /// Content-addressed cache (default: $XDG_CACHE_HOME/rpmx/cas).
-    #[arg(long)]
-    pub cache: Option<PathBuf>,
+    #[command(flatten)]
+    pub cache: CacheArgs,
     /// Assembly scratch directory (default: a temporary directory).
     #[arg(long)]
     pub work: Option<PathBuf>,
     /// Keep the assembly scratch directory.
     #[arg(long)]
     pub keep: bool,
-    /// Emit machine-readable output.
-    #[arg(long)]
-    pub json: bool,
 }
 
 #[derive(Debug, clap::Args)]
 pub struct RootDigestArgs {
     /// Assembled root directory.
     pub root: PathBuf,
-    /// Emit machine-readable output.
-    #[arg(long)]
-    pub json: bool,
 }
 
 #[derive(Debug, clap::Args)]
@@ -559,9 +536,6 @@ pub struct RepoArgs {
     pub output: PathBuf,
     #[command(flatten)]
     pub signing: OptionalSigningArgs,
-    /// Emit machine-readable output.
-    #[arg(long)]
-    pub json: bool,
 }
 
 #[derive(Debug, clap::Args)]
@@ -579,9 +553,6 @@ pub struct KeygenArgs {
     /// Read the key passphrase from this environment variable.
     #[arg(long)]
     pub passphrase_env: Option<String>,
-    /// Emit machine-readable output.
-    #[arg(long)]
-    pub json: bool,
 }
 
 #[derive(Debug, clap::Args)]
@@ -598,9 +569,6 @@ pub struct SignArgs {
     /// RPM files to sign.
     #[arg(required = true)]
     pub rpms: Vec<PathBuf>,
-    /// Emit machine-readable output.
-    #[arg(long)]
-    pub json: bool,
 }
 
 #[derive(Debug, clap::Args)]
@@ -617,10 +585,6 @@ pub struct GcArgs {
     /// Report what would be removed without deleting it.
     #[arg(long)]
     pub dry_run: bool,
-    /// CAS directory (default: $XDG_CACHE_HOME/rpmx/cas).
-    #[arg(long)]
-    pub cache: Option<PathBuf>,
-    /// Emit machine-readable output.
-    #[arg(long)]
-    pub json: bool,
+    #[command(flatten)]
+    pub cache: CacheArgs,
 }

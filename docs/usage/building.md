@@ -71,7 +71,7 @@ rpmx source --locked
 
 `package.lock.json` records:
 
-- the recipe digest;
+- the recipe bundle digest and every recipe file with its digest;
 - the effective source date epoch;
 - policy (dist tag, build release);
 - sources (name and digest);
@@ -152,8 +152,8 @@ uses the embedded `root.lock.json`. If the root is not cached, it assembles it
 from the CAS automatically. `--offline` fails if the root or a source is
 missing. `--root` or `--root-image` override the embedded root.
 
-The SRPM embeds the recipe, package lock, resolved step definitions, sources and
-patches. It does not need the original checkout. A rebuild uses the embedded
+The SRPM embeds the recipe and every included fragment, the package lock,
+resolved step definitions, sources and patches. It does not need the original checkout. A rebuild uses the embedded
 step definitions and rejects a digest mismatch (`RPMX-SRPM-011`).
 
 ---

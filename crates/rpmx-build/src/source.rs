@@ -147,6 +147,7 @@ pub fn apply_patches(
             )
         })?;
         let step = rpmx_language::plan::PlannedStep {
+            label: format!("patch:{}", patch.file),
             uses: format!("patch:{}", patch.file),
             command: Some("patch".to_string()),
             args: vec![

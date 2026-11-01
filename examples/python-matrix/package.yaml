@@ -22,6 +22,8 @@ package:
       email: jane@example.org
 
 build:
+  root:
+    profile: ../fedora-44-build.profile.yaml
   pipeline:
     - uses: python/build-wheel
       with:

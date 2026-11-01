@@ -65,6 +65,7 @@ pub fn check_build_tools(
     ];
     args.extend(candidates.iter().cloned());
     let step = PlannedStep {
+        label: "tool-probe".to_string(),
         uses: "tool-probe".to_string(),
         command: Some("sh".to_string()),
         args,

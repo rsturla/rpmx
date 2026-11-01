@@ -70,6 +70,9 @@ pub struct PlannedCell {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct PlannedStep {
+    /// Stable display identity. Explicit `name`, then `uses`, then a stable
+    /// ordinal such as `runs#2`; never derived from script content.
+    pub label: String,
     pub uses: String,
     pub command: Option<String>,
     pub args: Vec<String>,
@@ -308,6 +311,7 @@ fn plan_source_assembly(
         step_root,
         "source-assembly.pipeline",
         allow_builtin_override,
+        "source",
     )?;
 
     let last_bump = steps
@@ -332,20 +336,57 @@ fn plan_source_assembly(
     }))
 }
 
+/// Assign a stable, unique display label to every step in one pipeline.
+///
+/// An explicit `name` wins, then `uses`, then the first `argv` word. An
+/// anonymous `runs:` step is numbered by its position among anonymous steps,
+/// never by its script text, so two identical scripts still get distinct
+/// labels.
+fn step_labels(steps: &[Step], scope: &str) -> Vec<String> {
+    let mut used = BTreeSet::new();
+    let mut runs = 0usize;
+    steps
+        .iter()
+        .map(|step| {
+            let base = if let Some(name) = &step.name {
+                name.clone()
+            } else if let Some(uses) = &step.uses {
+                uses.clone()
+            } else if let Some(argv) = &step.argv {
+                argv.first().cloned().unwrap_or_else(|| "argv".to_string())
+            } else {
+                runs += 1;
+                format!("{scope}:runs#{runs}")
+            };
+            let mut label = base.clone();
+            let mut suffix = 1usize;
+            while !used.insert(label.clone()) {
+                suffix += 1;
+                label = format!("{base}#{suffix}");
+            }
+            label
+        })
+        .collect()
+}
+
 pub(crate) fn plan_steps(
     steps: &[Step],
     step_root: Option<&std::path::Path>,
     context: &str,
     allow_builtin_override: bool,
+    scope: &str,
 ) -> Result<Vec<PlannedStep>> {
+    let labels = step_labels(steps, scope);
     let mut planned = Vec::new();
     for (index, step) in steps.iter().enumerate() {
         let at = |field: &str| format!("{context}[{index}].{field}");
+        let label = labels[index].clone();
 
         if let Some(uses) = &step.uses {
             let resolved =
                 steps::resolve(uses, step_root, step.with.as_ref(), allow_builtin_override)?;
             planned.push(PlannedStep {
+                label,
                 uses: uses.clone(),
                 command: Some(resolved.command),
                 args: resolved.args,
@@ -367,6 +408,7 @@ pub(crate) fn plan_steps(
                 Error::new(codes::STEP_002, "argv must not be empty").at(at("argv"))
             })?;
             planned.push(PlannedStep {
+                label,
                 uses: step.label(),
                 command: Some(command.clone()),
                 args: args.to_vec(),
@@ -388,6 +430,7 @@ pub(crate) fn plan_steps(
             .as_ref()
             .ok_or_else(|| Error::new(codes::STEP_001, "step has no command").at(at("runs")))?;
         planned.push(PlannedStep {
+            label,
             uses: step.label(),
             command: Some("sh".to_string()),
             args: vec!["-c".to_string(), runs.clone()],
@@ -516,6 +559,7 @@ fn plan_cell(
         options.step_root,
         "build.pipeline",
         options.allow_builtin_override,
+        "build",
     )?;
     for step in &mut pipeline {
         for (key, value) in &recipe.build.environment {
@@ -545,4 +589,57 @@ fn plan_cell(
         outputs,
         tests,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::step_labels;
+    use crate::model::Step;
+
+    fn runs(text: &str) -> Step {
+        Step {
+            runs: Some(text.to_string()),
+            ..Step::default()
+        }
+    }
+
+    #[test]
+    fn anonymous_steps_are_numbered_not_named_after_their_script() {
+        let labels = step_labels(
+            &[
+                runs("cat > hello.c <<'SOURCE'"),
+                runs("cat > hello.c <<'SOURCE'"),
+            ],
+            "build",
+        );
+        assert_eq!(labels, ["build:runs#1", "build:runs#2"]);
+    }
+
+    #[test]
+    fn repeated_step_names_and_uses_get_distinct_suffixes() {
+        let make = Step {
+            uses: Some("make".to_string()),
+            ..Step::default()
+        };
+        let named = Step {
+            name: Some("make".to_string()),
+            runs: Some("echo hi".to_string()),
+            ..Step::default()
+        };
+        assert_eq!(
+            step_labels(&[make.clone(), make, named], "build"),
+            ["make", "make#2", "make#3"]
+        );
+    }
+
+    #[test]
+    fn explicit_names_win_over_uses_and_run_text() {
+        let step = Step {
+            name: Some("compile".to_string()),
+            uses: Some("make".to_string()),
+            runs: Some("echo hi".to_string()),
+            ..Step::default()
+        };
+        assert_eq!(step_labels(&[step], "build"), ["compile"]);
+    }
 }

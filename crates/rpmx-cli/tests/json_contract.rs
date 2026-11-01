@@ -50,6 +50,24 @@ fn lint_json_is_one_document_on_stdout() {
 }
 
 #[test]
+fn json_is_a_global_flag_on_either_side_of_the_subcommand() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let recipe = directory.path().join("package.yaml");
+    write(&recipe, VALID);
+    for args in [
+        vec!["--json", "explain", "policy", recipe.to_str().unwrap()],
+        vec!["explain", "policy", recipe.to_str().unwrap(), "--json"],
+    ] {
+        let output = rpmx(&args);
+        assert!(output.status.success(), "{output:?}");
+        let value: serde_json::Value =
+            serde_json::from_slice(&output.stdout).expect("one JSON document");
+        assert_eq!(value["schema"], 1);
+        assert_eq!(value["command"], "explain");
+    }
+}
+
+#[test]
 fn recipe_errors_exit_2_and_emit_one_json_document() {
     let directory = tempfile::tempdir().expect("tempdir");
     let recipe = directory.path().join("package.yaml");
@@ -194,6 +212,8 @@ fn failing_guest_step_exits_5_and_keeps_stdout_clean() {
         .unwrap_or_default();
     assert!(message.contains("command:"), "{message}");
     assert!(message.contains("cwd:"), "{message}");
+    assert!(message.contains("workspace:"), "{message}");
+    assert!(message.contains("stage:"), "{message}");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         stderr.contains("before-fail"),
@@ -229,8 +249,8 @@ fn keep_workdir_preserves_a_failed_workspace() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     let path = stderr
         .lines()
-        .find_map(|line| line.strip_prefix("work directory: "))
-        .expect("work directory line");
+        .find_map(|line| line.strip_prefix("work directory (source): "))
+        .expect("labelled work directory line");
     let path = Path::new(path.trim());
     assert!(path.is_dir(), "workspace was not kept: {}", path.display());
     std::fs::remove_dir_all(path).expect("remove kept workspace");

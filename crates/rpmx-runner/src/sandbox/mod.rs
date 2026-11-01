@@ -127,7 +127,11 @@ impl<'a> Sandbox<'a> {
             env.insert(key.clone(), expand(value, self));
         }
 
-        let label = step_label(step, command, &args);
+        let label = if step.label.is_empty() {
+            step.uses.clone()
+        } else {
+            step.label.clone()
+        };
         let request = RunnerRequest {
             command,
             args: &args,
@@ -179,7 +183,9 @@ impl<'a> Sandbox<'a> {
                     "re-run with --keep-workdir to inspect the workspace"
                 };
                 error.message.push_str(&format!(
-                    "\n  command: {rendered}\n  cwd: {cwd}\n  help: {help}"
+                    "\n  command: {rendered}\n  cwd: {cwd}\n  workspace: {}\n  stage: {}\n  help: {help}",
+                    self.config.workspace.display(),
+                    self.config.stage.display()
                 ));
                 Err(error)
             }
@@ -204,25 +210,6 @@ impl Drop for Sandbox<'_> {
 }
 
 /// A readable label for an unnamed inline step.
-fn step_label(step: &PlannedStep, command: &str, args: &[String]) -> String {
-    if step.uses != "<anonymous>" {
-        return step.uses.clone();
-    }
-    let candidate = if command == "sh" {
-        args.get(1)
-            .and_then(|script| script.lines().find(|line| !line.trim().is_empty()))
-            .unwrap_or(command)
-    } else {
-        command
-    };
-    let candidate = candidate.trim();
-    if candidate.chars().count() > 60 {
-        format!("{}…", candidate.chars().take(59).collect::<String>())
-    } else {
-        candidate.to_string()
-    }
-}
-
 fn base_env(sandbox: &Sandbox<'_>) -> Vec<(&'static str, String)> {
     let mut env = vec![
         ("PATH", SANDBOX_PATH.to_string()),

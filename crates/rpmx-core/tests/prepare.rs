@@ -33,6 +33,8 @@ fn source_package_contains_recipe_lock_manifest_and_sources() {
         recipe: &recipe,
         plan: &plan,
         recipe_bytes: RECIPE.as_bytes(),
+        recipe_digest: None,
+        recipe_includes: &[],
         step_root: None,
         sources: sources.path(),
         source_date_epoch: 1_700_000_000,
@@ -64,6 +66,8 @@ fn source_package_rejects_reserved_source_names() {
         recipe: &recipe,
         plan: &plan,
         recipe_bytes: RECIPE.as_bytes(),
+        recipe_digest: None,
+        recipe_includes: &[],
         step_root: None,
         sources: sources.path(),
         source_date_epoch: 1_700_000_000,
@@ -127,6 +131,8 @@ outputs:
         recipe: &recipe,
         plan: &plan,
         recipe_bytes: yaml.as_bytes(),
+        recipe_digest: None,
+        recipe_includes: &[],
         step_root: None,
         sources: sources.path(),
         source_date_epoch: 1_700_000_000,
@@ -265,6 +271,46 @@ outputs:
     );
     assert_eq!(flags("/usr/share/doc/demo/README"), (false, true, false));
     assert_eq!(flags("/etc/demo.conf"), (false, false, true));
+}
+
+#[test]
+fn source_package_embeds_included_recipe_fragments() {
+    use rpmx_core::source_package::RecipeInclude;
+
+    let (recipe, plan) = common::load(RECIPE);
+    let sources = tempfile::tempdir().expect("tempdir");
+    fs::write(sources.path().join("demo-1.0.tar.gz"), b"source").expect("source");
+    let includes = vec![RecipeInclude {
+        name: "build.yaml".to_string(),
+        bytes: b"build:\n  pipeline: []\n".to_vec(),
+    }];
+
+    let packages = prepare_source_packages(SourcePackageOptions {
+        recipe: &recipe,
+        plan: &plan,
+        recipe_bytes: RECIPE.as_bytes(),
+        recipe_digest: Some("sha512:bundle"),
+        recipe_includes: &includes,
+        step_root: None,
+        sources: sources.path(),
+        source_date_epoch: 1_700_000_000,
+        root_lock: None,
+        debuginfo: false,
+        sbom: true,
+    })
+    .expect("prepare SRPM");
+
+    assert!(packages[0]
+        .files
+        .iter()
+        .any(|file| file.path == "build.yaml"));
+    let manifest = packages[0]
+        .files
+        .iter()
+        .find(|file| file.path == "RPMX-MANIFEST.json")
+        .expect("manifest");
+    let text = String::from_utf8_lossy(&manifest.data);
+    assert!(text.contains("sha512:bundle"), "{text}");
 }
 
 #[test]

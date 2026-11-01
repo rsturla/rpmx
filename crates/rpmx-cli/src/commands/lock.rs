@@ -9,9 +9,8 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use rpmx_core::error::codes;
-use rpmx_core::hash::sha512_hex;
-use rpmx_core::model::Recipe;
 use rpmx_core::plan::Plan;
+use rpmx_core::RecipeBundle;
 use rpmx_core::Error;
 
 use crate::commands::{
@@ -25,12 +24,20 @@ pub const SCHEMA: u32 = 1;
 pub struct PackageLock {
     pub schema: u32,
     pub recipe_digest: String,
+    #[serde(default)]
+    pub recipe_files: Vec<LockedRecipeFile>,
     pub source_date_epoch: u32,
     pub policy: LockedPolicy,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub root: Option<LockedRoot>,
     pub sources: Vec<LockedSource>,
     pub cells: Vec<LockedCell>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LockedRecipeFile {
+    pub path: String,
+    pub digest: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -72,6 +79,8 @@ pub struct LockedCell {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LockedStep {
     pub scope: String,
+    #[serde(default)]
+    pub label: String,
     pub uses: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub digest: Option<String>,
@@ -84,11 +93,10 @@ pub fn run(args: LockArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
         build_release: args.policy.build_release,
     })?;
     let policy = resolved.plan_policy();
-    let (recipe, plan) = load_plan(&args.file, &args.arch, pipeline_dir, false, policy)?;
+    let (bundle, plan) = load_plan(&args.file, &args.arch, pipeline_dir, false, policy)?;
     let lock = build(
-        &recipe,
+        &bundle,
         &plan,
-        &args.file,
         policy,
         args.policy.profile.as_deref(),
         &args.arch,
@@ -133,9 +141,8 @@ pub fn run(args: LockArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
 /// Verify that a recipe and plan still match the lock next to the recipe.
 #[allow(clippy::too_many_arguments)]
 pub fn verify(
-    recipe: &Recipe,
+    bundle: &RecipeBundle,
     plan: &Plan,
-    recipe_path: &Path,
     policy: PlanPolicy<'_>,
     profile: Option<&Path>,
     arch: &str,
@@ -143,7 +150,7 @@ pub fn verify(
     active_root: Option<&rpmx_core::root::RootLock>,
     check_root: bool,
 ) -> Result<(), Error> {
-    let path = default_path(recipe_path);
+    let path = default_path(&bundle.root);
     if !path.is_file() {
         return Err(Error::new(
             codes::LOCK_003,
@@ -156,9 +163,8 @@ pub fn verify(
     }
     let existing = read(&path)?;
     let actual = build(
-        recipe,
+        bundle,
         plan,
-        recipe_path,
         policy,
         profile,
         arch,
@@ -200,22 +206,15 @@ pub fn verify(
 
 #[allow(clippy::too_many_arguments)]
 pub fn build(
-    recipe: &Recipe,
+    bundle: &RecipeBundle,
     plan: &Plan,
-    recipe_path: &Path,
     policy: PlanPolicy<'_>,
     profile: Option<&Path>,
     arch: &str,
     explicit_source_date_epoch: Option<u32>,
     active_root: Option<&rpmx_core::root::RootLock>,
 ) -> Result<PackageLock, Error> {
-    let bytes = std::fs::read(recipe_path).map_err(|error| {
-        Error::new(
-            codes::IO_001,
-            format!("cannot read {}: {error}", recipe_path.display()),
-        )
-    })?;
-    let root = match autoroot::requirement(recipe, plan, recipe_path, profile, arch)? {
+    let root = match autoroot::requirement(&bundle.recipe, plan, &bundle.root, profile, arch)? {
         Some(root) => {
             let resolved = active_root
                 .cloned()
@@ -257,18 +256,21 @@ pub fn build(
                 .flat_map(|source| {
                     source.steps.iter().map(|step| LockedStep {
                         scope: "source-assembly".to_string(),
+                        label: step.label.clone(),
                         uses: step.uses.clone(),
                         digest: step.step_digest.clone(),
                     })
                 })
                 .chain(cell.pipeline.iter().map(|step| LockedStep {
                     scope: "build".to_string(),
+                    label: step.label.clone(),
                     uses: step.uses.clone(),
                     digest: step.step_digest.clone(),
                 }))
                 .chain(cell.tests.iter().flat_map(|test| {
                     test.pipeline.iter().map(move |step| LockedStep {
                         scope: format!("test:{}", test.name),
+                        label: step.label.clone(),
                         uses: step.uses.clone(),
                         digest: step.step_digest.clone(),
                     })
@@ -278,14 +280,22 @@ pub fn build(
         .collect();
     Ok(PackageLock {
         schema: SCHEMA,
-        recipe_digest: sha512_hex(&bytes),
-        source_date_epoch: source_date_epoch(recipe, explicit_source_date_epoch),
+        recipe_digest: bundle.digest().to_string(),
+        recipe_files: bundle
+            .files
+            .iter()
+            .map(|file| LockedRecipeFile {
+                path: file.name.clone(),
+                digest: file.digest.clone(),
+            })
+            .collect(),
+        source_date_epoch: source_date_epoch(&bundle.recipe, explicit_source_date_epoch),
         policy: LockedPolicy {
             dist_tag: policy.dist_tag.map(str::to_string),
             build_release: policy.build_release,
         },
         root,
-        sources: recipe
+        sources: bundle.recipe
             .sources
             .iter()
             .map(|source| LockedSource {
@@ -350,6 +360,9 @@ fn differences(old: &PackageLock, new: &PackageLock) -> String {
     if old.recipe_digest != new.recipe_digest {
         fields.push("recipe");
     }
+    if old.recipe_files != new.recipe_files {
+        fields.push("recipe-files");
+    }
     if old.source_date_epoch != new.source_date_epoch {
         fields.push("source-date-epoch");
     }
@@ -407,9 +420,9 @@ outputs:
 
     fn fixture(path: &std::path::Path) -> PackageLock {
         std::fs::write(path, RECIPE).expect("recipe");
-        let recipe = rpmx_core::load_recipe(path).expect("parse");
+        let bundle = rpmx_core::load_recipe_bundle(path).expect("bundle");
         let plan = rpmx_core::plan_with_options(
-            &recipe,
+            &bundle.recipe,
             rpmx_core::PlanOptions {
                 arch: "x86_64",
                 step_root: None,
@@ -420,9 +433,8 @@ outputs:
         )
         .expect("plan");
         build(
-            &recipe,
+            &bundle,
             &plan,
-            path,
             PlanPolicy::default(),
             None,
             "x86_64",
@@ -450,13 +462,27 @@ outputs:
     }
 
     #[test]
+    fn locks_written_before_recipe_files_still_deserialize() {
+        let lock = serde_json::json!({
+            "schema": 1,
+            "recipe_digest": "sha512:old",
+            "source_date_epoch": 0,
+            "policy": {},
+            "sources": [],
+            "cells": []
+        });
+        let parsed: PackageLock = serde_json::from_value(lock).expect("old lock");
+        assert!(parsed.recipe_files.is_empty());
+    }
+
+    #[test]
     fn a_lock_is_deterministic() {
         let directory = tempfile::tempdir().expect("tempdir");
         let path = directory.path().join("package.yaml");
         let first = fixture(&path);
-        let recipe = rpmx_core::load_recipe(&path).expect("parse");
+        let bundle = rpmx_core::load_recipe_bundle(&path).expect("bundle");
         let plan = rpmx_core::plan_with_options(
-            &recipe,
+            &bundle.recipe,
             rpmx_core::PlanOptions {
                 arch: "x86_64",
                 step_root: None,
@@ -467,9 +493,8 @@ outputs:
         )
         .expect("plan");
         let second = build(
-            &recipe,
+            &bundle,
             &plan,
-            &path,
             PlanPolicy::default(),
             None,
             "x86_64",

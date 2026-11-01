@@ -26,6 +26,8 @@ package:
     tag: v1.4.0
 
 build:
+  root:
+    profile: ../fedora-44-build.profile.yaml
   pipeline:
     - uses: go/build
       with:

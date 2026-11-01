@@ -29,7 +29,7 @@ pub fn run(args: TestArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
     })?;
     let policy: PlanPolicy<'_> = resolved.plan_policy();
 
-    let (recipe, plan) = load_plan(&args.file, &args.arch, pipeline_dir, false, policy)?;
+    let (bundle, plan) = load_plan(&args.file, &args.arch, pipeline_dir, false, policy)?;
     if !args.selected.is_empty() {
         let known: std::collections::BTreeSet<_> = plan
             .cells
@@ -51,13 +51,23 @@ pub fn run(args: TestArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
             "this recipe declares no tests; add a tests: block",
         ));
     }
+    // Validate everything local before resolving a root: a missing RPM or a
+    // build-stage test must not cost a network resolution first.
+    let installed = match args.install_dir.as_deref() {
+        Some(directory) => {
+            let rpms = rpms_in(directory)?;
+            let (tests, tools) = installed_tests(&plan, &args.selected)?;
+            Some((rpms, tests, tools))
+        }
+        None => None,
+    };
     let automatic = if args.root_lock.is_none() && args.root.is_none() {
         crate::commands::autoroot::ensure(
-            &recipe,
+            &bundle.recipe,
             &plan,
-            &args.file,
+            &bundle.root,
             args.policy.profile.as_deref(),
-            args.cache.as_deref(),
+            args.runtime.cache.cache.as_deref(),
             args.offline,
             false,
             &args.arch,
@@ -88,12 +98,13 @@ pub fn run(args: TestArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
             if root.cached { "cache" } else { "resolved" }
         );
     }
-    if let Some(directory) = args.install_dir.as_deref() {
+    if let Some((rpms, tests, tools)) = installed {
         return run_installed(
             &args,
-            &plan,
             root_lock.as_deref().expect("checked above"),
-            directory,
+            &rpms,
+            &tests,
+            &tools,
         );
     }
 
@@ -106,15 +117,15 @@ pub fn run(args: TestArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
         runner: &args.runner,
         policy,
         profile: args.policy.profile.as_deref(),
-        cache: args.cache.as_deref(),
+        cache: args.runtime.cache.cache.as_deref(),
         proxy: None,
         offline: args.offline,
         root_lock: root_lock.as_deref(),
         root: root.as_deref(),
         unsafe_host_root: false,
         source_date_epoch: None,
-        jobs: args.jobs,
-        step_timeout: std::num::NonZeroU64::new(3600).expect("timeout"),
+        jobs: args.runtime.jobs,
+        step_timeout: args.runtime.step_timeout,
         run_tests: true,
         test_filter: &args.selected,
         junit: args.junit.as_deref(),
@@ -127,7 +138,7 @@ pub fn run(args: TestArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
     let cells: Vec<_> = plan.cells.iter().collect();
     let built = pipeline.execute(&cells)?;
     report::print(
-        args.json,
+        rpmx_core::output::json(),
         "test",
         &[report::ArtifactGroup {
             kind: "rpm",
@@ -138,22 +149,24 @@ pub fn run(args: TestArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
     Ok(())
 }
 
-fn run_installed(
-    args: &TestArgs,
+fn installed_tests(
     plan: &rpmx_core::Plan,
-    root_lock_path: &Path,
-    directory: &Path,
-) -> Result<(), Error> {
-    let lock = rpmx_core::root::load_lock(root_lock_path)?;
-    let rpms = rpms_in(directory)?;
-    let mut selected = Vec::new();
+    selected: &[String],
+) -> Result<
+    (
+        Vec<rpmx_core::PlannedTest>,
+        std::collections::BTreeSet<String>,
+    ),
+    Error,
+> {
+    let mut tests = Vec::new();
     let mut tools = std::collections::BTreeSet::new();
     for cell in &plan.cells {
         for test in &cell.tests {
-            let wanted = if args.selected.is_empty() {
+            let wanted = if selected.is_empty() {
                 test.stage == "installed"
             } else {
-                args.selected.contains(&test.name)
+                selected.contains(&test.name)
             };
             if !wanted {
                 continue;
@@ -167,24 +180,35 @@ fn run_installed(
                     ),
                 ));
             }
-            selected.push(test.clone());
+            tests.push(test.clone());
             tools.extend(cell.test_tools.iter().cloned());
         }
     }
-    if selected.is_empty() {
+    if tests.is_empty() {
         return Err(Error::new(
             codes::TEST_004,
             "no installed-stage test matches; --install-dir tests existing RPMs",
         ));
     }
+    Ok((tests, tools))
+}
+
+fn run_installed(
+    args: &TestArgs,
+    root_lock_path: &Path,
+    rpms: &[PathBuf],
+    selected: &[rpmx_core::PlannedTest],
+    tools: &std::collections::BTreeSet<String>,
+) -> Result<(), Error> {
+    let lock = rpmx_core::root::load_lock(root_lock_path)?;
     let runner = args.runner.parse::<rpmx_core::runner::RunnerKind>()?;
     let host = rpmx_core::arch::Arch::current()?;
     let target = rpmx_core::arch::Arch::parse(&args.arch)?;
-    let cache = match args.cache.as_deref() {
+    let cache = match args.runtime.cache.cache.as_deref() {
         Some(path) => path.to_path_buf(),
         None => crate::commands::fetch::default_cache()?,
     };
-    let work = WorkDir::new()?;
+    let work = WorkDir::new("test")?;
     let workspace = work.path().join("build");
     let stage = work.path().join("stage");
     std::fs::create_dir_all(&workspace).map_err(|error| {
@@ -199,12 +223,12 @@ fn run_installed(
             format!("cannot create {}: {error}", stage.display()),
         )
     })?;
-    let tools: Vec<String> = tools.into_iter().collect();
+    let tools: Vec<String> = tools.iter().cloned().collect();
     let prepared = prepare_test_root(TestRootOptions {
         lock: &lock,
         pinned: None,
         tools: &tools,
-        rpms: &rpms,
+        rpms,
         image: lock.builder.as_ref().map(|builder| builder.image.as_str()),
         cache: &cache,
         work: work.path(),
@@ -221,7 +245,7 @@ fn run_installed(
         root: Some(&prepared.path),
         image: None,
         source_date_epoch,
-        jobs: args.jobs,
+        jobs: args.runtime.jobs,
         timeout,
         debuginfo: false,
     })?;
@@ -232,12 +256,12 @@ fn run_installed(
         target_arch: target,
         runner,
         source_date_epoch,
-        jobs: args.jobs,
+        jobs: args.runtime.jobs,
         timeout,
         debuginfo: false,
     };
     let mut outcomes = Vec::new();
-    for test in &selected {
+    for test in selected {
         let started = std::time::Instant::now();
         let result = run_planned_tests(
             &sandbox,
@@ -273,7 +297,7 @@ fn run_installed(
         .filter(|outcome| outcome.error.is_some())
         .count();
     let _ = rpmx_core::root::remove_tree(&prepared.path);
-    if args.json {
+    if rpmx_core::output::json() {
         println!(
             "{}",
             serde_json::to_string_pretty(&report::test_document(&outcomes))

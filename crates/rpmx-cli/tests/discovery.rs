@@ -98,6 +98,21 @@ fn shell_enters_the_build_mount_layout() {
 }
 
 #[test]
+fn shell_defaults_the_workspace_and_stage() {
+    if std::process::Command::new("bwrap")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
+        eprintln!("bubblewrap is not installed; skipping");
+        return;
+    }
+    let output = rpmx(&["shell", "--root", "/", "--command", "pwd"]);
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "/tmp/build");
+}
+
+#[test]
 fn unknown_step_names_fail_with_a_hint() {
     let output = rpmx(&["steps", "show", "nope/nope"]);
     assert_eq!(output.status.code(), Some(2), "{output:?}");

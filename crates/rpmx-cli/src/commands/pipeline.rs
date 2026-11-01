@@ -56,7 +56,7 @@ impl BuildPipeline<'_> {
                 format!("cannot create {}: {error}", self.output.display()),
             )
         })?;
-        let work = crate::commands::WorkDir::new()?;
+        let work = crate::commands::WorkDir::new("build")?;
         let source_output = work.path().join("source");
         std::fs::create_dir_all(&source_output).map_err(|error| {
             Error::new(
@@ -85,7 +85,6 @@ impl BuildPipeline<'_> {
             jobs: self.jobs,
             step_timeout: self.step_timeout,
             quiet: true,
-            json: false,
             pipeline_dir: self.pipeline_dir,
         })?;
 
@@ -106,7 +105,6 @@ impl BuildPipeline<'_> {
                 root_lock: self.root_lock,
                 signing: self.signing,
                 quiet: true,
-                json: false,
                 pipeline_dir: self.pipeline_dir,
             })?;
             output.srpms.extend(written.iter().cloned());
@@ -135,7 +133,6 @@ impl BuildPipeline<'_> {
                     sbom: self.sbom,
                     test_root_lock: self.test_root_lock,
                     signing: self.signing,
-                    json: false,
                     quiet: true,
                 })?;
                 output.rpms.extend(rebuilt.rpms);

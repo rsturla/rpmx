@@ -2,8 +2,52 @@
 
 ## Recipe reference
 
-A recipe is one YAML document with a closed schema. Unknown fields are errors.
-`schema` must be `1`.
+A recipe is one YAML document with a closed schema, or a bundle of files composed with `include:`. Unknown fields are errors. `schema` must be `1` in the root file.
+
+A recipe can also be split into one file per top-level section:
+
+```yaml
+# package.yaml
+schema: 1
+include:
+  - sources.yaml
+  - build.yaml
+  - outputs.yaml
+  - tests.yaml
+
+package:
+  name: hello
+  version: "0.1.0"
+  release: 1
+  summary: A tiny hello package
+  license: MIT
+```
+
+```yaml
+# build.yaml
+build:
+  root:
+    profile: profiles/fedora-44.yaml
+  dependencies:
+    tools: [gcc, make, sh]
+  pipeline:
+    - uses: make
+```
+
+Rules:
+
+- Include paths are relative to the file that names them.
+- The root recipe declares `schema`; included fragments must not.
+- Every top-level section has exactly one owner across the bundle. A duplicate
+  section is an error naming both files; there is no overlay merge.
+- Includes may be nested and must stay inside the root recipe's directory.
+- `rpmx lock` records every file and its digest, and the SRPM embeds them at
+  their original relative paths, so `rpmx rebuild` stays self-contained.
+- `rpmx bump` edits the file that owns `package` and the file that owns
+  `sources`.
+- `rpmx init --split` writes this layout for a new package.
+
+See [`examples/jq/`](../../examples/jq/) for a tested split recipe.
 
 ### 5.1 Package metadata
 

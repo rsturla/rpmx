@@ -19,7 +19,7 @@ pub fn run(args: PlanArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
         false,
         resolved.plan_policy(),
     )?;
-    if args.json {
+    if rpmx_core::output::json() {
         let value = crate::commands::report::success(
             "plan",
             serde_json::json!({ "plan": serde_json::to_value(&plan).map_err(|error| {

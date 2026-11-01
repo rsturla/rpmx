@@ -14,6 +14,9 @@ pub struct Cli {
     /// Echo step commands before they run.
     #[arg(long, global = true)]
     pub debug: bool,
+    /// Emit machine-readable output where the command supports it.
+    #[arg(long, global = true)]
+    pub json: bool,
     #[command(subcommand)]
     pub command: Command,
 }
@@ -44,31 +47,6 @@ impl Cli {
             Command::Test(_) => "test",
         }
     }
-
-    pub fn json(&self) -> bool {
-        match &self.command {
-            Command::Root { command } => command.json(),
-            Command::Keygen(args) => args.json,
-            Command::Sign(args) => args.json,
-            Command::Repo(args) => args.json,
-            Command::Explain(args) => args.json,
-            Command::Shell(_) => false,
-            Command::Steps { command } => command.json(),
-            Command::Doctor(args) => args.json,
-            Command::Bump(args) => args.json,
-            Command::Init(_) => false,
-            Command::Lint(args) => args.json,
-            Command::Lock(_) => false,
-            Command::Plan(args) => args.json,
-            Command::Fetch(args) => args.json,
-            Command::Build(args) => args.json,
-            Command::Test(args) => args.json,
-            Command::Rebuild(args) => args.json,
-            Command::Source(args) => args.json,
-            Command::Srpm(args) => args.json,
-            Command::Cache { command } => command.json(),
-        }
-    }
 }
 
 #[derive(Debug, Subcommand)]
@@ -85,17 +63,6 @@ pub enum RootCommand {
     Import(crate::commands::RootImportArgs),
 }
 
-impl RootCommand {
-    pub fn json(&self) -> bool {
-        match self {
-            RootCommand::Resolve(args) => args.json,
-            RootCommand::Assemble(args) => args.json,
-            RootCommand::Digest(args) => args.json,
-            RootCommand::Export(_) | RootCommand::Import(_) => false,
-        }
-    }
-}
-
 #[derive(Debug, Subcommand)]
 pub enum StepsCommand {
     /// List every built-in step.
@@ -104,27 +71,10 @@ pub enum StepsCommand {
     Show(crate::commands::StepsShowArgs),
 }
 
-impl StepsCommand {
-    pub fn json(&self) -> bool {
-        match self {
-            StepsCommand::List(args) => args.json,
-            StepsCommand::Show(args) => args.json,
-        }
-    }
-}
-
 #[derive(Debug, Subcommand)]
 pub enum CacheCommand {
     /// Remove cached payloads not referenced by the given locks and recipes.
     Gc(crate::commands::GcArgs),
-}
-
-impl CacheCommand {
-    pub fn json(&self) -> bool {
-        match self {
-            CacheCommand::Gc(args) => args.json,
-        }
-    }
 }
 
 /// Distribution policy shared by the commands that plan a recipe.
@@ -174,7 +124,7 @@ pub enum Command {
     Fetch(crate::commands::FetchArgs),
     /// Fetch and assemble the source snapshot.
     Source(crate::commands::SourceArgs),
-    /// Write a native source RPM from a local source snapshot.
+    /// Write a native source RPM.
     Srpm(crate::commands::SrpmArgs),
     /// Rebuild binary RPMs from a native source RPM.
     Rebuild(crate::commands::RebuildArgs),

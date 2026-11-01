@@ -26,6 +26,8 @@ package:
     tag: v2.3.4
 
 build:
+  root:
+    profile: ../fedora-44-build.profile.yaml
   pipeline:
     - uses: meson
   dependencies:

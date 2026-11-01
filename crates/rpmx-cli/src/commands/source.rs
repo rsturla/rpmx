@@ -30,7 +30,6 @@ pub struct SourceRequest<'a> {
     pub jobs: NonZeroU32,
     pub step_timeout: NonZeroU64,
     pub quiet: bool,
-    pub json: bool,
     pub pipeline_dir: Option<&'a Path>,
 }
 
@@ -47,7 +46,7 @@ pub fn run(args: SourceArgs, pipeline_dir: Option<&Path>) -> Result<PathBuf, Err
         runner: &args.runner,
         policy,
         profile: args.policy.profile.as_deref(),
-        cache: args.cache.as_deref(),
+        cache: args.runtime.cache.cache.as_deref(),
         proxy: args.proxy.as_deref(),
         offline: args.offline,
         locked: args.locked,
@@ -57,10 +56,9 @@ pub fn run(args: SourceArgs, pipeline_dir: Option<&Path>) -> Result<PathBuf, Err
         verify_root: true,
         output: &args.output,
         source_date_epoch: args.source_date_epoch,
-        jobs: args.jobs,
-        step_timeout: args.step_timeout,
+        jobs: args.runtime.jobs,
+        step_timeout: args.runtime.step_timeout,
         quiet: args.quiet,
-        json: args.json,
         pipeline_dir,
     })
 }
@@ -75,7 +73,7 @@ pub fn execute(request: SourceRequest<'_>) -> Result<PathBuf, Error> {
         .map(str::to_string)
         .or_else(|| std::env::var("RPMX_PROXY").ok())
         .or_else(|| std::env::var("RPMX_ACQUISITION_PROXY").ok());
-    let (recipe, plan) = load_plan(
+    let (bundle, plan) = load_plan(
         request.file,
         request.arch,
         request.pipeline_dir,
@@ -85,9 +83,9 @@ pub fn execute(request: SourceRequest<'_>) -> Result<PathBuf, Error> {
     let automatic =
         if request.root_lock.is_none() && request.root.is_none() && !request.unsafe_host_root {
             crate::commands::autoroot::ensure(
-                &recipe,
+                &bundle.recipe,
                 &plan,
-                request.file,
+                &bundle.root,
                 request.profile,
                 request.cache,
                 request.offline,
@@ -114,9 +112,8 @@ pub fn execute(request: SourceRequest<'_>) -> Result<PathBuf, Error> {
     if request.locked {
         let active_lock = root_lock.map(rpmx_core::root::load_lock).transpose()?;
         crate::commands::lock::verify(
-            &recipe,
+            &bundle,
             &plan,
-            request.file,
             request.policy,
             request.profile,
             request.arch,
@@ -125,8 +122,9 @@ pub fn execute(request: SourceRequest<'_>) -> Result<PathBuf, Error> {
             true,
         )?;
     }
-    let source_date_epoch = crate::commands::source_date_epoch(&recipe, request.source_date_epoch);
-    let work = crate::commands::WorkDir::new()?;
+    let source_date_epoch =
+        crate::commands::source_date_epoch(&bundle.recipe, request.source_date_epoch);
+    let work = crate::commands::WorkDir::new("source")?;
     let workspace = work.path().join("build");
     let stage = work.path().join("stage");
     let base_dir = request.file.parent().unwrap_or_else(|| Path::new("."));
@@ -151,7 +149,7 @@ pub fn execute(request: SourceRequest<'_>) -> Result<PathBuf, Error> {
     let selected_root = selected.as_ref().map(|selection| selection.path.as_path());
 
     let snapshot = assemble(SourceOptions {
-        recipe: &recipe,
+        recipe: &bundle.recipe,
         plan: &plan,
         cache: &cache,
         proxy: proxy.as_deref(),
@@ -182,7 +180,7 @@ pub fn execute(request: SourceRequest<'_>) -> Result<PathBuf, Error> {
     }
 
     if !request.quiet {
-        if request.json {
+        if rpmx_core::output::json() {
             let value = crate::commands::report::document(
                 "source",
                 &[crate::commands::report::ArtifactGroup {

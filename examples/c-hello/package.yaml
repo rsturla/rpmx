@@ -50,6 +50,8 @@ source-assembly:
         PY
 
 build:
+  root:
+    profile: ../fedora-44-build.profile.yaml
   dependencies:
     tools: [gcc, make, python3, bash]
   pipeline:

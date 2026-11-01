@@ -56,7 +56,9 @@ pub struct WorkDir {
 }
 
 impl WorkDir {
-    pub fn new() -> Result<Self, rpmx_core::Error> {
+    /// `context` names the work the directory belongs to, so two directories
+    /// kept by one command are distinguishable.
+    pub fn new(context: &str) -> Result<Self, rpmx_core::Error> {
         let temporary = tempfile::tempdir().map_err(|error| {
             rpmx_core::Error::new(
                 rpmx_core::error::codes::BUILD_005,
@@ -65,7 +67,7 @@ impl WorkDir {
         })?;
         if rpmx_core::output::keep_workdir() {
             let path = temporary.keep();
-            eprintln!("work directory: {}", path.display());
+            eprintln!("work directory ({context}): {}", path.display());
             Ok(Self {
                 path,
                 _temporary: None,

@@ -14,6 +14,8 @@ sources:
       - kind: https
         url: https://www.lua.org/ftp/lua-5.4.7.tar.gz
 build:
+  root:
+    profile: ../fedora-44-build.profile.yaml
   dependencies:
     tools: [gcc, make, bash]
   pipeline:

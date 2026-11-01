@@ -36,7 +36,7 @@ pub fn run(args: RepoArgs) -> Result<(), Error> {
         timestamp,
     })?;
 
-    if args.json {
+    if rpmx_core::output::json() {
         let value = crate::commands::report::success(
             "repo",
             serde_json::json!({

@@ -54,14 +54,26 @@ pub fn plan(plan: &Plan) {
 }
 
 pub fn step_summary(step: &PlannedStep) -> String {
+    let name = step_name(step);
     if let Some(command) = &step.command {
-        return format!("{}: {} {}", step.uses, command, step.args.join(" "));
+        return format!("{name}: {} {}", command, step.args.join(" "));
     }
     let mut parts = Vec::with_capacity(step.inputs.len());
     for (key, value) in &step.inputs {
         parts.push(format!("{key}={}", scalar(value)));
     }
-    format!("{} {}", step.uses, parts.join(" "))
+    format!("{name} {}", parts.join(" "))
+}
+
+fn step_name(step: &PlannedStep) -> String {
+    if step.label.is_empty() || step.label == step.uses || step.uses == "<anonymous>" {
+        return if step.label.is_empty() {
+            step.uses.clone()
+        } else {
+            step.label.clone()
+        };
+    }
+    format!("{} ({})", step.label, step.uses)
 }
 
 fn scalar(value: &serde_json::Value) -> String {

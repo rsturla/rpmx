@@ -248,7 +248,11 @@ pub fn run(args: InitArgs) -> Result<(), Error> {
         .replace("fedora-44", &args.profile)
         .replace("{name}", &name)
         .replace("{module}", &module);
-    write(&directory.join("package.yaml"), &recipe, args.force)?;
+    if args.split {
+        write_split(&directory, &recipe, args.force)?;
+    } else {
+        write(&directory.join("package.yaml"), &recipe, args.force)?;
+    }
     if needs_profile {
         let profile = directory
             .join("profiles")
@@ -269,6 +273,100 @@ pub fn run(args: InitArgs) -> Result<(), Error> {
         .map_err(|error| Error::new(codes::IO_001, format!("cannot create pipelines: {error}")))?;
     println!("{}", directory.join("package.yaml").display());
     Ok(())
+}
+
+/// Split a generated single-file recipe into one file per top-level section.
+fn write_split(directory: &Path, recipe: &str, force: bool) -> Result<(), Error> {
+    let parsed = rpmx_core::parse_recipe(recipe)?;
+    let mut include = Vec::new();
+    let package = strip_nulls(serde_json::to_value(&parsed.package).map_err(json)?);
+    if !parsed.vars.is_empty() {
+        write_section(directory, "vars", &parsed.vars, &mut include, force)?;
+    }
+    if !parsed.build.pipeline.is_empty()
+        || !parsed.build.dependencies.tools.is_empty()
+        || parsed.build.root.is_some()
+    {
+        write_section(directory, "build", &parsed.build, &mut include, force)?;
+    }
+    if !parsed.sources.is_empty() {
+        write_section(directory, "sources", &parsed.sources, &mut include, force)?;
+    }
+    if !parsed.patches.is_empty() {
+        write_section(directory, "patches", &parsed.patches, &mut include, force)?;
+    }
+    if !parsed.source_assembly.pipeline.is_empty() || !parsed.source_assembly.tools.is_empty() {
+        write_section(
+            directory,
+            "source-assembly",
+            &parsed.source_assembly,
+            &mut include,
+            force,
+        )?;
+    }
+    if let Some(matrix) = &parsed.matrix {
+        write_section(directory, "matrix", matrix, &mut include, force)?;
+    }
+    if !parsed.outputs.is_empty() {
+        write_section(directory, "outputs", &parsed.outputs, &mut include, force)?;
+    }
+    if !parsed.tests.is_empty() {
+        write_section(directory, "tests", &parsed.tests, &mut include, force)?;
+    }
+    let mut text = format!("schema: {}\ninclude:\n", parsed.schema);
+    for name in &include {
+        text.push_str(&format!("  - {name}.yaml\n"));
+    }
+    text.push_str("\npackage:\n");
+    let package = serde_yaml_ng::to_string(&package).map_err(yaml)?;
+    for line in package.lines() {
+        text.push_str("  ");
+        text.push_str(line);
+        text.push('\n');
+    }
+    write(&directory.join("package.yaml"), &text, force)
+}
+
+fn write_section(
+    directory: &Path,
+    key: &str,
+    value: &impl serde::Serialize,
+    include: &mut Vec<String>,
+    force: bool,
+) -> Result<(), Error> {
+    let mut map = serde_json::Map::new();
+    map.insert(
+        key.to_string(),
+        strip_nulls(serde_json::to_value(value).map_err(json)?),
+    );
+    let text = serde_yaml_ng::to_string(&map).map_err(yaml)?;
+    write(&directory.join(format!("{key}.yaml")), &text, force)?;
+    include.push(key.to_string());
+    Ok(())
+}
+
+fn yaml(error: serde_yaml_ng::Error) -> Error {
+    Error::new(codes::IO_001, format!("cannot write split recipe: {error}"))
+}
+
+fn json(error: serde_json::Error) -> Error {
+    Error::new(codes::IO_001, format!("cannot write split recipe: {error}"))
+}
+
+/// Generated fragments should not carry `field: null` noise for absent values.
+fn strip_nulls(value: serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Object(map) => serde_json::Value::Object(
+            map.into_iter()
+                .filter(|(_, value)| !value.is_null())
+                .map(|(key, value)| (key, strip_nulls(value)))
+                .collect(),
+        ),
+        serde_json::Value::Array(items) => {
+            serde_json::Value::Array(items.into_iter().map(strip_nulls).collect())
+        }
+        other => other,
+    }
 }
 
 fn write(path: &Path, text: &str, force: bool) -> Result<(), Error> {

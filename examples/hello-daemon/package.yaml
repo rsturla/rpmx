@@ -45,6 +45,8 @@ source-assembly:
         d /var/lib/hello-daemon 0750 hello-daemon hello-daemon -
         EOF
 build:
+  root:
+    profile: ../fedora-44-build.profile.yaml
   dependencies:
     tools: [bash]
   pipeline:

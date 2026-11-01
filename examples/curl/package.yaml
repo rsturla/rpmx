@@ -27,6 +27,8 @@ package:
   unowned-files: error
 
 build:
+  root:
+    profile: ../fedora-44-build.profile.yaml
   pipeline:
     - uses: cmake
       with:

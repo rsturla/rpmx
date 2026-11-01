@@ -1,0 +1,26 @@
+outputs:
+  - name: libjq
+    files:
+      include:
+        - /usr/lib64/libjq.so.1*
+  - name: libjq-devel
+    dependencies:
+      run: ["libjq = ${package.version}-${package.release}"]
+    files:
+      include:
+        - /usr/lib64/libjq.so
+        - /usr/lib64/libjq.a
+        - /usr/include/jq.h
+        - /usr/include/jv.h
+        - /usr/include/jq/**
+        - /usr/lib64/pkgconfig/libjq.pc
+  - name: jq
+    dependencies:
+      run: ["libjq = ${package.version}-${package.release}"]
+    files:
+      include:
+        - /usr/bin/jq
+        - /usr/share/man/**
+        - /usr/share/doc/jq/**
+      doc:
+        - /usr/share/doc/jq/**

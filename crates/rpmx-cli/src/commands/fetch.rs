@@ -8,7 +8,7 @@ use crate::commands::FetchArgs;
 
 pub fn run(args: FetchArgs) -> Result<(), Error> {
     let recipe = load_recipe(&args.file)?;
-    let cache = match &args.cache {
+    let cache = match &args.cache.cache {
         Some(path) => path.clone(),
         None => default_cache()?,
     };
@@ -32,7 +32,7 @@ pub fn run(args: FetchArgs) -> Result<(), Error> {
         },
     )?;
 
-    if args.json {
+    if rpmx_core::output::json() {
         let value = crate::commands::report::success(
             "fetch",
             serde_json::json!({

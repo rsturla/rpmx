@@ -87,6 +87,7 @@ fn run_one_test(sandbox: &Sandbox<'_>, test: &rpmx_language::plan::PlannedTest) 
             )
         })?;
         let step = PlannedStep {
+            label: format!("test:{}", test.name),
             uses: format!("test:{}", test.name),
             command: Some(command.clone()),
             args: argv[1..].to_vec(),

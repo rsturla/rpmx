@@ -42,12 +42,11 @@ fn package_stage(
         args.signing.signing_key.as_deref(),
         args.signing.signing_passphrase_env.as_deref(),
     )?;
-    let (recipe, plan) = load_plan(args.file.as_path(), &args.arch, pipeline_dir, false, policy)?;
+    let (bundle, plan) = load_plan(args.file.as_path(), &args.arch, pipeline_dir, false, policy)?;
     if args.locked {
         crate::commands::lock::verify(
-            &recipe,
+            &bundle,
             &plan,
-            args.file.as_path(),
             policy,
             args.policy.profile.as_deref(),
             &args.arch,
@@ -56,7 +55,8 @@ fn package_stage(
             false,
         )?;
     }
-    let source_date_epoch = crate::commands::source_date_epoch(&recipe, args.source_date_epoch);
+    let source_date_epoch =
+        crate::commands::source_date_epoch(&bundle.recipe, args.source_date_epoch);
     let signature_timestamp = crate::commands::signature_timestamp(
         args.signing.signing_timestamp,
         source_date_epoch,
@@ -92,7 +92,7 @@ fn package_stage(
     let mut written = Vec::new();
     for cell in &cells {
         let packages = prepare_binary_packages(BinaryPackageOptions {
-            recipe: &recipe,
+            recipe: &bundle.recipe,
             cell,
             stage,
             arch: &args.arch,
@@ -125,7 +125,7 @@ fn package_stage(
             repository.push(signature);
         }
     }
-    report(args.json, &written, &[], &[], &repository)?;
+    report(rpmx_core::output::json(), &written, &[], &[], &repository)?;
     Ok(written)
 }
 
@@ -144,15 +144,13 @@ fn build_from_recipe(
         runner,
         source_date_epoch,
         cell,
-        cache,
+        runtime,
         proxy,
         offline,
         locked,
         root_lock,
         root,
         unsafe_host_root,
-        jobs,
-        step_timeout,
         run_tests,
         test,
         junit,
@@ -161,12 +159,14 @@ fn build_from_recipe(
         sbom,
         test_root_lock,
         signing,
-        json,
         ..
     } = args;
+    let jobs = runtime.jobs;
+    let step_timeout = runtime.step_timeout;
+    let cache = runtime.cache.cache;
 
     let run_tests = run_tests || !test.is_empty();
-    let (recipe, plan) = load_plan(&file, &arch, pipeline_dir, false, policy)?;
+    let (bundle, plan) = load_plan(&file, &arch, pipeline_dir, false, policy)?;
     if !test.is_empty() {
         let known: std::collections::BTreeSet<_> = plan
             .cells
@@ -184,9 +184,8 @@ fn build_from_recipe(
     }
     if locked {
         crate::commands::lock::verify(
-            &recipe,
+            &bundle,
             &plan,
-            &file,
             policy,
             profile,
             &arch,
@@ -197,9 +196,9 @@ fn build_from_recipe(
     }
     let automatic = if root_lock.is_none() && root.is_none() && !unsafe_host_root {
         crate::commands::autoroot::ensure(
-            &recipe,
+            &bundle.recipe,
             &plan,
-            &file,
+            &bundle.root,
             profile,
             cache.as_deref(),
             offline,
@@ -229,9 +228,8 @@ fn build_from_recipe(
             .map(rpmx_core::root::load_lock)
             .transpose()?;
         crate::commands::lock::verify(
-            &recipe,
+            &bundle,
             &plan,
-            &file,
             policy,
             profile,
             &arch,
@@ -260,7 +258,7 @@ fn build_from_recipe(
     }
 
     let pipeline = BuildPipeline {
-        file: &file,
+        file: &bundle.root,
         output,
         arch: &arch,
         runner: &runner,
@@ -287,7 +285,7 @@ fn build_from_recipe(
     let built = pipeline.execute(&selected)?;
     let mut repository = Vec::new();
     if !no_index {
-        let timestamp = crate::commands::source_date_epoch(&recipe, source_date_epoch);
+        let timestamp = crate::commands::source_date_epoch(&bundle.recipe, source_date_epoch);
         let key = crate::commands::load_signing_key(
             signing.signing_key.as_deref(),
             signing.signing_passphrase_env.as_deref(),
@@ -308,7 +306,7 @@ fn build_from_recipe(
         }
     }
     report(
-        json,
+        rpmx_core::output::json(),
         &built.rpms,
         &built.srpms,
         &built.evidence,

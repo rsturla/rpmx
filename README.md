@@ -10,8 +10,9 @@ prototype, not production software.
 
 ## What it does
 
-- **Strict recipes.** One schema-versioned `package.yaml`. Unknown fields are
-  errors. No macros, no `%if`, no spec language.
+- **Strict recipes.** One schema-versioned `package.yaml`, optionally split
+  into one file per section with `include:`. Unknown fields are errors. No
+  macros, no `%if`, no spec language.
 - **Native SRPMs.** Every build writes a real `.src.rpm` containing the recipe,
   locks, sources, patches and step definitions. `rpmx rebuild` starts from that
   SRPM, not from loose sources.
@@ -171,21 +172,22 @@ Autotools packages, Lua, jq, a noarch Python wheel, and a systemd service.
 | `rpmx test [FILE]` | Run tests; `--test` selects and `--install-dir DIR` tests existing RPMs. |
 | `rpmx rebuild SRPM` | Rebuild binaries from an SRPM, assembling its root. |
 | `rpmx explain TOPIC` | Explain policy, root, steps, matrix, requires or files. |
-| `rpmx shell` | Enter the build sandbox with the same mounts. |
+| `rpmx shell` | Enter the recipe's build sandbox with the build mount layout. |
 | `rpmx steps list\|show` | Browse the built-in step library. |
 | `rpmx doctor` | Check host tools, runners and cache. |
 | `rpmx fetch [FILE]` | Populate the content-addressed cache. |
 | `rpmx source [FILE]` | Assemble the deterministic source snapshot. |
-| `rpmx srpm [FILE]` | Write a native SRPM. |
+| `rpmx srpm [FILE]` | Write a native SRPM, assembling sources when `--sources` is omitted. |
 | `rpmx root resolve\|assemble\|digest` | Explicit root plumbing for debugging. |
 | `rpmx keygen` / `rpmx sign` | Generate a key; sign existing RPMs. |
 | `rpmx repo --rpms DIR --output DIR` | Write and optionally sign repository metadata. |
 | `rpmx cache gc --lock L --recipe R` | Remove unreferenced cache blobs. |
 
-Every command defaults `FILE` to `./package.yaml`. `build`, `test` and
-`rebuild` default their output to `./packages/<arch>/`, use all available CPUs
-unless `--jobs` is given, and write repository metadata unless `--no-index` is
-set. `--keep-workdir` preserves a failed workspace; `--debug` echoes the
+Recipe commands default `FILE` to `./package.yaml`. `build`, `test` and
+`rebuild` default their output to `./packages/<arch>/`, default `--jobs` to the
+host CPU count (exported to build steps as `JOBS`), and write repository
+metadata unless `--no-index` is set. `--keep-workdir` preserves a failed
+workspace and prints a labelled path per directory; `--debug` echoes the
 commands a step runs.
 
 ## Local repositories

@@ -23,7 +23,6 @@ pub struct SrpmRequest<'a> {
     pub root_lock: Option<&'a Path>,
     pub signing: &'a OptionalSigningArgs,
     pub quiet: bool,
-    pub json: bool,
     pub pipeline_dir: Option<&'a Path>,
 }
 
@@ -33,10 +32,47 @@ pub fn run(args: SrpmArgs, pipeline_dir: Option<&Path>) -> Result<Vec<PathBuf>, 
         dist_tag: args.policy.dist_tag.as_deref(),
         build_release: args.policy.build_release,
     })?;
+    let policy = resolved.plan_policy();
+    let work;
+    let sources = match args.sources.as_deref() {
+        Some(path) => path.to_path_buf(),
+        None => {
+            work = crate::commands::WorkDir::new("srpm-source")?;
+            let output = work.path().join("source");
+            std::fs::create_dir_all(&output).map_err(|error| {
+                Error::new(
+                    codes::SRPM_002,
+                    format!("cannot create {}: {error}", output.display()),
+                )
+            })?;
+            crate::commands::source::execute(crate::commands::source::SourceRequest {
+                file: &args.file,
+                arch: &args.arch,
+                runner: &args.runner,
+                policy,
+                profile: args.policy.profile.as_deref(),
+                cache: args.runtime.cache.cache.as_deref(),
+                proxy: args.proxy.as_deref(),
+                offline: args.offline,
+                locked: false,
+                root_lock: args.root_lock.as_deref(),
+                root: args.root.as_deref(),
+                unsafe_host_root: args.unsafe_host_root,
+                verify_root: true,
+                output: &output,
+                source_date_epoch: args.source_date_epoch,
+                jobs: args.runtime.jobs,
+                step_timeout: args.runtime.step_timeout,
+                quiet: true,
+                pipeline_dir,
+            })?;
+            output
+        }
+    };
     execute(SrpmRequest {
         file: &args.file,
-        policy: resolved.plan_policy(),
-        sources: &args.sources,
+        policy,
+        sources: &sources,
         output: &args.output,
         arch: &args.arch,
         source_date_epoch: args.source_date_epoch,
@@ -44,7 +80,6 @@ pub fn run(args: SrpmArgs, pipeline_dir: Option<&Path>) -> Result<Vec<PathBuf>, 
         root_lock: args.root_lock.as_deref(),
         signing: &args.signing,
         quiet: args.quiet,
-        json: args.json,
         pipeline_dir,
     })
 }
@@ -75,7 +110,7 @@ pub fn execute(request: SrpmRequest<'_>) -> Result<Vec<PathBuf>, Error> {
         )?,
         None => request.policy,
     };
-    let (recipe, mut plan) = load_plan(
+    let (bundle, mut plan) = load_plan(
         request.file,
         request.arch,
         request.pipeline_dir,
@@ -88,25 +123,30 @@ pub fn execute(request: SrpmRequest<'_>) -> Result<Vec<PathBuf>, Error> {
             return Err(Error::new(codes::BUILD_002, format!("no such cell '{id}'")));
         }
     }
-    let source_date_epoch = crate::commands::source_date_epoch(&recipe, request.source_date_epoch);
+    let source_date_epoch =
+        crate::commands::source_date_epoch(&bundle.recipe, request.source_date_epoch);
     let signature_timestamp = crate::commands::signature_timestamp(
         request.signing.signing_timestamp,
         source_date_epoch,
         signing.as_ref(),
     )?;
-    let recipe_bytes = std::fs::read(request.file).map_err(|error| {
-        Error::new(
-            codes::SRPM_001,
-            format!("cannot read {}: {error}", request.file.display()),
-        )
-    })?;
-    let root = step_root(request.pipeline_dir, request.file);
+    let recipe_bytes = bundle.root_file().bytes.clone();
+    let recipe_includes: Vec<rpmx_core::source_package::RecipeInclude> = bundle
+        .included_files()
+        .map(|file| rpmx_core::source_package::RecipeInclude {
+            name: file.name.clone(),
+            bytes: file.bytes.clone(),
+        })
+        .collect();
+    let root = step_root(request.pipeline_dir, &bundle.root);
     let debuginfo = root_lock.as_ref().is_some_and(|lock| lock.debuginfo);
     let sbom = root_lock.as_ref().map(|lock| lock.sbom).unwrap_or(true);
     let packages = prepare_source_packages(SourcePackageOptions {
-        recipe: &recipe,
+        recipe: &bundle.recipe,
         plan: &plan,
         recipe_bytes: &recipe_bytes,
+        recipe_digest: Some(bundle.digest()),
+        recipe_includes: &recipe_includes,
         step_root: root.as_deref(),
         sources: request.sources,
         source_date_epoch,
@@ -134,7 +174,7 @@ pub fn execute(request: SrpmRequest<'_>) -> Result<Vec<PathBuf>, Error> {
 
     if !request.quiet {
         crate::commands::report::print(
-            request.json,
+            rpmx_core::output::json(),
             "srpm",
             &[crate::commands::report::ArtifactGroup {
                 kind: "srpm",

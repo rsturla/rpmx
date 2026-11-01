@@ -33,6 +33,7 @@ fn bwrap_available() -> bool {
 
 fn step(command: &str, args: &[&str]) -> PlannedStep {
     PlannedStep {
+        label: "inline".to_string(),
         uses: "inline".to_string(),
         command: Some(command.to_string()),
         args: args.iter().map(|arg| arg.to_string()).collect(),
