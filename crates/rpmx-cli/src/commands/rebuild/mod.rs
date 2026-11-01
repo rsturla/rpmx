@@ -1,21 +1,21 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use crate::commands::emit;
 use rpmx_core::binary_package::{prepare_binary_packages, BinaryPackageOptions};
 use rpmx_core::build_env::check_build_tools;
 use rpmx_core::error::codes;
-use rpmx_core::package_spec::BinaryPackageFile;
 use rpmx_core::runner::RunnerKind;
 use rpmx_core::sandbox::{Sandbox, SandboxConfig};
-use rpmx_core::sbom::Generator;
-use rpmx_core::test_root::{prepare as prepare_test_root, TestRootOptions};
-use rpmx_core::test_runner::{run_planned_tests, TestSandboxConfig};
 use rpmx_core::Error;
 
 mod prepare;
+mod report;
+mod sbom;
+mod tests;
 
 use crate::commands::RebuildArgs;
 use prepare::{prepare, RebuildState};
+use sbom::SbomContext;
 
 pub fn run(args: RebuildArgs) -> Result<Vec<PathBuf>, Error> {
     let resolved = crate::commands::resolve_policy(crate::commands::PolicyInput {
@@ -45,7 +45,7 @@ pub fn run(args: RebuildArgs) -> Result<Vec<PathBuf>, Error> {
     } = state;
     let output = args.output.clone();
     let run_tests = args.run_tests;
-    let sbom = args.sbom.as_deref();
+    let sbom_path = args.sbom.as_deref();
     let quiet = args.quiet;
     let json = args.json;
     let jobs = args.jobs;
@@ -123,63 +123,18 @@ pub fn run(args: RebuildArgs) -> Result<Vec<PathBuf>, Error> {
         debuginfo,
     })?;
 
-    let sbom_policy = sbom_enabled || sbom.is_some();
-    let mut sbom_sources: Vec<(String, String)> = Vec::new();
-    let mut recipe_digest = String::new();
-    if sbom_policy {
-        recipe_digest = package_lock.recipe_digest.clone();
-        sbom_sources = package_lock
-            .sources
-            .iter()
-            .map(|source| (source.path.clone(), source.digest.clone()))
-            .collect();
-        if recipe_digest.is_empty() {
-            if let Ok(bytes) = std::fs::read(work.path().join("package.yaml")) {
-                recipe_digest = rpmx_core::srpm::sha512_hex(&bytes);
-            }
-        }
-    }
-    let sbom_refs = sbom_sources
-        .iter()
-        .map(|(path, digest)| rpmx_core::sbom::SourceRef { path, digest })
-        .collect::<Vec<_>>();
-    let source_rpm = format!("{}-{}-{}.src.rpm", cell.package, cell.version, cell.release);
+    let sbom_policy = sbom_enabled || sbom_path.is_some();
+    let sbom = if sbom_policy {
+        Some(SbomContext::prepare(&package_lock, work.path(), &cell))
+    } else {
+        None
+    };
 
     let mut written = Vec::new();
     let mut built = Vec::new();
     for mut package in packages {
-        if sbom_policy {
-            let text = rpmx_core::sbom::native_spdx().package(&rpmx_core::sbom::PackageSbom {
-                name: &package.name,
-                version: &package.version,
-                release: &package.release,
-                arch: &package.arch,
-                license: &package.license,
-                source_rpm: &source_rpm,
-                recipe_digest: &recipe_digest,
-                source_date_epoch: package.source_date_epoch,
-                sources: &sbom_refs,
-                cpe: recipe.package.cpe.as_ref(),
-            })?;
-            package.files.push(BinaryPackageFile {
-                path: format!(
-                    "{}/{}-{}-{}.spdx.json",
-                    rpmx_core::sbom::SBOM_DIR,
-                    package.name,
-                    package.version,
-                    package.release
-                ),
-                data: text.into_bytes(),
-                mode: 0o644,
-                target: None,
-                user: None,
-                group: None,
-                caps: None,
-                config: false,
-                noreplace: false,
-                doc: false,
-                license: false,
-            });
+        if let Some(sbom) = &sbom {
+            sbom.attach_package(&mut package, &recipe)?;
         }
         let path = emit::binary(&package, &output, signing.as_ref(), signature_timestamp)?;
         built.push((
@@ -192,7 +147,7 @@ pub fn run(args: RebuildArgs) -> Result<Vec<PathBuf>, Error> {
         written.push(path);
     }
 
-    if sbom_policy {
+    if let Some(sbom) = &sbom {
         let binaries = built
             .iter()
             .map(
@@ -206,101 +161,52 @@ pub fn run(args: RebuildArgs) -> Result<Vec<PathBuf>, Error> {
                 },
             )
             .collect::<Vec<_>>();
-        let text = rpmx_core::sbom::native_spdx().build(&rpmx_core::sbom::BuildSbom {
-            name: &cell.package,
-            version: &cell.version,
-            release: &cell.release,
+        let path = sbom_path
+            .map(std::path::Path::to_path_buf)
+            .unwrap_or_else(|| {
+                output.join(format!(
+                    "{}-{}-{}.build.spdx.json",
+                    cell.package, cell.version, cell.release
+                ))
+            });
+        sbom.emit_build(sbom::BuildSbomInput {
+            recipe: &recipe,
+            cell: &cell,
             arch,
-            license: &recipe.package.license,
-            recipe_digest: &recipe_digest,
             source_date_epoch: extracted.source_date_epoch,
-            sources: &sbom_refs,
             binaries: &binaries,
             root_lock: active_lock.as_ref(),
             signing_key: signing.as_ref().map(|key| key.fingerprint()),
-            cpe: recipe.package.cpe.as_ref(),
-        })?;
-        let path = sbom.map(Path::to_path_buf).unwrap_or_else(|| {
-            output.join(format!(
-                "{}-{}-{}.build.spdx.json",
-                cell.package, cell.version, cell.release
-            ))
-        });
-        std::fs::write(&path, text).map_err(|error| {
-            Error::new(
-                codes::SBOM_001,
-                format!("cannot write {}: {error}", path.display()),
-            )
+            path: &path,
         })?;
     }
 
     if run_tests {
-        let cache = crate::commands::fetch::default_cache()?;
-        let prepared = if cell.tests.iter().any(|test| test.stage == "installed") {
-            let lock = active_lock.as_ref().ok_or_else(|| {
-                Error::new(
-                    codes::BUILD_007,
-                    "installed-stage tests need an embedded or explicit root lock",
-                )
-            })?;
-            Some(prepare_test_root(TestRootOptions {
-                lock,
-                pinned: args.test_root_lock.as_deref(),
-                tools: &cell.test_tools,
-                rpms: &written,
-                image: builder_image.as_deref(),
-                cache: &cache,
-                work: work.path(),
-                runner: runner_kind,
-            })?)
-        } else {
-            None
-        };
-        let test_root = prepared.as_ref().map(|root| root.path.as_path());
-        let result = run_planned_tests(
-            &sandbox,
-            &cell.tests,
-            test_root,
-            TestSandboxConfig {
-                workspace: &build,
-                stage: &stage,
-                host_arch: rpmx_core::arch::Arch::current()?,
-                target_arch: rpmx_core::arch::Arch::parse(arch)?,
-                runner: runner_kind,
-                source_date_epoch: extracted.source_date_epoch,
-                jobs,
-                timeout: step_timeout,
-                debuginfo,
-            },
-        );
-        if let Some(prepared) = prepared {
-            let _ = rpmx_core::root::remove_tree(&prepared.path);
-            let path = output.join(format!(
-                "{}-{}-{}.test-root.lock.json",
-                cell.package, cell.version, cell.release
-            ));
-            let text = serde_yaml_ng::to_string(&prepared.lock)
-                .map_err(|error| Error::new(codes::BUILD_007, error.to_string()))?;
-            std::fs::write(&path, text).map_err(|error| {
-                Error::new(
-                    codes::BUILD_007,
-                    format!("cannot write {}: {error}", path.display()),
-                )
-            })?;
-        }
-        result?;
+        tests::run(tests::TestRunOptions {
+            sandbox: &sandbox,
+            cell: &cell,
+            written: &written,
+            output: &output,
+            work: work.path(),
+            build: &build,
+            stage: &stage,
+            active_lock: active_lock.as_ref(),
+            builder_image: builder_image.as_deref(),
+            pinned_lock: args.test_root_lock.as_deref(),
+            arch,
+            runner: runner_kind,
+            source_date_epoch: extracted.source_date_epoch,
+            jobs,
+            timeout: step_timeout,
+            debuginfo,
+        })?;
     }
 
-    if !quiet {
-        crate::commands::report::print(
-            json,
-            &[crate::commands::report::ArtifactGroup {
-                key: "rpms",
-                paths: &written,
-            }],
-            signing.as_ref().map(|key| key.fingerprint()),
-            true,
-        )?;
-    }
+    report::print_artifacts(
+        quiet,
+        json,
+        &written,
+        signing.as_ref().map(|key| key.fingerprint()),
+    )?;
     Ok(written)
 }
