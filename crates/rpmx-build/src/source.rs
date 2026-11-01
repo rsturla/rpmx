@@ -1,4 +1,4 @@
-use std::io::{Read, Write};
+use std::io::Write;
 use std::num::{NonZeroU32, NonZeroU64};
 use std::path::{Path, PathBuf};
 
@@ -206,7 +206,7 @@ fn unpack_gzip(path: &Path, workspace: &Path) -> Result<()> {
             format!("cannot open {}: {error}", path.display()),
         )
     })?;
-    let mut decoder = flate2::read::GzDecoder::new(file);
+    let decoder = flate2::read::GzDecoder::new(file);
     let mut staged = tempfile::tempfile_in(workspace).map_err(|error| {
         Error::new(
             codes::SOURCE_031,
@@ -214,33 +214,15 @@ fn unpack_gzip(path: &Path, workspace: &Path) -> Result<()> {
         )
     })?;
     let subject = format!("archive {}", path.display());
-    let mut chunk = [0u8; 64 * 1024];
-    loop {
-        let read = decoder.read(&mut chunk).map_err(|error| {
-            Error::new(
-                codes::SOURCE_031,
-                format!("cannot decompress {}: {error}", path.display()),
-            )
-        })?;
-        if read == 0 {
-            break;
-        }
-        staged.write_all(&chunk[..read]).map_err(|error| {
+    rpmx_base::io::copy_to(decoder, &mut staged, rpmx_base::MAX_ARCHIVE_BYTES).map_err(
+        |error| {
             Error::new(
                 codes::SOURCE_031,
                 format!("cannot stage {}: {error}", path.display()),
             )
-        })?;
-    }
-    rpmx_store::tar_guard::validate(&mut staged, &subject, codes::SOURCE_031, None)?;
-    tar::Archive::new(staged)
-        .unpack(workspace)
-        .map_err(|error| {
-            Error::new(
-                codes::SOURCE_031,
-                format!("cannot unpack {}: {error}", path.display()),
-            )
-        })
+        },
+    )?;
+    rpmx_store::tar_guard::unpack_staged(staged, workspace, &subject, codes::SOURCE_031, None)
 }
 
 pub fn pack_snapshot(workspace: &Path, snapshot: &Path, source_date_epoch: u32) -> Result<()> {

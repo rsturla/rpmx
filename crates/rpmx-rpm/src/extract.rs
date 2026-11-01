@@ -65,7 +65,7 @@ fn extract_decoded<R: Read>(reader: R, dest: &Path) -> Result<Vec<String>, Error
             format!("cannot create a staging file: {error}"),
         )
     })?;
-    let mut reader = reader;
+    let mut reader = rpmx_base::io::BoundedReader::new(reader, rpmx_core::MAX_ARCHIVE_BYTES);
     std::io::copy(&mut reader, &mut staged).map_err(|error| {
         Error::new(
             codes::EXTRACT_003,

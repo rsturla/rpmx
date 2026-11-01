@@ -38,7 +38,7 @@ pub(crate) fn stage_reader(
             format!("cannot create a staging file for {what}: {error}"),
         )
     })?;
-    let mut reader = reader;
+    let mut reader = rpmx_base::io::BoundedReader::new(reader, rpmx_base::MAX_ARCHIVE_BYTES);
     std::io::copy(&mut reader, &mut file)
         .map_err(|error| Error::new(codes::FETCH_003, format!("cannot read {what}: {error}")))?;
     file.flush()

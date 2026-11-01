@@ -262,6 +262,21 @@ pub fn validate<R: Read + Seek>(
     Ok(())
 }
 
+/// Validate a staged tar and unpack it into `destination`. The archive is
+/// rewound and scanned before the tar crate sees it.
+pub fn unpack_staged(
+    mut archive: std::fs::File,
+    destination: &std::path::Path,
+    subject: &str,
+    code: rpmx_base::error::Code,
+    max_entry: Option<u64>,
+) -> Result<()> {
+    validate(&mut archive, subject, code, max_entry)?;
+    tar::Archive::new(archive)
+        .unpack(destination)
+        .map_err(|error| Error::new(code, format!("cannot unpack {subject}: {error}")))
+}
+
 #[cfg(test)]
 mod tests {
     use super::validate;
