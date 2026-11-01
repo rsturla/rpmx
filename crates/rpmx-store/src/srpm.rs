@@ -21,6 +21,18 @@ pub struct SnapshotFile {
     pub digest: String,
 }
 
+#[derive(Deserialize)]
+struct BundleLock {
+    #[serde(default)]
+    steps: Vec<LockStep>,
+}
+
+#[derive(Deserialize)]
+struct BundleManifest {
+    #[serde(default)]
+    source_date_epoch: u32,
+}
+
 #[derive(Debug, Clone)]
 pub struct ExtractedBundle {
     pub files: Vec<String>,
@@ -79,7 +91,13 @@ pub fn read_bundle(directory: &Path, files: Vec<String>) -> Result<ExtractedBund
     let mut lock_steps = BTreeMap::new();
     let lock_path = directory.join("package.lock.json");
     if lock_path.exists() {
-        let lock = load_lock_file(&lock_path)?;
+        let text = read_text_capped(&lock_path, codes::EXTRACT_006)?;
+        let lock: BundleLock = serde_json::from_str(&text).map_err(|error| {
+            Error::new(
+                codes::EXTRACT_004,
+                format!("invalid {}: {error}", lock_path.display()),
+            )
+        })?;
         for step in lock.steps {
             if !step.name.is_empty() && !step.digest.is_empty() {
                 lock_steps.insert(step.name, step.digest);
@@ -91,7 +109,7 @@ pub fn read_bundle(directory: &Path, files: Vec<String>) -> Result<ExtractedBund
     let manifest_path = directory.join("RPMX-MANIFEST.json");
     if manifest_path.exists() {
         let text = read_text_capped(&manifest_path, codes::EXTRACT_006)?;
-        let manifest: SourceManifest = serde_json::from_str(&text).map_err(|error| {
+        let manifest: BundleManifest = serde_json::from_str(&text).map_err(|error| {
             Error::new(
                 codes::EXTRACT_004,
                 format!("invalid {}: {error}", manifest_path.display()),
