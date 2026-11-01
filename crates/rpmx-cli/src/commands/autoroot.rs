@@ -35,20 +35,23 @@ pub struct AutomaticRoot {
     pub cached: bool,
 }
 
-/// Resolve the automatic root for a recipe, if it declares one.
+/// The merged root requirement for a recipe: profile, name and digest.
+pub struct Requirement {
+    pub profile: Profile,
+    pub name: String,
+    pub digest: String,
+}
+
+/// Build the merged root requirement without touching the network or cache.
 ///
-/// Returns `None` when the caller supplied explicit root flags or asked for
-/// the host root; the existing explicit-root path handles those.
-pub fn ensure(
+/// Returns `None` when the recipe names no profile and the caller gave none.
+pub fn requirement(
     recipe: &Recipe,
     plan: &Plan,
     recipe_path: &Path,
     profile: Option<&Path>,
-    cache: Option<&Path>,
-    offline: bool,
-    refresh: bool,
     arch: &str,
-) -> Result<Option<AutomaticRoot>, Error> {
+) -> Result<Option<Requirement>, Error> {
     let spec = recipe.build.root.as_ref();
     let selected_profile = profile.map(Path::to_path_buf);
     if spec.is_none() && selected_profile.is_none() {
@@ -84,19 +87,47 @@ pub fn ensure(
     // profile before anything derives an architecture or a root path from it.
     profile.validate()?;
 
+    let fallback = format!("{}-root", recipe.package.name);
+    let name = profile.name(&fallback);
+    let bytes = serde_json::to_vec(&profile)
+        .map_err(|error| Error::new(codes::ROOT_006, error.to_string()))?;
+    Ok(Some(Requirement {
+        profile,
+        name,
+        digest: sha512_hex(&bytes),
+    }))
+}
+
+/// Resolve the automatic root for a recipe, if it declares one.
+///
+/// Returns `None` when the caller supplied explicit root flags or asked for
+/// the host root; the existing explicit-root path handles those.
+pub fn ensure(
+    recipe: &Recipe,
+    plan: &Plan,
+    recipe_path: &Path,
+    profile: Option<&Path>,
+    cache: Option<&Path>,
+    offline: bool,
+    refresh: bool,
+    arch: &str,
+) -> Result<Option<AutomaticRoot>, Error> {
+    let Some(requirement) = requirement(recipe, plan, recipe_path, profile, arch)? else {
+        return Ok(None);
+    };
+    let profile = requirement.profile;
+    let name = requirement.name;
+    let digest = requirement.digest;
+
     let cas = match cache {
         Some(path) => path.to_path_buf(),
         None => default_cache()?,
     };
     let roots = cas.parent().unwrap_or(&cas).join("roots");
-    let requirement = serde_json::to_vec(&profile)
-        .map_err(|error| Error::new(codes::ROOT_006, error.to_string()))?;
-    let digest = sha512_hex(&requirement);
     let key = digest.strip_prefix("sha512:").unwrap_or(&digest);
     let directory = roots.join(key);
     let lock_path = directory.join("root.lock.yaml");
     let root_path = directory.join("root");
-    let name = profile.name(recipe.package.name.as_str());
 
     if !refresh {
         match load_cached(&lock_path, &root_path, arch) {

@@ -55,6 +55,9 @@ pub struct BuildArgs {
     /// Do not use the network; fail on a cache miss.
     #[arg(long)]
     pub offline: bool,
+    /// Refuse to build when the recipe differs from package.lock.json.
+    #[arg(long)]
+    pub locked: bool,
     /// Root lock for source assembly and rebuild.
     #[arg(long)]
     pub root_lock: Option<PathBuf>,
@@ -160,6 +163,24 @@ pub struct LintArgs {
 }
 
 #[derive(Debug, clap::Args)]
+pub struct LockArgs {
+    /// Recipe to lock (default: ./package.yaml).
+    #[arg(default_value = "package.yaml")]
+    pub file: PathBuf,
+    /// Target architecture used for templates.
+    #[arg(long, default_value = rpmx_core::arch::native_arch())]
+    pub arch: String,
+    #[command(flatten)]
+    pub policy: crate::cli::PolicyArgs,
+    /// Verify the lock without writing it; exit 3 on drift.
+    #[arg(long)]
+    pub check: bool,
+    /// Write the lock here (default: package.lock.json next to the recipe).
+    #[arg(long, short)]
+    pub output: Option<PathBuf>,
+}
+
+#[derive(Debug, clap::Args)]
 pub struct PlanArgs {
     /// Recipe to plan. (default: ./package.yaml).
     #[arg(default_value = "package.yaml")]
@@ -215,6 +236,9 @@ pub struct SourceArgs {
     /// Do not use the network; fail on a cache miss.
     #[arg(long)]
     pub offline: bool,
+    /// Refuse to build when the recipe differs from package.lock.json.
+    #[arg(long)]
+    pub locked: bool,
     /// Root lock for source assembly.
     #[arg(long)]
     pub root_lock: Option<PathBuf>,

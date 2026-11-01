@@ -18,6 +18,7 @@ pub struct SourceRequest<'a> {
     pub cache: Option<&'a Path>,
     pub proxy: Option<&'a str>,
     pub offline: bool,
+    pub locked: bool,
     pub root_lock: Option<&'a Path>,
     pub root: Option<&'a Path>,
     pub unsafe_host_root: bool,
@@ -49,6 +50,7 @@ pub fn run(args: SourceArgs, pipeline_dir: Option<&Path>) -> Result<PathBuf, Err
         cache: args.cache.as_deref(),
         proxy: args.proxy.as_deref(),
         offline: args.offline,
+        locked: args.locked,
         root_lock: args.root_lock.as_deref(),
         root: args.root.as_deref(),
         unsafe_host_root: args.unsafe_host_root,
@@ -109,6 +111,16 @@ pub fn execute(request: SourceRequest<'_>) -> Result<PathBuf, Error> {
     let automatic_root = automatic.as_ref().map(|root| root.root.as_path());
     let root_lock = request.root_lock.or(automatic_lock);
     let root = request.root.or(automatic_root);
+    if request.locked {
+        crate::commands::lock::verify(
+            &recipe,
+            &plan,
+            request.file,
+            request.policy,
+            request.profile,
+            request.arch,
+        )?;
+    }
     let source_date_epoch = crate::commands::source_date_epoch(&recipe, request.source_date_epoch);
     let work = crate::commands::WorkDir::new()?;
     let workspace = work.path().join("build");

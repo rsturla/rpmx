@@ -31,6 +31,8 @@ pub fn code_for(code: Code) -> u8 {
         return LOCK_DRIFT;
     }
     match domain(code) {
+        // A missing lock is a prerequisite error, not drift.
+        _ if code == codes::LOCK_003 => RECIPE,
         "LOCK" => LOCK_DRIFT,
         "ROOT" | "FETCH" => RESOLUTION,
         "BUILD" | "SANDBOX" | "RUNNER" | "RPM" | "SRPM" => BUILD,

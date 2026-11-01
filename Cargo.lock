@@ -1815,6 +1815,7 @@ dependencies = [
  "clap",
  "rpmx-core",
  "rpmx-rpm",
+ "serde",
  "serde_json",
  "serde_yaml_ng",
  "tempfile",

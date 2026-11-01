@@ -72,6 +72,7 @@ impl BuildPipeline<'_> {
             cache: self.cache,
             proxy: self.proxy,
             offline: self.offline,
+            locked: false,
             root_lock: self.root_lock,
             root: self.root,
             unsafe_host_root: self.unsafe_host_root,

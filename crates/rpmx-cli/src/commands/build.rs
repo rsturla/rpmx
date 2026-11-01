@@ -114,6 +114,7 @@ fn build_from_recipe(
         cache,
         proxy,
         offline,
+        locked,
         root_lock,
         root,
         unsafe_host_root,
@@ -128,6 +129,9 @@ fn build_from_recipe(
     } = args;
 
     let (recipe, plan) = load_plan(&file, &arch, pipeline_dir, false, policy)?;
+    if locked {
+        crate::commands::lock::verify(&recipe, &plan, &file, policy, profile, &arch)?;
+    }
     let automatic = if root_lock.is_none() && root.is_none() && !unsafe_host_root {
         crate::commands::autoroot::ensure(
             &recipe,

@@ -7,6 +7,7 @@ pub mod emit;
 pub mod fetch;
 pub mod lint;
 mod loader;
+pub mod lock;
 pub mod pipeline;
 pub mod plan;
 mod policy;

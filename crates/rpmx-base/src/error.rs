@@ -123,6 +123,12 @@ pub mod codes {
         FETCH_007 = "RPMX-FETCH-007",
         /// A recipe file cannot be read from disk.
         IO_001 = "RPMX-IO-001",
+        /// A package lock cannot be read, parsed or written.
+        LOCK_001 = "RPMX-LOCK-001",
+        /// The recipe or plan has drifted from its package lock.
+        LOCK_002 = "RPMX-LOCK-002",
+        /// A locked build was requested but no package lock exists.
+        LOCK_003 = "RPMX-LOCK-003",
         /// The matrix block declares no axes.
         MATRIX_001 = "RPMX-MATRIX-001",
         /// A matrix axis has an empty value list.

@@ -20,6 +20,7 @@ impl Cli {
     pub fn command_name(&self) -> &'static str {
         match &self.command {
             Command::Lint(_) => "lint",
+            Command::Lock(_) => "lock",
             Command::Plan(_) => "plan",
             Command::Root { .. } => "root",
             Command::Fetch(_) => "fetch",
@@ -41,6 +42,7 @@ impl Cli {
             Command::Sign(args) => args.json,
             Command::Repo(args) => args.json,
             Command::Lint(args) => args.json,
+            Command::Lock(_) => false,
             Command::Plan(args) => args.json,
             Command::Fetch(args) => args.json,
             Command::Build(args) => args.json,
@@ -109,6 +111,8 @@ pub struct PolicyArgs {
 pub enum Command {
     /// Validate a recipe and expand its matrix.
     Lint(crate::commands::LintArgs),
+    /// Write or check the package lock.
+    Lock(crate::commands::LockArgs),
     /// Show the build cells, outputs and tests without building.
     Plan(crate::commands::PlanArgs),
     /// Resolve, assemble and export build roots.
