@@ -1,4 +1,5 @@
 use std::fs;
+use std::num::NonZeroU32;
 
 use rpmx_core::source::{pack_snapshot, unpack_snapshot};
 
@@ -129,7 +130,7 @@ fn patches_are_applied_and_removed_from_the_workspace() {
         root: None,
         image: None,
         source_date_epoch: 1_700_000_000,
-        jobs: 1,
+        jobs: NonZeroU32::new(1).expect("jobs"),
         timeout: None,
         debuginfo: false,
     })

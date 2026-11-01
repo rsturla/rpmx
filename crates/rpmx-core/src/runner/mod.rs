@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::num::{NonZeroU32, NonZeroU64};
 use std::path::Path;
 
 use crate::arch::Arch;
@@ -16,8 +17,8 @@ pub struct RunnerConfig<'a> {
     pub target: Arch,
     pub workspace: &'a Path,
     pub stage: &'a Path,
-    pub jobs: u32,
-    pub timeout: Option<u64>,
+    pub jobs: NonZeroU32,
+    pub timeout: Option<NonZeroU64>,
 }
 
 pub struct RunnerRequest<'a> {

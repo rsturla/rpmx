@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::num::{NonZeroU32, NonZeroU64};
 use std::path::Path;
 
 use crate::arch::Arch;
@@ -26,8 +27,8 @@ pub struct SandboxConfig<'a> {
     pub root: Option<&'a Path>,
     pub image: Option<&'a str>,
     pub source_date_epoch: u32,
-    pub jobs: u32,
-    pub timeout: Option<u64>,
+    pub jobs: NonZeroU32,
+    pub timeout: Option<NonZeroU64>,
     pub debuginfo: bool,
 }
 
@@ -53,6 +54,12 @@ pub struct Sandbox<'a> {
 impl<'a> Sandbox<'a> {
     /// Resolve the configured runner kind and prepare a sandbox.
     pub fn new(config: SandboxConfig<'a>) -> Result<Self> {
+        if config.root.is_some() && config.image.is_some() {
+            return Err(Error::new(
+                codes::ROOT_016,
+                "a sandbox cannot combine an assembled root with a builder image",
+            ));
+        }
         let runner =
             config
                 .runner
@@ -201,4 +208,35 @@ fn expand(value: &str, sandbox: &Sandbox<'_>) -> String {
         .replace("${prefix}", crate::guest::PREFIX)
         .replace("${libdir}", crate::guest::LIBDIR)
         .replace("${jobs}", &sandbox.config.jobs.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Sandbox, SandboxConfig};
+    use crate::arch::Arch;
+    use crate::runner::RunnerKind;
+    use std::num::NonZeroU32;
+    use std::path::Path;
+
+    #[test]
+    fn a_root_and_an_image_cannot_both_be_configured() {
+        let config = SandboxConfig {
+            runner: RunnerKind::Auto,
+            host: Arch::X86_64,
+            target: Arch::X86_64,
+            workspace: Path::new("/tmp"),
+            stage: Path::new("/tmp"),
+            root: Some(Path::new("/root")),
+            image: Some("image"),
+            source_date_epoch: 1,
+            jobs: NonZeroU32::new(1).expect("jobs"),
+            timeout: None,
+            debuginfo: false,
+        };
+        let error = match Sandbox::new(config) {
+            Ok(_) => panic!("root and image must be mutually exclusive"),
+            Err(error) => error,
+        };
+        assert_eq!(error.code, "RPMX-ROOT-016");
+    }
 }

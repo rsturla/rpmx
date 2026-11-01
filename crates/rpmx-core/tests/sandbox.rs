@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::num::{NonZeroU32, NonZeroU64};
 use std::process::Command;
 
 use rpmx_core::arch::Arch;
@@ -17,7 +18,7 @@ fn config<'a>(workspace: &'a std::path::Path, stage: &'a std::path::Path) -> San
         root: None,
         image: None,
         source_date_epoch: 1_700_000_000,
-        jobs: 1,
+        jobs: NonZeroU32::new(1).expect("jobs"),
         timeout: None,
         debuginfo: false,
     }
@@ -163,7 +164,7 @@ fn a_custom_runner_receives_the_arch_contract() {
         SandboxConfig {
             host: Arch::X86_64,
             target: Arch::Aarch64,
-            jobs: 2,
+            jobs: NonZeroU32::new(2).expect("jobs"),
             ..config(work.path(), stage.path())
         },
         Box::new(probe),
@@ -316,7 +317,7 @@ fn a_step_that_overruns_is_killed() {
     let stage = tempfile::tempdir().expect("stage");
     let started = std::time::Instant::now();
     let error = Sandbox::new(SandboxConfig {
-        timeout: Some(1),
+        timeout: Some(NonZeroU64::new(1).expect("timeout")),
         ..config(work.path(), stage.path())
     })
     .expect("sandbox")

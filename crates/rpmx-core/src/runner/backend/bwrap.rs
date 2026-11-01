@@ -1,3 +1,4 @@
+use std::num::NonZeroU64;
 use std::path::{Path, PathBuf};
 
 use super::process::{finish, spawn};
@@ -35,7 +36,7 @@ struct BwrapSession {
     root: PathBuf,
     workspace: PathBuf,
     stage: PathBuf,
-    timeout: Option<u64>,
+    timeout: Option<NonZeroU64>,
 }
 
 impl Session for BwrapSession {

@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::num::{NonZeroU32, NonZeroU64};
 use std::path::Path;
 
 use crate::arch::Arch;
@@ -14,8 +15,8 @@ pub struct TestSandboxConfig<'a> {
     pub target_arch: Arch,
     pub runner: RunnerKind,
     pub source_date_epoch: u32,
-    pub jobs: u32,
-    pub timeout: Option<u64>,
+    pub jobs: NonZeroU32,
+    pub timeout: Option<NonZeroU64>,
     pub debuginfo: bool,
 }
 

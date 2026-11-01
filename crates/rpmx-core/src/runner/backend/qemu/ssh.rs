@@ -1,4 +1,4 @@
-use std::io::{Read, Seek, SeekFrom};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 use std::process::{Child, ExitStatus};
 use std::thread::JoinHandle;
@@ -30,7 +30,56 @@ fn take_stderr(child: &mut Child) -> Option<JoinHandle<std::io::Result<Vec<u8>>>
     })
 }
 
-fn join_stderr(handle: Option<JoinHandle<std::io::Result<Vec<u8>>>>) -> Result<Vec<u8>> {
+pub(super) fn take_stderr_with_echo(
+    child: &mut Child,
+) -> Option<JoinHandle<std::io::Result<Vec<u8>>>> {
+    child.stderr.take().map(|mut stderr| {
+        std::thread::spawn(move || {
+            let mut buffer = Vec::new();
+            let mut chunk = [0u8; 8192];
+            loop {
+                let read = stderr.read(&mut chunk)?;
+                if read == 0 {
+                    break;
+                }
+                let _ = std::io::stderr().write_all(&chunk[..read]);
+                let remaining = STDERR_LIMIT.saturating_sub(buffer.len());
+                if remaining > 0 {
+                    buffer.extend_from_slice(&chunk[..read.min(remaining)]);
+                }
+            }
+            Ok(buffer)
+        })
+    })
+}
+
+pub(super) fn take_stdout_echo(child: &mut Child) -> Option<JoinHandle<std::io::Result<()>>> {
+    child.stdout.take().map(|mut stdout| {
+        std::thread::spawn(move || {
+            let mut out = std::io::stdout().lock();
+            let mut error = None;
+            let mut chunk = [0u8; 8192];
+            loop {
+                let read = stdout.read(&mut chunk)?;
+                if read == 0 {
+                    break;
+                }
+                if let Err(write) = out.write_all(&chunk[..read]) {
+                    error.get_or_insert(write);
+                }
+            }
+            if let Err(flush) = out.flush() {
+                error.get_or_insert(flush);
+            }
+            match error {
+                Some(error) => Err(error),
+                None => Ok(()),
+            }
+        })
+    })
+}
+
+pub(super) fn join_stderr(handle: Option<JoinHandle<std::io::Result<Vec<u8>>>>) -> Result<Vec<u8>> {
     let Some(handle) = handle else {
         return Ok(Vec::new());
     };
@@ -183,6 +232,46 @@ pub(super) fn stream_tar_out(
     })
 }
 
+pub(super) fn stream_command_output(
+    mut child: Child,
+    stdin: Option<&[u8]>,
+) -> Result<(ExitStatus, Vec<u8>)> {
+    let stdout = take_stdout_echo(&mut child);
+    let stderr = take_stderr_with_echo(&mut child);
+    let mut write_error = None;
+    if let Some(bytes) = stdin {
+        match child.stdin.take() {
+            Some(mut input) => {
+                if let Err(error) = input.write_all(bytes) {
+                    write_error = Some(error);
+                }
+            }
+            None => {
+                write_error = Some(std::io::Error::new(
+                    std::io::ErrorKind::BrokenPipe,
+                    "ssh stdin is not available",
+                ));
+            }
+        }
+    }
+    let status = child
+        .wait()
+        .map_err(|error| Error::new(codes::RUNNER_003, format!("ssh failed: {error}")))?;
+    let stderr = join_stderr(stderr)?;
+    if let Some(reader) = stdout {
+        let _ = reader.join();
+    }
+    if let Some(error) = write_error {
+        if status.success() {
+            return Err(Error::new(
+                codes::RUNNER_003,
+                format!("cannot write to ssh: {error}"),
+            ));
+        }
+    }
+    Ok((status, stderr))
+}
+
 pub(super) fn step_script(request: &RunnerRequest<'_>) -> String {
     let mut script = String::from("#!/bin/sh\nset +e\n");
     script.push_str(&format!("cd {}\n", shell_quote(request.cwd)));
@@ -212,4 +301,37 @@ pub(super) fn shell_quote(value: &str) -> String {
     }
     out.push('\'');
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::stream_command_output;
+    use std::process::{Command, Stdio};
+
+    fn piped(command: &str) -> std::process::Child {
+        Command::new("sh")
+            .arg("-c")
+            .arg(command)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn test transport")
+    }
+
+    #[test]
+    fn step_stderr_is_captured_for_the_error_message() {
+        let child = piped("printf 'warning\\n' >&2");
+        let (status, stderr) = stream_command_output(child, None).expect("stream output");
+        assert!(status.success());
+        assert_eq!(stderr, b"warning\n");
+    }
+
+    #[test]
+    fn step_stdin_is_forwarded() {
+        let child = piped("wc -c >/dev/null");
+        let payload = vec![b'x'; 256 * 1024];
+        let (status, _) = stream_command_output(child, Some(&payload)).expect("stream stdin");
+        assert!(status.success());
+    }
 }

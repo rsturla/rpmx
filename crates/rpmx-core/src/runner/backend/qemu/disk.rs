@@ -1,10 +1,57 @@
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::sync::{Arc, Mutex};
 
 use crate::arch::Arch;
 use crate::error::{codes, Error, Result};
 use crate::runner::RunnerConfig;
+
+/// The guest serial console is diagnostic only; cap what it can write to the
+/// host so a noisy guest cannot fill the disk.
+const LOG_LIMIT: usize = 1024 * 1024;
+
+struct CappedLog {
+    file: std::fs::File,
+    written: usize,
+    limit: usize,
+}
+
+impl CappedLog {
+    fn new(file: std::fs::File, limit: usize) -> Self {
+        Self {
+            file,
+            written: 0,
+            limit,
+        }
+    }
+
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<()> {
+        if self.written >= self.limit {
+            return Ok(());
+        }
+        let take = bytes.len().min(self.limit - self.written);
+        self.file.write_all(&bytes[..take])?;
+        self.written += take;
+        Ok(())
+    }
+}
+
+fn pump_log<R: Read + Send + 'static>(mut stream: R, log: Arc<Mutex<CappedLog>>) {
+    std::thread::spawn(move || {
+        let mut chunk = [0u8; 8192];
+        loop {
+            match stream.read(&mut chunk) {
+                Ok(0) | Err(_) => break,
+                Ok(read) => {
+                    if let Ok(mut log) = log.lock() {
+                        let _ = log.write(&chunk[..read]);
+                    }
+                }
+            }
+        }
+    });
+}
 
 pub(super) fn qemu_binary(target: Arch) -> Result<String> {
     if let Ok(value) = std::env::var("RPMX_QEMU_SYSTEM") {
@@ -220,7 +267,7 @@ pub(super) fn start_vm(
         "-m".to_string(),
         "2048".to_string(),
         "-smp".to_string(),
-        config.jobs.max(1).to_string(),
+        config.jobs.to_string(),
         "-no-reboot".to_string(),
         "-nographic".to_string(),
         "-kernel".to_string(),
@@ -247,20 +294,42 @@ pub(super) fn start_vm(
         args.push("-cpu".to_string());
         args.push("max".to_string());
     }
-    let stderr = std::fs::File::create(log).map_err(|error| {
+    let log_file = std::fs::File::create(log).map_err(|error| {
         Error::new(
             codes::RUNNER_003,
             format!("cannot create {}: {error}", log.display()),
         )
     })?;
-    let stdout = stderr
-        .try_clone()
-        .map_err(|error| Error::new(codes::RUNNER_003, format!("cannot clone log: {error}")))?;
-    Command::new(qemu)
+    let log = Arc::new(Mutex::new(CappedLog::new(log_file, LOG_LIMIT)));
+    let mut child = Command::new(qemu)
         .args(&args)
-        .stdin(std::process::Stdio::null())
-        .stdout(stdout)
-        .stderr(stderr)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .spawn()
-        .map_err(|error| Error::new(codes::RUNNER_003, format!("cannot start {qemu}: {error}")))
+        .map_err(|error| Error::new(codes::RUNNER_003, format!("cannot start {qemu}: {error}")))?;
+    if let Some(stdout) = child.stdout.take() {
+        pump_log(stdout, Arc::clone(&log));
+    }
+    if let Some(stderr) = child.stderr.take() {
+        pump_log(stderr, log);
+    }
+    Ok(child)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CappedLog;
+
+    #[test]
+    fn capped_log_discards_bytes_after_the_limit() {
+        let dir = tempfile::tempdir().expect("work");
+        let path = dir.path().join("log");
+        let file = std::fs::File::create(&path).expect("log");
+        let mut log = CappedLog::new(file, 8);
+        log.write(b"123456").expect("first write");
+        log.write(b"789012").expect("second write");
+        drop(log);
+        assert_eq!(std::fs::read_to_string(&path).expect("read"), "12345678");
+    }
 }

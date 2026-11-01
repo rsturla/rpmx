@@ -1,4 +1,4 @@
-use std::io::Write;
+use std::num::NonZeroU64;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
@@ -16,7 +16,7 @@ use disk::{
     unpack_kernel,
 };
 use guest::{generate_ssh_key, inject_network, inject_ssh};
-use ssh::{shell_quote, step_script, stream_tar_in, stream_tar_out};
+use ssh::{shell_quote, step_script, stream_command_output, stream_tar_in, stream_tar_out};
 
 pub struct QemuBackend<'a> {
     pub root: &'a Path,
@@ -46,7 +46,7 @@ struct QemuSession {
     ssh_key: PathBuf,
     port: u16,
     log: PathBuf,
-    timeout: Option<u64>,
+    timeout: Option<NonZeroU64>,
 }
 
 impl QemuSession {
@@ -116,16 +116,16 @@ impl QemuSession {
 
     fn ssh_command(&self, command: &[&str]) -> Command {
         let mut process = match self.timeout {
-            Some(seconds) if seconds > 0 => {
+            Some(seconds) => {
                 let mut process = Command::new("timeout");
                 process
                     .arg("--signal=TERM")
                     .arg("--kill-after=5")
-                    .arg(seconds.to_string())
+                    .arg(seconds.get().to_string())
                     .arg("ssh");
                 process
             }
-            _ => Command::new("ssh"),
+            None => Command::new("ssh"),
         };
         process.args(self.ssh_args()).args(command);
         process
@@ -142,7 +142,13 @@ impl QemuSession {
             .map_err(|error| Error::new(codes::RUNNER_003, format!("cannot run ssh: {error}")))
     }
 
-    fn ssh(&self, command: &[&str], stdin: Option<&[u8]>) -> Result<std::process::Output> {
+    /// Run a command over ssh, streaming stdout and stderr to the host while
+    /// retaining a bounded stderr tail for the step's error message.
+    fn ssh_run(
+        &self,
+        command: &[&str],
+        stdin: Option<&[u8]>,
+    ) -> Result<(std::process::ExitStatus, Vec<u8>)> {
         let mut process = self.ssh_command(command);
         process.stdin(if stdin.is_some() {
             Stdio::piped()
@@ -151,19 +157,10 @@ impl QemuSession {
         });
         process.stdout(Stdio::piped());
         process.stderr(Stdio::piped());
-        let mut child = process
+        let child = process
             .spawn()
             .map_err(|error| Error::new(codes::RUNNER_003, format!("cannot run ssh: {error}")))?;
-        if let Some(bytes) = stdin {
-            if let Some(mut input) = child.stdin.take() {
-                input.write_all(bytes).map_err(|error| {
-                    Error::new(codes::RUNNER_003, format!("cannot write to ssh: {error}"))
-                })?;
-            }
-        }
-        child
-            .wait_with_output()
-            .map_err(|error| Error::new(codes::RUNNER_003, format!("ssh failed: {error}")))
+        stream_command_output(child, stdin)
     }
 
     fn wait_for_ssh(&mut self) -> Result<()> {
@@ -188,9 +185,8 @@ impl QemuSession {
                     ),
                 ));
             }
-            let probe = self.ssh(&["true"], None);
-            if let Ok(output) = probe {
-                if output.status.success() {
+            if let Ok((status, _)) = self.ssh_run(&["true"], None) {
+                if status.success() {
                     return Ok(());
                 }
             }
@@ -249,21 +245,18 @@ impl QemuSession {
 impl Session for QemuSession {
     fn run(&mut self, request: &RunnerRequest<'_>) -> Result<()> {
         let script = step_script(request);
-        let output = self.ssh(&["sh", "-s"], Some(script.as_bytes()))?;
-        let _ = std::io::stdout().write_all(&output.stdout);
-        let _ = std::io::stderr().write_all(&output.stderr);
-        if !output.status.success() {
+        let (status, stderr) = self.ssh_run(&["sh", "-s"], Some(script.as_bytes()))?;
+        if !status.success() {
             return Err(Error::new(
                 codes::SANDBOX_002,
                 format!(
                     "qemu step '{}' ({}) failed with {}: {}",
                     request.label,
                     request.command,
-                    output
-                        .status
+                    status
                         .code()
                         .map_or_else(|| "a signal".to_string(), |code| format!("exit {code}")),
-                    String::from_utf8_lossy(&output.stderr).trim()
+                    String::from_utf8_lossy(&stderr).trim()
                 ),
             ));
         }

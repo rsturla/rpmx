@@ -1,3 +1,4 @@
+use std::num::NonZeroU64;
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -77,7 +78,7 @@ impl Runner for PodmanBackend<'_> {
 
 struct PodmanSession {
     name: String,
-    timeout: Option<u64>,
+    timeout: Option<NonZeroU64>,
 }
 
 impl Session for PodmanSession {

@@ -1,4 +1,5 @@
 use std::io::Write;
+use std::num::{NonZeroU32, NonZeroU64};
 use std::path::{Path, PathBuf};
 
 use crate::error::{codes, Error, Result};
@@ -20,8 +21,8 @@ pub struct SourceOptions<'a> {
     pub stage: &'a Path,
     pub output: &'a Path,
     pub source_date_epoch: u32,
-    pub jobs: u32,
-    pub step_timeout: u64,
+    pub jobs: NonZeroU32,
+    pub step_timeout: NonZeroU64,
     pub root: Option<&'a Path>,
     pub runner: &'a str,
     pub recipe_dir: &'a Path,
@@ -72,7 +73,7 @@ pub fn assemble(options: SourceOptions<'_>) -> Result<PathBuf> {
         image: None,
         source_date_epoch: options.source_date_epoch,
         jobs: options.jobs,
-        timeout: Some(options.step_timeout).filter(|seconds| *seconds > 0),
+        timeout: Some(options.step_timeout),
         debuginfo: false,
     })?;
 
