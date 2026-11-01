@@ -125,6 +125,7 @@ pub fn execute(request: SourceRequest<'_>) -> Result<PathBuf, Error> {
             request.arch,
             request.source_date_epoch,
             active_lock.as_ref(),
+            true,
         )?;
     }
     let source_date_epoch = crate::commands::source_date_epoch(&recipe, request.source_date_epoch);

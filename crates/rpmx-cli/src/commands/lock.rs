@@ -140,6 +140,7 @@ pub fn verify(
     arch: &str,
     explicit_source_date_epoch: Option<u32>,
     active_root: Option<&rpmx_core::root::RootLock>,
+    check_root: bool,
 ) -> Result<(), Error> {
     let path = default_path(recipe_path);
     if !path.is_file() {
@@ -161,9 +162,28 @@ pub fn verify(
         profile,
         arch,
         explicit_source_date_epoch,
-        active_root,
+        if check_root { active_root } else { None },
     )?;
-    if existing != actual {
+    if check_root && existing.root.is_some() && active_root.is_none() {
+        return Err(Error::new(
+            codes::LOCK_002,
+            format!(
+                "{} pins a build root but no root is active; pass --root-lock and --root",
+                path.display()
+            ),
+        )
+        .at(path.display().to_string()));
+    }
+    let unchanged = if check_root {
+        existing == actual
+    } else {
+        let mut expected = existing.clone();
+        let mut observed = actual.clone();
+        expected.root = None;
+        observed.root = None;
+        expected == observed
+    };
+    if !unchanged {
         return Err(Error::new(
             codes::LOCK_002,
             format!(
@@ -193,18 +213,29 @@ pub fn build(
             format!("cannot read {}: {error}", recipe_path.display()),
         )
     })?;
-    let root = autoroot::requirement(recipe, plan, recipe_path, profile, arch)?.map(|root| {
-        let resolved = active_root
-            .cloned()
-            .or_else(|| autoroot::cached_lock_for_requirement(&root.digest));
-        LockedRoot {
-            profile: root.name,
-            requirement: root.digest,
-            arch: Some(arch.to_string()),
-            closure_digest: resolved.as_ref().map(|lock| lock.closure_digest.clone()),
-            root_digest: resolved.as_ref().and_then(|lock| lock.root_digest.clone()),
+    let root = match autoroot::requirement(recipe, plan, recipe_path, profile, arch)? {
+        Some(root) => {
+            let resolved = active_root
+                .cloned()
+                .or_else(|| autoroot::cached_lock_for_requirement(&root.digest));
+            Some(LockedRoot {
+                profile: root.name,
+                requirement: root.digest,
+                arch: Some(arch.to_string()),
+                closure_digest: resolved.as_ref().map(|lock| lock.closure_digest.clone()),
+                root_digest: resolved.as_ref().and_then(|lock| lock.root_digest.clone()),
+            })
         }
-    });
+        // An explicitly supplied root is a lock input even when the recipe
+        // does not describe one.
+        None => active_root.map(|lock| LockedRoot {
+            profile: lock.profile.clone(),
+            requirement: String::new(),
+            arch: Some(arch.to_string()),
+            closure_digest: Some(lock.closure_digest.clone()),
+            root_digest: lock.root_digest.clone(),
+        }),
+    };
     let cells = plan
         .cells
         .iter()

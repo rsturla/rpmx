@@ -53,6 +53,7 @@ fn package_stage(
             &args.arch,
             args.source_date_epoch,
             None,
+            false,
         )?;
     }
     let source_date_epoch = crate::commands::source_date_epoch(&recipe, args.source_date_epoch);
@@ -181,6 +182,19 @@ fn build_from_recipe(
             }
         }
     }
+    if locked {
+        crate::commands::lock::verify(
+            &recipe,
+            &plan,
+            &file,
+            policy,
+            profile,
+            &arch,
+            source_date_epoch,
+            None,
+            false,
+        )?;
+    }
     let automatic = if root_lock.is_none() && root.is_none() && !unsafe_host_root {
         crate::commands::autoroot::ensure(
             &recipe,
@@ -223,6 +237,7 @@ fn build_from_recipe(
             &arch,
             source_date_epoch,
             active_lock.as_ref(),
+            true,
         )?;
     }
     let _root_request = rpmx_core::request::resolve(rpmx_core::request::RootRequestOptions {
