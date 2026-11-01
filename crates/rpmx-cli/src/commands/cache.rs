@@ -1,27 +1,19 @@
 use std::collections::BTreeSet;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::Duration;
 
 use rpmx_core::error::codes;
 use rpmx_core::{cas, load_recipe, root::load_lock, Error};
 
 use crate::commands::fetch::default_cache;
+use crate::commands::GcArgs;
 
-pub struct GcArgs<'a> {
-    pub locks: &'a [PathBuf],
-    pub recipes: &'a [PathBuf],
-    pub older_than_hours: u64,
-    pub dry_run: bool,
-    pub cache: Option<&'a Path>,
-    pub json: bool,
-}
-
-pub fn gc(args: GcArgs<'_>) -> Result<(), Error> {
-    let cache = match args.cache {
-        Some(path) => path.to_path_buf(),
+pub fn gc(args: GcArgs) -> Result<(), Error> {
+    let cache = match &args.cache {
+        Some(path) => path.clone(),
         None => default_cache()?,
     };
-    let keep = referenced_digests(args.locks, args.recipes)?;
+    let keep = referenced_digests(&args.lock, &args.recipe)?;
     if keep.is_empty() {
         return Err(Error::new(
             codes::CACHE_001,

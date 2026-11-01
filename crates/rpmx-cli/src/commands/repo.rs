@@ -1,22 +1,14 @@
-use std::path::Path;
-
 use rpmx_core::error::codes;
 use rpmx_core::Error;
 use rpmx_rpm::repo::{generate, RepoOptions};
 
-use crate::commands::load_signing_key;
+use crate::commands::{load_signing_key, RepoArgs};
 
-pub struct RepoArgs<'a> {
-    pub rpms: &'a Path,
-    pub output: &'a Path,
-    pub signing_key: Option<&'a Path>,
-    pub signing_passphrase_env: Option<&'a str>,
-    pub signing_timestamp: Option<u32>,
-    pub json: bool,
-}
-
-pub fn run(args: RepoArgs<'_>) -> Result<(), Error> {
-    let key = load_signing_key(args.signing_key, args.signing_passphrase_env)?;
+pub fn run(args: RepoArgs) -> Result<(), Error> {
+    let key = load_signing_key(
+        args.signing_key.as_deref(),
+        args.signing_passphrase_env.as_deref(),
+    )?;
     let timestamp = args.signing_timestamp.unwrap_or_else(|| {
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -24,8 +16,8 @@ pub fn run(args: RepoArgs<'_>) -> Result<(), Error> {
             .unwrap_or(0)
     });
     let report = generate(RepoOptions {
-        rpms: args.rpms,
-        output: args.output,
+        rpms: &args.rpms,
+        output: &args.output,
         signing_key: key.as_ref(),
         timestamp,
     })?;

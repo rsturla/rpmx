@@ -14,19 +14,20 @@ use crate::commands::{
     RootAssembleArgs, RootDigestArgs, RootExportArgs, RootImportArgs, RootResolveArgs,
 };
 
-pub fn resolve(args: RootResolveArgs<'_>) -> Result<(), Error> {
-    let profile = load_profile(args.profile)?;
+pub fn resolve(args: RootResolveArgs) -> Result<(), Error> {
+    let output = args.output.as_deref();
+    let profile = load_profile(&args.profile)?;
     let fallback = args
         .profile
         .file_stem()
         .and_then(|value| value.to_str())
         .unwrap_or("root");
     let name = profile.name(fallback);
-    let cache = cache_dir(args.cache)?;
-    let (work, temporary) = scratch(args.work)?;
+    let cache = cache_dir(args.cache.as_deref())?;
+    let (work, temporary) = scratch(args.work.as_deref())?;
 
     let result = resolve_profile(&profile, &name, &work, &cache).and_then(|lock| {
-        emit_lock(&lock, args.output)?;
+        emit_lock(&lock, output)?;
         if args.output.is_some() {
             if args.json {
                 print_json(&lock)?;
@@ -47,11 +48,11 @@ pub fn resolve(args: RootResolveArgs<'_>) -> Result<(), Error> {
     result
 }
 
-pub fn assemble(args: RootAssembleArgs<'_>) -> Result<(), Error> {
-    let mut lock = load_lock(args.lock)?;
-    let output = args.output;
+pub fn assemble(args: RootAssembleArgs) -> Result<(), Error> {
+    let mut lock = load_lock(&args.lock)?;
+    let output = args.output.as_deref();
 
-    let root = match args.root {
+    let root = match args.root.as_deref() {
         Some(path) => path.to_path_buf(),
         None => output
             .and_then(Path::parent)
@@ -64,8 +65,8 @@ pub fn assemble(args: RootAssembleArgs<'_>) -> Result<(), Error> {
             })?,
     };
     let root = absolute(&root)?;
-    let cache = cache_dir(args.cache)?;
-    let (work, temporary) = scratch(args.work)?;
+    let cache = cache_dir(args.cache.as_deref())?;
+    let (work, temporary) = scratch(args.work.as_deref())?;
 
     let result = assemble_root(
         &lock,
@@ -100,8 +101,8 @@ pub fn assemble(args: RootAssembleArgs<'_>) -> Result<(), Error> {
     result
 }
 
-pub fn digest(args: RootDigestArgs<'_>) -> Result<(), Error> {
-    let digest = tree_digest(args.root)?;
+pub fn digest(args: RootDigestArgs) -> Result<(), Error> {
+    let digest = tree_digest(&args.root)?;
     if args.json {
         let value = serde_json::json!({ "root_digest": digest });
         println!("{value}");
@@ -111,8 +112,8 @@ pub fn digest(args: RootDigestArgs<'_>) -> Result<(), Error> {
     Ok(())
 }
 
-pub fn export(args: RootExportArgs<'_>) -> Result<(), Error> {
-    let lock = load_lock(args.lock)?;
+pub fn export(args: RootExportArgs) -> Result<(), Error> {
+    let lock = load_lock(&args.lock)?;
     if lock.options.weak_deps || lock.options.docs {
         eprintln!(
             "warning: rpm-package-manifest cannot represent resolve options; \
@@ -122,7 +123,7 @@ pub fn export(args: RootExportArgs<'_>) -> Result<(), Error> {
     let manifest = pkgmanifest::from_lock(&lock);
     let text = serde_yaml_ng::to_string(&manifest)
         .map_err(|error| Error::new(codes::CLI_006, error.to_string()))?;
-    match args.output {
+    match args.output.as_deref() {
         Some(path) => write_file(path, &text),
         None => {
             print!("{text}");
@@ -131,8 +132,9 @@ pub fn export(args: RootExportArgs<'_>) -> Result<(), Error> {
     }
 }
 
-pub fn import(args: RootImportArgs<'_>) -> Result<(), Error> {
-    let text = std::fs::read_to_string(args.manifest).map_err(|error| {
+pub fn import(args: RootImportArgs) -> Result<(), Error> {
+    let output = args.output.as_deref();
+    let text = std::fs::read_to_string(&args.manifest).map_err(|error| {
         Error::new(
             codes::ROOT_004,
             format!("cannot read {}: {error}", args.manifest.display()),
@@ -140,8 +142,13 @@ pub fn import(args: RootImportArgs<'_>) -> Result<(), Error> {
     })?;
     let manifest: RpmPackageManifest = serde_yaml_ng::from_str(&text)
         .map_err(|error| Error::new(codes::ROOT_006, format!("invalid manifest: {error}")))?;
-    let lock = pkgmanifest::to_lock(&manifest, args.profile, args.arch, args.releasever)?;
-    emit_lock(&lock, args.output)?;
+    let lock = pkgmanifest::to_lock(
+        &manifest,
+        &args.profile,
+        args.arch.as_deref(),
+        &args.releasever,
+    )?;
+    emit_lock(&lock, output)?;
     if args.output.is_none() {
         return Ok(());
     }

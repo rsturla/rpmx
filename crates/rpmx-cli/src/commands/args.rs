@@ -1,5 +1,5 @@
 use std::num::{NonZeroU32, NonZeroU64};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 #[derive(Debug, clap::Args)]
 pub struct BuildArgs {
@@ -274,39 +274,166 @@ pub struct SrpmArgs {
     pub quiet: bool,
 }
 
-pub struct RootResolveArgs<'a> {
-    pub profile: &'a Path,
-    pub output: Option<&'a Path>,
-    pub work: Option<&'a Path>,
+#[derive(Debug, clap::Args)]
+pub struct RootResolveArgs {
+    /// Profile file.
+    pub profile: PathBuf,
+    /// Write the root lock here (default: standard output).
+    #[arg(long, short)]
+    pub output: Option<PathBuf>,
+    /// Resolver scratch directory (default: a temporary directory).
+    #[arg(long)]
+    pub work: Option<PathBuf>,
+    /// Keep the resolver scratch directory.
+    #[arg(long)]
     pub keep: bool,
-    pub cache: Option<&'a Path>,
+    /// Content-addressed cache (default: $XDG_CACHE_HOME/rpmx/cas).
+    #[arg(long)]
+    pub cache: Option<PathBuf>,
+    /// Emit machine-readable output.
+    #[arg(long)]
     pub json: bool,
 }
 
-pub struct RootAssembleArgs<'a> {
-    pub lock: &'a Path,
-    pub root: Option<&'a Path>,
-    pub output: Option<&'a Path>,
-    pub cache: Option<&'a Path>,
-    pub work: Option<&'a Path>,
+#[derive(Debug, clap::Args)]
+pub struct RootAssembleArgs {
+    /// Root lock to assemble.
+    pub lock: PathBuf,
+    /// Directory to assemble the root in (default: <output>/../root).
+    #[arg(long)]
+    pub root: Option<PathBuf>,
+    /// Write the lock with root_digest here (default: standard output).
+    #[arg(long, short)]
+    pub output: Option<PathBuf>,
+    /// Content-addressed cache (default: $XDG_CACHE_HOME/rpmx/cas).
+    #[arg(long)]
+    pub cache: Option<PathBuf>,
+    /// Assembly scratch directory (default: a temporary directory).
+    #[arg(long)]
+    pub work: Option<PathBuf>,
+    /// Keep the assembly scratch directory.
+    #[arg(long)]
     pub keep: bool,
+    /// Emit machine-readable output.
+    #[arg(long)]
     pub json: bool,
 }
 
-pub struct RootDigestArgs<'a> {
-    pub root: &'a Path,
+#[derive(Debug, clap::Args)]
+pub struct RootDigestArgs {
+    /// Assembled root directory.
+    pub root: PathBuf,
+    /// Emit machine-readable output.
+    #[arg(long)]
     pub json: bool,
 }
 
-pub struct RootExportArgs<'a> {
-    pub lock: &'a Path,
-    pub output: Option<&'a Path>,
+#[derive(Debug, clap::Args)]
+pub struct RootExportArgs {
+    /// Root lock file.
+    pub lock: PathBuf,
+    /// Write the manifest here (default: standard output).
+    #[arg(long, short)]
+    pub output: Option<PathBuf>,
 }
 
-pub struct RootImportArgs<'a> {
-    pub manifest: &'a Path,
-    pub profile: &'a str,
-    pub arch: Option<&'a str>,
-    pub releasever: &'a str,
-    pub output: Option<&'a Path>,
+#[derive(Debug, clap::Args)]
+pub struct RootImportArgs {
+    /// Manifest file.
+    pub manifest: PathBuf,
+    /// Profile name recorded in the lock.
+    #[arg(long, default_value = "imported")]
+    pub profile: String,
+    /// Target architecture when the manifest has no unambiguous one.
+    #[arg(long)]
+    pub arch: Option<String>,
+    /// Release version recorded in the lock.
+    #[arg(long, default_value = "")]
+    pub releasever: String,
+    /// Write the root lock here (default: standard output).
+    #[arg(long, short)]
+    pub output: Option<PathBuf>,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct RepoArgs {
+    /// Directory containing the RPMs.
+    #[arg(long)]
+    pub rpms: PathBuf,
+    /// Repository directory; RPMs are copied here and repodata is written.
+    #[arg(long)]
+    pub output: PathBuf,
+    /// Sign repodata with this ASCII-armored OpenPGP secret key.
+    #[arg(long)]
+    pub signing_key: Option<PathBuf>,
+    /// Read the signing key passphrase from this environment variable.
+    #[arg(long, requires = "signing_key")]
+    pub signing_passphrase_env: Option<String>,
+    /// Repository revision/signature timestamp in Unix seconds (default: now).
+    #[arg(long, requires = "signing_key")]
+    pub signing_timestamp: Option<u32>,
+    /// Emit machine-readable output.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct KeygenArgs {
+    /// Secret key output path; the public key is written beside it with a
+    /// `.pub` suffix.
+    #[arg(long, short, default_value = "rpmx-signing-key.asc")]
+    pub output: PathBuf,
+    /// OpenPGP user ID for the key.
+    #[arg(long, default_value = "rpmx signing key <rpmx@localhost>")]
+    pub user_id: String,
+    /// RSA key size in bits.
+    #[arg(long, default_value_t = 4096)]
+    pub bits: u32,
+    /// Read the key passphrase from this environment variable.
+    #[arg(long)]
+    pub passphrase_env: Option<String>,
+    /// Emit machine-readable output.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct SignArgs {
+    /// ASCII-armored OpenPGP secret key.
+    #[arg(long, short = 'k')]
+    pub signing_key: PathBuf,
+    /// Read the key passphrase from this environment variable.
+    #[arg(long)]
+    pub passphrase_env: Option<String>,
+    /// Signature creation time in Unix seconds (default: now).
+    #[arg(long)]
+    pub timestamp: Option<u32>,
+    /// RPM files to sign.
+    #[arg(required = true)]
+    pub rpms: Vec<PathBuf>,
+    /// Emit machine-readable output.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct GcArgs {
+    /// Root lock whose packages must stay cached.
+    #[arg(long)]
+    pub lock: Vec<PathBuf>,
+    /// Recipe whose sources and tools must stay cached.
+    #[arg(long)]
+    pub recipe: Vec<PathBuf>,
+    /// Keep blobs younger than this many hours, protecting concurrent fetches.
+    #[arg(long, default_value_t = 24)]
+    pub older_than_hours: u64,
+    /// Report what would be removed without deleting it.
+    #[arg(long)]
+    pub dry_run: bool,
+    /// CAS directory (default: $XDG_CACHE_HOME/rpmx/cas).
+    #[arg(long)]
+    pub cache: Option<PathBuf>,
+    /// Emit machine-readable output.
+    #[arg(long)]
+    pub json: bool,
 }

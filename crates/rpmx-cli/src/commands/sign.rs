@@ -1,37 +1,20 @@
-use std::path::Path;
-
 use rpmx_core::error::codes;
 use rpmx_core::Error;
 use rpmx_rpm::sign::{generate_key, load_key, sign_package, KeygenOptions};
+use std::path::Path;
 
-use crate::commands::signing_passphrase;
+use crate::commands::{signing_passphrase, KeygenArgs, SignArgs};
 
-pub struct KeygenArgs<'a> {
-    pub output: &'a Path,
-    pub user_id: &'a str,
-    pub bits: u32,
-    pub passphrase_env: Option<&'a str>,
-    pub json: bool,
-}
-
-pub struct SignArgs<'a> {
-    pub signing_key: &'a Path,
-    pub passphrase_env: Option<&'a str>,
-    pub timestamp: Option<u32>,
-    pub rpms: &'a [std::path::PathBuf],
-    pub json: bool,
-}
-
-pub fn keygen(args: KeygenArgs<'_>) -> Result<(), Error> {
-    let passphrase = signing_passphrase(args.passphrase_env)?;
+pub fn keygen(args: KeygenArgs) -> Result<(), Error> {
+    let passphrase = signing_passphrase(args.passphrase_env.as_deref())?;
     let key = generate_key(KeygenOptions {
-        user_id: args.user_id,
+        user_id: &args.user_id,
         bits: args.bits,
         passphrase: passphrase.as_deref(),
     })?;
 
-    let public = public_path(args.output);
-    write_secret(args.output, &key.secret_armored)?;
+    let public = public_path(&args.output);
+    write_secret(&args.output, &key.secret_armored)?;
     std::fs::write(&public, &key.public_armored).map_err(|error| {
         Error::new(
             codes::SIGN_006,
@@ -59,12 +42,12 @@ pub fn keygen(args: KeygenArgs<'_>) -> Result<(), Error> {
     Ok(())
 }
 
-pub fn run(args: SignArgs<'_>) -> Result<(), Error> {
-    let passphrase = signing_passphrase(args.passphrase_env)?;
-    let key = load_key(args.signing_key, passphrase.as_deref())?;
+pub fn run(args: SignArgs) -> Result<(), Error> {
+    let passphrase = signing_passphrase(args.passphrase_env.as_deref())?;
+    let key = load_key(&args.signing_key, passphrase.as_deref())?;
 
     let mut signed = Vec::new();
-    for path in args.rpms {
+    for path in &args.rpms {
         sign_package(path, &key, args.timestamp)?;
         signed.push(path.display().to_string());
     }
