@@ -19,13 +19,13 @@ impl Cli {
             Command::Lint { json, .. }
             | Command::Plan { json, .. }
             | Command::Fetch { json, .. }
-            | Command::Source { json, .. }
-            | Command::Srpm { json, .. }
             | Command::Keygen { json, .. }
             | Command::Sign { json, .. }
             | Command::Repo { json, .. } => *json,
             Command::Build(args) => args.json,
             Command::Rebuild(args) => args.json,
+            Command::Source(args) => args.json,
+            Command::Srpm(args) => args.json,
             Command::Cache { command } => command.json(),
         }
     }
@@ -220,88 +220,9 @@ pub enum Command {
         json: bool,
     },
     /// Fetch and assemble the source snapshot.
-    Source {
-        /// Recipe to assemble.
-        file: PathBuf,
-        /// Target architecture used for templates.
-        #[arg(long, default_value = rpmx_core::arch::native_arch())]
-        arch: String,
-        /// Runner: auto, bwrap or qemu.
-        #[arg(long, default_value = "auto", value_parser = ["auto", "bwrap", "qemu"])]
-        runner: String,
-        #[command(flatten)]
-        policy: PolicyArgs,
-        /// CAS directory (default: $XDG_CACHE_HOME/rpmx/cas).
-        #[arg(long)]
-        cache: Option<PathBuf>,
-        /// Content-addressed acquisition proxy.
-        #[arg(long)]
-        proxy: Option<String>,
-        /// Do not use the network; fail on a cache miss.
-        #[arg(long)]
-        offline: bool,
-        /// Root lock for source assembly.
-        #[arg(long)]
-        root_lock: Option<PathBuf>,
-        /// Assembled root for source assembly.
-        #[arg(long)]
-        root: Option<PathBuf>,
-        /// Use the host root for source assembly (unsafe).
-        #[arg(long)]
-        unsafe_host_root: bool,
-        /// Output directory for RPMX-SOURCE.tar.gz.
-        #[arg(long, default_value = ".")]
-        output: PathBuf,
-        /// Reproducible timestamp in Unix seconds (default: package.source-date-epoch).
-        #[arg(long)]
-        source_date_epoch: Option<u32>,
-        /// Parallelism exposed as JOBS.
-        #[arg(long, default_value_t = 1)]
-        jobs: u32,
-        /// Wall-clock limit for each step in seconds (0 disables).
-        #[arg(long, default_value_t = 3600)]
-        step_timeout: u64,
-        /// Emit machine-readable output.
-        #[arg(long)]
-        json: bool,
-    },
+    Source(crate::commands::SourceArgs),
     /// Write a native source RPM from a local source snapshot.
-    Srpm {
-        /// Recipe to package.
-        file: PathBuf,
-        #[command(flatten)]
-        policy: PolicyArgs,
-        /// Directory containing the source snapshot (flat files).
-        #[arg(long)]
-        sources: PathBuf,
-        /// Output directory.
-        #[arg(long, default_value = ".")]
-        output: PathBuf,
-        /// Build architecture recorded in the source header.
-        #[arg(long, default_value = rpmx_core::arch::native_arch())]
-        arch: String,
-        /// Reproducible timestamp in Unix seconds (default: package.source-date-epoch).
-        #[arg(long)]
-        source_date_epoch: Option<u32>,
-        /// Write one matrix cell (default: every cell).
-        #[arg(long)]
-        cell: Option<String>,
-        /// Root lock to embed in the SRPM.
-        #[arg(long)]
-        root_lock: Option<PathBuf>,
-        /// Sign the SRPM with this ASCII-armored OpenPGP secret key.
-        #[arg(long)]
-        signing_key: Option<PathBuf>,
-        /// Read the signing key passphrase from this environment variable.
-        #[arg(long, requires = "signing_key")]
-        signing_passphrase_env: Option<String>,
-        /// Signature creation time in Unix seconds (default: now).
-        #[arg(long, requires = "signing_key")]
-        signing_timestamp: Option<u32>,
-        /// Emit machine-readable output.
-        #[arg(long)]
-        json: bool,
-    },
+    Srpm(crate::commands::SrpmArgs),
     /// Rebuild binary RPMs from a native source RPM.
     Rebuild(crate::commands::RebuildArgs),
     /// Write repository metadata for a directory of built RPMs.

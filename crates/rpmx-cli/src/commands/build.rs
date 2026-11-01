@@ -169,45 +169,57 @@ fn build_from_recipe(
         )
     })?;
 
-    source::run(SourceArgs {
-        file: &file,
+    source::run(
+        SourceArgs {
+            file: file.clone(),
+            arch: arch.clone(),
+            runner: runner.clone(),
+            policy: crate::cli::PolicyArgs {
+                profile: None,
+                dist_tag: policy.dist_tag.map(str::to_string),
+                build_release: policy.build_release,
+            },
+            cache: cache.clone(),
+            proxy: proxy.clone(),
+            offline,
+            root_lock: root_lock.clone(),
+            root: root.clone(),
+            unsafe_host_root,
+            output: source_output.clone(),
+            source_date_epoch,
+            jobs,
+            step_timeout,
+            json: false,
+            quiet: true,
+        },
         pipeline_dir,
-        policy,
-        cache: cache.as_deref(),
-        proxy: proxy.as_deref(),
-        offline,
-        output: &source_output,
-        arch: &arch,
-        runner: &runner,
-        source_date_epoch,
-        jobs,
-        step_timeout,
-        root_lock: root_lock.as_deref(),
-        root: root.as_deref(),
-        unsafe_host_root,
-        quiet: true,
-        json: false,
-    })?;
+    )?;
 
     let mut srpms = Vec::new();
     let mut rpms = Vec::new();
     for planned in &selected {
-        let written = srpm::run(SrpmArgs {
-            file: &file,
-            sources: &source_output,
-            output: &srpm_output,
-            arch: &arch,
-            source_date_epoch,
-            cell: Some(planned.id.as_str()),
+        let written = srpm::run(
+            SrpmArgs {
+                file: file.clone(),
+                policy: crate::cli::PolicyArgs {
+                    profile: None,
+                    dist_tag: policy.dist_tag.map(str::to_string),
+                    build_release: policy.build_release,
+                },
+                sources: source_output.clone(),
+                output: srpm_output.clone(),
+                arch: arch.clone(),
+                source_date_epoch,
+                cell: Some(planned.id.clone()),
+                root_lock: root_lock.clone(),
+                signing_key: signing_key.clone(),
+                signing_passphrase_env: signing_passphrase_env.clone(),
+                signing_timestamp,
+                json: false,
+                quiet: true,
+            },
             pipeline_dir,
-            policy,
-            root_lock: root_lock.as_deref(),
-            signing_key: signing_key.as_deref(),
-            signing_passphrase_env: signing_passphrase_env.as_deref(),
-            signing_timestamp,
-            quiet: true,
-            json: false,
-        })?;
+        )?;
         srpms.extend(written.iter().cloned());
 
         for srpm in written {

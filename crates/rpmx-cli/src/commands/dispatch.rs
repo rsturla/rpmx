@@ -115,78 +115,8 @@ pub fn run(cli: Cli) -> Result<(), Error> {
                 json,
             )
         }
-        Command::Source {
-            file,
-            arch,
-            runner,
-            policy,
-            cache,
-            proxy,
-            offline,
-            root_lock,
-            root,
-            unsafe_host_root,
-            output,
-            source_date_epoch,
-            jobs,
-            step_timeout,
-            json,
-        } => {
-            let resolved = resolve_policy(policy)?;
-            commands::source::run(commands::SourceArgs {
-                file: &file,
-                pipeline_dir: pipeline_dir.as_deref(),
-                policy: resolved.plan_policy(),
-                cache: cache.as_deref(),
-                proxy: proxy.as_deref(),
-                offline,
-                output: &output,
-                arch: &arch,
-                runner: &runner,
-                source_date_epoch,
-                jobs,
-                step_timeout,
-                root_lock: root_lock.as_deref(),
-                root: root.as_deref(),
-                unsafe_host_root,
-                quiet: false,
-                json,
-            })
-            .map(|_| ())
-        }
-        Command::Srpm {
-            file,
-            policy,
-            sources,
-            output,
-            arch,
-            source_date_epoch,
-            cell,
-            root_lock,
-            signing_key,
-            signing_passphrase_env,
-            signing_timestamp,
-            json,
-        } => {
-            let resolved = resolve_policy(policy)?;
-            commands::srpm::run(commands::SrpmArgs {
-                file: &file,
-                sources: &sources,
-                output: &output,
-                arch: &arch,
-                source_date_epoch,
-                cell: cell.as_deref(),
-                pipeline_dir: pipeline_dir.as_deref(),
-                policy: resolved.plan_policy(),
-                root_lock: root_lock.as_deref(),
-                signing_key: signing_key.as_deref(),
-                signing_passphrase_env: signing_passphrase_env.as_deref(),
-                signing_timestamp,
-                quiet: false,
-                json,
-            })
-            .map(|_| ())
-        }
+        Command::Source(args) => commands::source::run(args, pipeline_dir.as_deref()).map(|_| ()),
+        Command::Srpm(args) => commands::srpm::run(args, pipeline_dir.as_deref()).map(|_| ()),
         Command::Rebuild(args) => commands::rebuild::run(args).map(|_| ()),
         Command::Build(args) => commands::build::run(args, pipeline_dir.as_deref()).map(|_| ()),
         Command::Repo {
