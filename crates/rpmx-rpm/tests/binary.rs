@@ -65,6 +65,10 @@ fn spec() -> BinaryPackageSpec {
             group: Some("demo".to_string()),
         }],
         requires: vec!["/bin/sh".to_string(), "glibc >= 2.39".to_string()],
+        recommends: vec!["demo-extra >= 1.0".to_string()],
+        suggests: vec!["demo-docs".to_string()],
+        supplements: vec!["demo-plugin".to_string()],
+        enhances: vec!["demo-host < 2.0".to_string()],
         provides: vec!["demo".to_string()],
         obsoletes: vec!["old-demo < 1.0".to_string()],
         conflicts: vec!["demo-server".to_string()],
@@ -153,6 +157,24 @@ fn binary_package_is_readable_by_stock_rpm() {
         .expect("run rpm --requires");
     let requires = String::from_utf8_lossy(&requires.stdout);
     assert!(requires.lines().any(|line| line.contains("glibc >= 2.39")));
+
+    for (kind, expected) in [
+        ("recommends", "demo-extra >= 1.0"),
+        ("suggests", "demo-docs"),
+        ("supplements", "demo-plugin"),
+        ("enhances", "demo-host < 2.0"),
+    ] {
+        let output = Command::new("rpm")
+            .args(["-qp", &format!("--{kind}")])
+            .arg(&path)
+            .output()
+            .expect("run rpm weak dependency query");
+        let output = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.lines().any(|line| line.contains(expected)),
+            "{kind}: {output}"
+        );
+    }
 
     let obsoletes = Command::new("rpm")
         .args(["-qp", "--obsoletes"])

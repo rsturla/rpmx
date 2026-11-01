@@ -416,6 +416,36 @@ outputs:
 }
 
 #[test]
+fn weak_dependencies_are_planned_and_templated() {
+    let yaml = r#"
+schema: 1
+package:
+  name: foo
+  version: "1.0"
+  release: 1
+  summary: x
+  license: MIT
+outputs:
+  - name: foo
+    dependencies:
+      run: [bar]
+      recommends: ["extra = ${package.version}-${package.release}"]
+      suggests: [docs]
+      supplements: [plugin]
+      enhances: ["host < 2.0"]
+    files:
+      include: ["/usr/bin/foo"]
+"#;
+    let plan = plan_str(yaml).expect("valid");
+    let output = &plan.cells[0].outputs[0];
+    assert_eq!(output.requires, ["bar"]);
+    assert_eq!(output.recommends, ["extra = 1.0-1"]);
+    assert_eq!(output.suggests, ["docs"]);
+    assert_eq!(output.supplements, ["plugin"]);
+    assert_eq!(output.enhances, ["host < 2.0"]);
+}
+
+#[test]
 fn template_suffixes_are_reordered_after_the_matrix_suffix() {
     let yaml = r#"
 schema: 1

@@ -156,6 +156,18 @@ pub fn write_binary_rpm(spec: &BinaryPackageSpec, out: &Path) -> Result<(), Erro
     for dep in &spec.requires {
         builder.requires(parse_dependency(dep)?);
     }
+    for dep in &spec.recommends {
+        builder.recommends(parse_dependency(dep)?);
+    }
+    for dep in &spec.suggests {
+        builder.suggests(parse_dependency(dep)?);
+    }
+    for dep in &spec.supplements {
+        builder.supplements(parse_dependency(dep)?);
+    }
+    for dep in &spec.enhances {
+        builder.enhances(parse_dependency(dep)?);
+    }
     for dep in &spec.provides {
         builder.provides(parse_dependency(dep)?);
     }

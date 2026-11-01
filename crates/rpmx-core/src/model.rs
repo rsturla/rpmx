@@ -396,6 +396,14 @@ pub struct OutputDependencies {
     #[serde(default)]
     pub run: Vec<String>,
     #[serde(default)]
+    pub recommends: Vec<String>,
+    #[serde(default)]
+    pub suggests: Vec<String>,
+    #[serde(default)]
+    pub supplements: Vec<String>,
+    #[serde(default)]
+    pub enhances: Vec<String>,
+    #[serde(default)]
     pub provides: Vec<String>,
     #[serde(default)]
     pub obsoletes: Vec<String>,

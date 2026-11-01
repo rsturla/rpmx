@@ -352,6 +352,10 @@ outputs:
         - curl-minimal
       suggests:
         - jq
+      supplements:
+        - curl-openssl
+      enhances:
+        - http-client
       conflicts:
         - "curl-full < 8.0"
       obsoletes:
@@ -363,6 +367,8 @@ outputs:
 ```
 
 Dependency strings may use the closed template scope, typically `${package.version}`, `${package.release}` and matrix fields. They are resolved by the planner, not by a general macro expander; see [`12-templates.md`](12-templates.md).
+
+`recommends`, `suggests`, `supplements` and `enhances` map to RPM's weak dependency tags. They are solver hints, not guarantees: rpm itself ignores them when installing packages directly, so installed-stage tests must list anything they need in `build.dependencies.tests`. Weak dependencies currently accept the same simple atoms as `run`; rich weak dependencies are not implemented yet.
 
 **Rich dependencies.** Common cases are typed:
 

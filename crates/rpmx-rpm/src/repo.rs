@@ -182,6 +182,17 @@ pub fn generate(options: RepoOptions<'_>) -> Result<RepoReport, Error> {
     })
 }
 
+fn split_evr(value: &str) -> (String, String, String) {
+    let (epoch, rest) = match value.split_once(':') {
+        Some((epoch, rest)) => (epoch, rest),
+        None => ("0", value),
+    };
+    match rest.rsplit_once('-') {
+        Some((version, release)) => (epoch.to_string(), version.to_string(), release.to_string()),
+        None => (epoch.to_string(), rest.to_string(), String::new()),
+    }
+}
+
 fn record(
     package: &rpm::Package,
     filename: &str,
@@ -246,6 +257,30 @@ fn record(
             IndexTag::RPMTAG_REQUIREVERSION,
         ),
         (
+            "recommends",
+            IndexTag::RPMTAG_RECOMMENDNAME,
+            IndexTag::RPMTAG_RECOMMENDFLAGS,
+            IndexTag::RPMTAG_RECOMMENDVERSION,
+        ),
+        (
+            "suggests",
+            IndexTag::RPMTAG_SUGGESTNAME,
+            IndexTag::RPMTAG_SUGGESTFLAGS,
+            IndexTag::RPMTAG_SUGGESTVERSION,
+        ),
+        (
+            "supplements",
+            IndexTag::RPMTAG_SUPPLEMENTNAME,
+            IndexTag::RPMTAG_SUPPLEMENTFLAGS,
+            IndexTag::RPMTAG_SUPPLEMENTVERSION,
+        ),
+        (
+            "enhances",
+            IndexTag::RPMTAG_ENHANCENAME,
+            IndexTag::RPMTAG_ENHANCEFLAGS,
+            IndexTag::RPMTAG_ENHANCEVERSION,
+        ),
+        (
             "conflicts",
             IndexTag::RPMTAG_CONFLICTNAME,
             IndexTag::RPMTAG_CONFLICTFLAGS,
@@ -293,11 +328,19 @@ fn record(
             if version.is_empty() || kind.is_empty() {
                 primary.push_str(&format!("        <rpm:entry name=\"{}\"/>\n", escape(name)));
             } else {
+                let (dependency_epoch, dependency_version, dependency_release) = split_evr(version);
+                let release = if dependency_release.is_empty() {
+                    String::new()
+                } else {
+                    format!(" rel=\"{}\"", escape(&dependency_release))
+                };
                 primary.push_str(&format!(
-                    "        <rpm:entry name=\"{}\" flags=\"{}\" epoch=\"0\" ver=\"{}\"/>\n",
+                    "        <rpm:entry name=\"{}\" flags=\"{}\" epoch=\"{}\" ver=\"{}\"{}/>\n",
                     escape(name),
                     kind,
-                    escape(version)
+                    dependency_epoch,
+                    escape(&dependency_version),
+                    release
                 ));
             }
         }
