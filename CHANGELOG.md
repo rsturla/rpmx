@@ -6,6 +6,8 @@ does not promise a stable schema or CLI yet.
 ## Unreleased
 
 - Native SRPM and binary RPM writers, with `rpmbuild` never invoked.
+- Weak runtime dependencies (`recommends`, `suggests`, `supplements`,
+  `enhances`) in recipes, RPM headers and repository metadata.
 - Locked build roots resolved with dnf5 and assembled offline from the CAS.
 - Source snapshots, patches, git sources and a content-addressed cache.
 - Matrix and template planning, reusable steps, build and installed tests.
