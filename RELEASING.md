@@ -1,8 +1,8 @@
 # Releasing rpmx
 
 rpmx is pre-1.0. A release is a source archive, a built binary and, when ready,
-an OCI image. The crates are not currently published to crates.io because the
-build depends on a locally patched `rpm` crate (see below).
+an OCI image. rpmx is distributed as those artifacts; it is not published to
+any package registry.
 
 ## Before tagging
 
@@ -25,13 +25,7 @@ gitleaks detect --no-git -c .gitleaks.toml
 If `cargo deny` or `gitleaks` is not installed, install them or record the
 exception in the release notes. Do not release with a failing license check.
 
-5. Verify packaging contents without uploading:
-
-```console
-cargo package --list -p rpmx
-```
-
-6. Build and smoke-test the release binary:
+5. Build and smoke-test the release binary:
 
 ```console
 cargo build --release
@@ -67,25 +61,20 @@ the source archive the primary artifact and treat binaries as convenience
 builds. If the binary is distributed, include the licenses of the crates linked
 into it; `cargo deny` and `cargo license` can generate that bundle.
 
-## Why crates.io is not used yet
+## Vendored rpm crate
 
-The workspace patches crates.io `rpm` 0.30.2 to a local copy:
+The workspace patches upstream `rpm` 0.30.2 to a local copy:
 
 ```toml
 [patch.crates-io]
 rpm = { path = "vendor/rpm" }
 ```
 
-The patch adds native source-package support used by the SRPM writer. A crate
-published to crates.io cannot carry that patch; consumers would resolve the
-unpatched upstream crate. Publishing the workspace therefore requires one of:
-
-1. upstreaming the source-package patch to `rpm-rs`;
-2. publishing a maintained fork under a distinct crate name; or
-3. removing the dependency on the patched crate.
-
-Until then, release source archives and binaries, not crates.io packages.
-`cargo package --list` is still useful to verify the file list.
+The patch adds native source-package support used by the SRPM writer, so the
+build only works inside this repository. `vendor/rpm` must therefore ship in
+every source release and must stay in sync with the patch described in
+`THIRD_PARTY_NOTICES.md`. Do not replace it with the released upstream crate:
+doing so silently drops the `source_package` flag and produces invalid SRPMs.
 
 ## Release notes
 

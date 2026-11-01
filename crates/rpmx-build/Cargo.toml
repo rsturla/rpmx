@@ -8,11 +8,11 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
-rpmx-base = { version = "0.0.0", path = "../rpmx-base" }
-rpmx-language = { version = "0.0.0", path = "../rpmx-language" }
-rpmx-store = { version = "0.0.0", path = "../rpmx-store" }
-rpmx-root = { version = "0.0.0", path = "../rpmx-root" }
-rpmx-runner = { version = "0.0.0", path = "../rpmx-runner" }
+rpmx-base = { path = "../rpmx-base" }
+rpmx-language = { path = "../rpmx-language" }
+rpmx-store = { path = "../rpmx-store" }
+rpmx-root = { path = "../rpmx-root" }
+rpmx-runner = { path = "../rpmx-runner" }
 serde.workspace = true
 serde_json.workspace = true
 ureq.workspace = true

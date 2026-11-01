@@ -8,7 +8,7 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
-rpmx-base = { version = "0.0.0", path = "../rpmx-base" }
+rpmx-base = { path = "../rpmx-base" }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true

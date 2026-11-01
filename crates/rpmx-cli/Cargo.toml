@@ -12,8 +12,8 @@ name = "rpmx"
 path = "src/main.rs"
 
 [dependencies]
-rpmx-core = { version = "0.0.0", path = "../rpmx-core" }
-rpmx-rpm = { version = "0.0.0", path = "../rpmx-rpm" }
+rpmx-core = { path = "../rpmx-core" }
+rpmx-rpm = { path = "../rpmx-rpm" }
 serde.workspace = true
 clap.workspace = true
 serde_json.workspace = true
