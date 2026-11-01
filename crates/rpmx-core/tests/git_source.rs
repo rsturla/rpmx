@@ -108,7 +108,7 @@ fn git_sources_are_pinned_and_archived_deterministically() {
     )
     .expect("fetch git source");
     assert_eq!(fetched.len(), 1);
-    assert!(fetched[0].archive);
+    assert!(fetched[0].extract.is_some());
 
     let file = fs::File::open(&fetched[0].path).expect("open archive");
     let decoder = flate2::read::GzDecoder::new(file);

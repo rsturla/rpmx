@@ -30,7 +30,6 @@ build:
     tools: [gcc, make, bash]
   pipeline:
     - runs: |
-        cd zstd-1.5.7
         make -j"$JOBS" ARFLAGS=rcsD
         make install DESTDIR=${stage} PREFIX=/usr LIBDIR=/usr/lib64 ARFLAGS=rcsD
         install -D -m 0644 LICENSE ${stage}/usr/share/licenses/zstd/LICENSE

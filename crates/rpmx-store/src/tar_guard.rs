@@ -265,16 +265,129 @@ pub fn validate<R: Read + Seek>(
 /// Validate a staged tar and unpack it into `destination`. The archive is
 /// rewound and scanned before the tar crate sees it.
 pub fn unpack_staged(
-    mut archive: std::fs::File,
+    archive: std::fs::File,
     destination: &std::path::Path,
     subject: &str,
     code: rpmx_base::error::Code,
     max_entry: Option<u64>,
 ) -> Result<()> {
+    unpack_staged_with(archive, destination, subject, code, max_entry, 0, ".")
+}
+
+/// Validate, strip leading path components, and unpack under `subdir`.
+pub fn unpack_staged_with(
+    mut archive: std::fs::File,
+    destination: &std::path::Path,
+    subject: &str,
+    code: rpmx_base::error::Code,
+    max_entry: Option<u64>,
+    strip_components: u32,
+    subdir: &str,
+) -> Result<()> {
     validate(&mut archive, subject, code, max_entry)?;
-    tar::Archive::new(archive)
-        .unpack(destination)
-        .map_err(|error| Error::new(code, format!("cannot unpack {subject}: {error}")))
+    archive
+        .rewind()
+        .map_err(|error| Error::new(code, format!("cannot rewind {subject}: {error}")))?;
+    let base = destination.join(subdir);
+    std::fs::create_dir_all(&base).map_err(|error| {
+        Error::new(
+            code,
+            format!("cannot create {}: {error}", base.display()),
+        )
+    })?;
+    let mut tar = tar::Archive::new(archive);
+    let entries = tar
+        .entries()
+        .map_err(|error| Error::new(code, format!("cannot read {subject}: {error}")))?;
+    for entry in entries {
+        let mut entry =
+            entry.map_err(|error| Error::new(code, format!("cannot read {subject}: {error}")))?;
+        let path = entry
+            .path()
+            .map_err(|error| Error::new(code, format!("cannot read {subject}: {error}")))?
+            .into_owned();
+        let mut stripped = std::path::PathBuf::new();
+        for (index, component) in path.components().enumerate() {
+            if (index as u32) < strip_components {
+                continue;
+            }
+            stripped.push(component.as_os_str());
+        }
+        if stripped.as_os_str().is_empty() {
+            continue;
+        }
+        let target = base.join(&stripped);
+        ensure_safe_parents(&base, &stripped, code, subject)?;
+        // Replacing a symlink with a regular file is fine; writing through one
+        // is not. `ensure_safe_parents` covers ancestors, this covers the leaf.
+        if std::fs::symlink_metadata(&target)
+            .map(|metadata| metadata.file_type().is_symlink())
+            .unwrap_or(false)
+        {
+            std::fs::remove_file(&target).map_err(|error| {
+                Error::new(
+                    code,
+                    format!("cannot replace {}: {error}", target.display()),
+                )
+            })?;
+        }
+        entry.unpack(&target).map_err(|error| {
+            Error::new(
+                code,
+                format!("cannot unpack {} to {}: {error}", subject, target.display()),
+            )
+        })?;
+    }
+    Ok(())
+}
+
+/// Create the leaf's parent directories, refusing to traverse a symlink.
+fn ensure_safe_parents(
+    base: &std::path::Path,
+    relative: &std::path::Path,
+    code: rpmx_base::error::Code,
+    subject: &str,
+) -> Result<()> {
+    let Some(parent) = relative.parent() else {
+        return Ok(());
+    };
+    let mut current = base.to_path_buf();
+    for component in parent.components() {
+        current.push(component.as_os_str());
+        match std::fs::symlink_metadata(&current) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(Error::new(
+                    code,
+                    format!(
+                        "refusing to unpack {subject} through symlink {}",
+                        current.display()
+                    ),
+                ))
+            }
+            Ok(metadata) if metadata.is_dir() => {}
+            Ok(_) => {
+                return Err(Error::new(
+                    code,
+                    format!("{} is not a directory", current.display()),
+                ))
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                std::fs::create_dir(&current).map_err(|error| {
+                    Error::new(
+                        code,
+                        format!("cannot create {}: {error}", current.display()),
+                    )
+                })?;
+            }
+            Err(error) => {
+                return Err(Error::new(
+                    code,
+                    format!("cannot inspect {}: {error}", current.display()),
+                ))
+            }
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

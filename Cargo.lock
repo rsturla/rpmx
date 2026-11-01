@@ -1839,6 +1839,7 @@ dependencies = [
  "flate2",
  "globset",
  "goblin",
+ "liblzma",
  "rpmx-base",
  "rpmx-language",
  "rpmx-root",

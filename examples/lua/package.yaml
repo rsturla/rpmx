@@ -18,7 +18,6 @@ build:
     tools: [gcc, make, bash]
   pipeline:
     - runs: |
-        cd lua-5.4.7
         make -j"$JOBS" posix
         make install INSTALL_TOP=${stage}/usr INSTALL_LIB=${stage}/usr/lib64 INSTALL_INC=${stage}/usr/include INSTALL_MAN=${stage}/usr/share/man/man1
     - uses: strip

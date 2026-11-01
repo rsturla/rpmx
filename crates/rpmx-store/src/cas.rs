@@ -7,19 +7,29 @@ use rpmx_base::hash::sha512_hex;
 
 /// The on-disk name for a content-addressed payload.
 pub fn path(cache: &Path, digest: &str) -> Result<PathBuf> {
-    let hex = digest.strip_prefix("sha512:").ok_or_else(|| {
+    let (algorithm, hex) = digest.split_once(':').ok_or_else(|| {
         Error::new(
             codes::ROOT_011,
-            format!("digest '{digest}' is not a sha512 digest"),
+            format!("digest '{digest}' has no algorithm prefix"),
         )
     })?;
-    if hex.len() != 128 || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+    let expected = match algorithm {
+        "sha512" => 128,
+        "sha256" => 64,
+        other => {
+            return Err(Error::new(
+                codes::ROOT_011,
+                format!("digest algorithm '{other}' is not supported"),
+            ))
+        }
+    };
+    if hex.len() != expected || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return Err(Error::new(
             codes::ROOT_011,
-            format!("digest '{digest}' is not a sha512 digest"),
+            format!("digest '{digest}' is malformed"),
         ));
     }
-    Ok(cache.join("sha512").join(hex))
+    Ok(cache.join(algorithm).join(hex))
 }
 
 pub fn store(cache: &Path, bytes: &[u8]) -> Result<String> {

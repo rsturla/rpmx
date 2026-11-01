@@ -2,8 +2,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use rpmx_base::error::{codes, Error, Result};
-use rpmx_base::hash::sha512_file;
-use rpmx_language::model::{Locator, Recipe, Source};
+use rpmx_base::hash::{sha256_file, sha512_file};
+use rpmx_language::model::{Extract, Locator, Recipe, Source};
 
 mod git;
 mod http;
@@ -13,8 +13,8 @@ pub struct FetchedSource {
     pub name: String,
     pub digest: String,
     pub path: PathBuf,
-    /// Whether the cached payload is an archive to unpack into the workspace.
-    pub archive: bool,
+    /// How to unpack the cached payload into the workspace.
+    pub extract: Option<Extract>,
 }
 
 pub struct FetchOptions<'a> {
@@ -55,7 +55,7 @@ pub fn fetch_sources(recipe: &Recipe, options: FetchOptions<'_>) -> Result<Vec<F
                 name: source.name.clone(),
                 digest: source.digest.clone(),
                 path,
-                archive: is_archive(source),
+                extract: extract_spec(source),
             });
             continue;
         }
@@ -94,14 +94,22 @@ pub fn fetch_sources(recipe: &Recipe, options: FetchOptions<'_>) -> Result<Vec<F
             name: source.name.clone(),
             digest: source.digest.clone(),
             path,
-            archive: is_archive(source),
+            extract: extract_spec(source),
         });
     }
     Ok(fetched)
 }
 
 fn verify_payload(source: &Source, staged: &tempfile::TempPath, context: &str) -> Result<()> {
-    let actual = sha512_file(staged.as_ref()).map_err(|error| {
+    let actual = match source
+        .digest
+        .split_once(':')
+        .map(|(algorithm, _)| algorithm)
+    {
+        Some("sha256") => sha256_file(staged.as_ref()),
+        _ => sha512_file(staged.as_ref()),
+    }
+    .map_err(|error| {
         Error::new(
             codes::FETCH_005,
             format!("cannot hash source '{}': {error}", source.name),
@@ -121,23 +129,51 @@ fn verify_payload(source: &Source, staged: &tempfile::TempPath, context: &str) -
 }
 
 fn digest_hex(source: &Source) -> Result<&str> {
-    let hex = source.digest.strip_prefix("sha512:").ok_or_else(|| {
+    let (algorithm, hex) = source.digest.split_once(':').ok_or_else(|| {
         Error::new(
             codes::FETCH_001,
-            format!("source '{}' does not use a sha512 digest", source.name),
+            format!("source '{}' has no digest algorithm prefix", source.name),
         )
     })?;
-    if hex.len() != 128 || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+    let expected = match algorithm {
+        "sha512" => 128,
+        "sha256" => 64,
+        other => {
+            return Err(Error::new(
+                codes::FETCH_001,
+                format!(
+                    "source '{}' uses digest algorithm '{other}'; use sha512 or sha256",
+                    source.name
+                ),
+            ))
+        }
+    };
+    if hex.len() != expected || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return Err(Error::new(
             codes::FETCH_001,
-            format!("source '{}' has a malformed sha512 digest", source.name),
+            format!(
+                "source '{}' has a malformed {algorithm} digest",
+                source.name
+            ),
         ));
     }
     Ok(hex)
 }
 
-fn is_archive(source: &Source) -> bool {
-    source.kind == "git" || source.name.ends_with(".tar.gz") || source.name.ends_with(".tgz")
+fn extract_spec(source: &Source) -> Option<Extract> {
+    if let Some(extract) = &source.extract {
+        return Some(extract.clone());
+    }
+    let archive = source.kind == "git"
+        || source.kind == "archive"
+        || [".tar.gz", ".tgz", ".tar.xz", ".tar.zst"]
+            .iter()
+            .any(|suffix| source.name.ends_with(suffix));
+    archive.then(|| Extract {
+        format: Some("auto".to_string()),
+        strip_components: Some(1),
+        destination: Some(".".to_string()),
+    })
 }
 
 fn fetch_from_locators(

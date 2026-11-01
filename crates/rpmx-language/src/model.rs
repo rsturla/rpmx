@@ -295,6 +295,23 @@ pub struct Source {
     pub digest: String,
     #[serde(default)]
     pub locators: Vec<Locator>,
+    /// How to unpack an archive into the source workspace.
+    #[serde(default)]
+    pub extract: Option<Extract>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Extract {
+    /// `auto`, `tar`, `tar.gz`, `tar.xz`, `tar.zst` or `none`.
+    #[serde(default)]
+    pub format: Option<String>,
+    /// Path components to strip. Defaults to 1, matching common tarballs.
+    #[serde(default, rename = "strip-components")]
+    pub strip_components: Option<u32>,
+    /// Directory under the workspace to unpack into.
+    #[serde(default)]
+    pub destination: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

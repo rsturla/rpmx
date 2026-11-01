@@ -19,7 +19,6 @@ build:
     tests: [oniguruma]
   pipeline:
     - runs: |
-        cd jq-1.7.1
         CFLAGS="-O2 -Wno-incompatible-pointer-types" ./configure --prefix=/usr --libdir=/usr/lib64 --disable-maintainer-mode --disable-docs --with-oniguruma=/usr
         make -j"$JOBS"
         make install DESTDIR=${stage}

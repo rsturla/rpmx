@@ -56,7 +56,7 @@ pub fn assemble(options: SourceOptions<'_>) -> Result<PathBuf> {
         materialize(
             &source.path,
             &source.name,
-            source.archive,
+            source.extract.as_ref(),
             options.workspace,
         )?;
     }
@@ -176,24 +176,34 @@ pub fn apply_patches(
     Ok(())
 }
 
-fn materialize(path: &Path, name: &str, archive: bool, workspace: &Path) -> Result<()> {
-    let target = workspace.join(name);
-    if archive {
-        return unpack_gzip(path, workspace);
+fn materialize(
+    path: &Path,
+    name: &str,
+    extract: Option<&rpmx_language::model::Extract>,
+    workspace: &Path,
+) -> Result<()> {
+    let Some(extract) = extract else {
+        let target = workspace.join(name);
+        return std::fs::copy(path, &target).map(|_| ()).map_err(|error| {
+            Error::new(
+                codes::SOURCE_031,
+                format!("cannot copy to {}: {error}", target.display()),
+            )
+        });
+    };
+    let format = match extract.format.as_deref().unwrap_or("auto") {
+        "auto" => detect_format(path),
+        other => other.to_string(),
+    };
+    if format == "none" {
+        let target = workspace.join(name);
+        return std::fs::copy(path, &target).map(|_| ()).map_err(|error| {
+            Error::new(
+                codes::SOURCE_031,
+                format!("cannot copy to {}: {error}", target.display()),
+            )
+        });
     }
-    std::fs::copy(path, &target).map_err(|error| {
-        Error::new(
-            codes::SOURCE_031,
-            format!("cannot copy to {}: {error}", target.display()),
-        )
-    })?;
-    Ok(())
-}
-
-/// Decompress into an anonymous staging file with a hard byte cap, validate the
-/// tar walk, then unpack. The archive is recipe- or SRPM-controlled, so it must
-/// not be handed to the tar crate directly.
-fn unpack_gzip(path: &Path, workspace: &Path) -> Result<()> {
     std::fs::create_dir_all(workspace).map_err(|error| {
         Error::new(
             codes::SOURCE_031,
@@ -206,7 +216,31 @@ fn unpack_gzip(path: &Path, workspace: &Path) -> Result<()> {
             format!("cannot open {}: {error}", path.display()),
         )
     })?;
-    let decoder = flate2::read::GzDecoder::new(file);
+    let reader: Box<dyn std::io::Read> = match format.as_str() {
+        "tar.gz" | "tgz" | "gzip" => Box::new(flate2::read::GzDecoder::new(file)),
+        "tar.xz" | "xz" => Box::new(liblzma::read::XzDecoder::new(file)),
+        "tar.zst" | "zstd" | "tar" => {
+            if format == "tar" {
+                Box::new(file)
+            } else {
+                Box::new(zstd::stream::read::Decoder::new(file).map_err(|error| {
+                    Error::new(
+                        codes::SOURCE_031,
+                        format!("cannot read {}: {error}", path.display()),
+                    )
+                })?)
+            }
+        }
+        other => {
+            return Err(Error::new(
+                codes::SOURCE_031,
+                format!(
+                    "unsupported extract format '{other}' for {}",
+                    path.display()
+                ),
+            ))
+        }
+    };
     let mut staged = tempfile::tempfile_in(workspace).map_err(|error| {
         Error::new(
             codes::SOURCE_031,
@@ -214,15 +248,50 @@ fn unpack_gzip(path: &Path, workspace: &Path) -> Result<()> {
         )
     })?;
     let subject = format!("archive {}", path.display());
-    rpmx_base::io::copy_to(decoder, &mut staged, rpmx_base::MAX_ARCHIVE_BYTES).map_err(
-        |error| {
-            Error::new(
-                codes::SOURCE_031,
-                format!("cannot stage {}: {error}", path.display()),
-            )
-        },
-    )?;
-    rpmx_store::tar_guard::unpack_staged(staged, workspace, &subject, codes::SOURCE_031, None)
+    rpmx_base::io::copy_to(reader, &mut staged, rpmx_base::MAX_ARCHIVE_BYTES).map_err(|error| {
+        Error::new(
+            codes::SOURCE_031,
+            format!("cannot stage {}: {error}", path.display()),
+        )
+    })?;
+    rpmx_store::tar_guard::unpack_staged_with(
+        staged,
+        workspace,
+        &subject,
+        codes::SOURCE_031,
+        None,
+        extract.strip_components.unwrap_or(1),
+        extract.destination.as_deref().unwrap_or("."),
+    )
+}
+
+/// The source snapshot is always gzip-compressed; keep its own entry point.
+fn unpack_gzip(path: &Path, workspace: &Path) -> Result<()> {
+    let extract = rpmx_language::model::Extract {
+        format: Some("tar.gz".to_string()),
+        strip_components: Some(0),
+        destination: Some(".".to_string()),
+    };
+    materialize(path, "RPMX-SOURCE.tar.gz", Some(&extract), workspace)
+}
+
+fn detect_format(path: &Path) -> String {
+    use std::io::Read;
+    let mut magic = [0u8; 6];
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return "tar".to_string();
+    };
+    let read = file.read(&mut magic).unwrap_or(0);
+    let magic = &magic[..read];
+    if magic.starts_with(&[0x1f, 0x8b]) {
+        "tar.gz".to_string()
+    } else if magic.starts_with(&[0xfd, b'7', b'z', b'X', b'Z', 0x00]) {
+        "tar.xz".to_string()
+    } else if magic.starts_with(&[0x28, 0xb5, 0x2f, 0xfd]) {
+        "tar.zst".to_string()
+    } else {
+        "tar".to_string()
+    }
 }
 
 pub fn pack_snapshot(workspace: &Path, snapshot: &Path, source_date_epoch: u32) -> Result<()> {
@@ -294,4 +363,77 @@ pub fn pack_snapshot(workspace: &Path, snapshot: &Path, source_date_epoch: u32) 
 
 pub fn unpack_snapshot(snapshot: &Path, workspace: &Path) -> Result<()> {
     unpack_gzip(snapshot, workspace)
+}
+
+#[cfg(test)]
+mod extract_tests {
+    use super::materialize;
+    use rpmx_language::model::Extract;
+    use std::io::Write;
+
+    fn gzip_tar(path: &std::path::Path, entry: &str, bytes: &[u8]) {
+        let mut tar = tar::Builder::new(Vec::new());
+        let mut header = tar::Header::new_gnu();
+        header.set_size(bytes.len() as u64);
+        header.set_mode(0o644);
+        header.set_cksum();
+        tar.append_data(&mut header, entry, bytes).expect("entry");
+        let tar = tar.into_inner().expect("tar");
+        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        gz.write_all(&tar).expect("gzip");
+        std::fs::write(path, gz.finish().expect("finish")).expect("write");
+    }
+
+    #[test]
+    fn strip_components_puts_a_tarball_at_the_workspace_root() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let archive = directory.path().join("pkg.tar.gz");
+        gzip_tar(&archive, "pkg-1.0/README", b"hello");
+        let workspace = directory.path().join("workspace");
+        let extract = Extract {
+            format: Some("auto".to_string()),
+            strip_components: Some(1),
+            destination: Some(".".to_string()),
+        };
+        materialize(&archive, "pkg.tar.gz", Some(&extract), &workspace).expect("unpack");
+        assert_eq!(
+            std::fs::read_to_string(workspace.join("README")).expect("read"),
+            "hello"
+        );
+    }
+
+    #[test]
+    fn a_destination_directory_is_honoured() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let archive = directory.path().join("pkg.tar.gz");
+        gzip_tar(&archive, "README", b"hello");
+        let workspace = directory.path().join("workspace");
+        let extract = Extract {
+            format: Some("tar.gz".to_string()),
+            strip_components: Some(0),
+            destination: Some("vendor".to_string()),
+        };
+        materialize(&archive, "pkg.tar.gz", Some(&extract), &workspace).expect("unpack");
+        assert_eq!(
+            std::fs::read_to_string(workspace.join("vendor/README")).expect("read"),
+            "hello"
+        );
+    }
+
+    #[test]
+    fn magic_bytes_win_over_a_misleading_name() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let archive = directory.path().join("pkg.tar.gz");
+        gzip_tar(&archive, "README", b"hello");
+        let renamed = directory.path().join("pkg.data");
+        std::fs::rename(&archive, &renamed).expect("rename");
+        let workspace = directory.path().join("workspace");
+        let extract = Extract {
+            format: Some("auto".to_string()),
+            strip_components: Some(0),
+            destination: Some(".".to_string()),
+        };
+        materialize(&renamed, "pkg.data", Some(&extract), &workspace).expect("unpack");
+        assert!(workspace.join("README").is_file());
+    }
 }

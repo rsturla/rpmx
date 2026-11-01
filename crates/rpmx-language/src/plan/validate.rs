@@ -13,21 +13,24 @@ pub(crate) fn validate_sha512(
     malformed_code: Code,
     noun: &str,
 ) -> Result<()> {
-    let Some(hex) = digest.strip_prefix("sha512:") else {
-        let algorithm = digest
-            .split_once(':')
-            .map(|(algorithm, _)| algorithm)
-            .unwrap_or("unprefixed");
-        return Err(Error::new(
-            algorithm_code,
-            format!("{noun} '{name}' uses digest algorithm '{algorithm}'; rpmx requires sha512"),
-        )
-        .at(path));
+    let (algorithm, hex) = digest.split_once(':').unwrap_or(("unprefixed", digest));
+    let expected = match algorithm {
+        "sha512" => 128,
+        "sha256" => 64,
+        _ => {
+            return Err(Error::new(
+                algorithm_code,
+                format!(
+                    "{noun} '{name}' uses digest algorithm '{algorithm}'; rpmx requires sha512 or sha256"
+                ),
+            )
+            .at(path))
+        }
     };
-    if hex.len() != 128 || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+    if hex.len() != expected || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return Err(Error::new(
             malformed_code,
-            format!("{noun} '{name}' has an invalid sha512 digest"),
+            format!("{noun} '{name}' has an invalid {algorithm} digest"),
         )
         .at(path));
     }
