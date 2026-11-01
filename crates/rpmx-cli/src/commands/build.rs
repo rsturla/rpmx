@@ -6,8 +6,7 @@ use rpmx_core::error::codes;
 use rpmx_core::Error;
 
 use crate::commands::{
-    load_plan, rebuild, resolve_policy, source, srpm, BuildArgs, PlanPolicy, PolicyInput,
-    RebuildArgs, SourceArgs, SrpmArgs,
+    load_plan, pipeline::BuildPipeline, resolve_policy, BuildArgs, PlanPolicy, PolicyInput,
 };
 
 pub fn run(args: BuildArgs, pipeline_dir: Option<&Path>) -> Result<Vec<PathBuf>, Error> {
@@ -139,106 +138,29 @@ fn build_from_recipe(
         ));
     }
 
-    std::fs::create_dir_all(&output).map_err(|error| {
-        Error::new(
-            codes::BUILD_001,
-            format!("cannot create {}: {error}", output.display()),
-        )
-    })?;
-    let srpm_output = output.join("src");
-    let work = tempfile::tempdir().map_err(|error| {
-        Error::new(
-            codes::BUILD_005,
-            format!("cannot create work directory: {error}"),
-        )
-    })?;
-    let source_output = work.path().join("source");
-    std::fs::create_dir_all(&source_output).map_err(|error| {
-        Error::new(
-            codes::BUILD_006,
-            format!("cannot create {}: {error}", source_output.display()),
-        )
-    })?;
-
-    source::run(
-        SourceArgs {
-            file: file.clone(),
-            arch: arch.clone(),
-            runner: runner.clone(),
-            policy: crate::cli::PolicyArgs {
-                profile: None,
-                dist_tag: policy.dist_tag.map(str::to_string),
-                build_release: policy.build_release,
-            },
-            cache: cache.clone(),
-            proxy: proxy.clone(),
-            offline,
-            root_lock: root_lock.clone(),
-            root: root.clone(),
-            unsafe_host_root,
-            output: source_output.clone(),
-            source_date_epoch,
-            jobs,
-            step_timeout,
-            json: false,
-            quiet: true,
-        },
+    let pipeline = BuildPipeline {
+        file: &file,
+        output: &output,
+        arch: &arch,
+        runner: &runner,
+        policy,
+        cache: cache.as_deref(),
+        proxy: proxy.as_deref(),
+        offline,
+        root_lock: root_lock.as_deref(),
+        root: root.as_deref(),
+        unsafe_host_root,
+        source_date_epoch,
+        jobs,
+        step_timeout,
+        run_tests,
+        sbom: sbom.as_deref(),
+        test_root_lock: test_root_lock.as_deref(),
+        signing: &signing,
         pipeline_dir,
-    )?;
-
-    let mut srpms = Vec::new();
-    let mut rpms = Vec::new();
-    for planned in &selected {
-        let written = srpm::run(
-            SrpmArgs {
-                file: file.clone(),
-                policy: crate::cli::PolicyArgs {
-                    profile: None,
-                    dist_tag: policy.dist_tag.map(str::to_string),
-                    build_release: policy.build_release,
-                },
-                sources: source_output.clone(),
-                output: srpm_output.clone(),
-                arch: arch.clone(),
-                source_date_epoch,
-                cell: Some(planned.id.clone()),
-                root_lock: root_lock.clone(),
-                signing: signing.clone(),
-                json: false,
-                quiet: true,
-            },
-            pipeline_dir,
-        )?;
-        srpms.extend(written.iter().cloned());
-
-        for srpm in written {
-            rpms.extend(rebuild::run(RebuildArgs {
-                file: srpm.clone(),
-                output: output.clone(),
-                arch: arch.clone(),
-                runner: runner.clone(),
-                cell: Some(planned.id.clone()),
-                policy: crate::cli::PolicyArgs {
-                    profile: None,
-                    dist_tag: policy.dist_tag.map(str::to_string),
-                    build_release: policy.build_release,
-                },
-                jobs,
-                step_timeout,
-                root_image: None,
-                root_lock: root_lock.clone(),
-                root: root.clone(),
-                run_tests,
-                sbom: sbom.clone(),
-                test_root_lock: test_root_lock.clone(),
-                signing: signing.clone(),
-                json: false,
-                quiet: true,
-            })?);
-        }
-    }
-
-    report(json, &rpms, &srpms)
+    };
+    let built = pipeline.execute(&selected)?;
+    report(json, &built.rpms, &built.srpms)
 }
 
 fn report(json: bool, rpms: &[PathBuf], srpms: &[PathBuf]) -> Result<Vec<PathBuf>, Error> {

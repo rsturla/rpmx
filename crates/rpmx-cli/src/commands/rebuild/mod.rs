@@ -1,4 +1,5 @@
-use std::path::PathBuf;
+use std::num::{NonZeroU32, NonZeroU64};
+use std::path::{Path, PathBuf};
 
 use crate::commands::emit;
 use rpmx_core::binary_package::{prepare_binary_packages, BinaryPackageOptions};
@@ -13,9 +14,30 @@ mod report;
 mod sbom;
 mod tests;
 
-use crate::commands::RebuildArgs;
+use crate::commands::{OptionalSigningArgs, PlanPolicy, RebuildArgs};
 use prepare::{prepare, RebuildState};
 use sbom::SbomContext;
+
+/// Everything rebuilding an SRPM needs, independent of clap.
+pub struct RebuildRequest<'a> {
+    pub file: &'a Path,
+    pub output: &'a Path,
+    pub arch: &'a str,
+    pub runner: &'a str,
+    pub cell: Option<&'a str>,
+    pub policy: PlanPolicy<'a>,
+    pub jobs: NonZeroU32,
+    pub step_timeout: NonZeroU64,
+    pub root_image: Option<&'a str>,
+    pub root_lock: Option<&'a Path>,
+    pub root: Option<&'a Path>,
+    pub run_tests: bool,
+    pub sbom: Option<&'a Path>,
+    pub test_root_lock: Option<&'a Path>,
+    pub signing: &'a OptionalSigningArgs,
+    pub json: bool,
+    pub quiet: bool,
+}
 
 pub fn run(args: RebuildArgs) -> Result<Vec<PathBuf>, Error> {
     let resolved = crate::commands::resolve_policy(crate::commands::PolicyInput {
@@ -23,12 +45,33 @@ pub fn run(args: RebuildArgs) -> Result<Vec<PathBuf>, Error> {
         dist_tag: args.policy.dist_tag.as_deref(),
         build_release: args.policy.build_release,
     })?;
-    let policy = resolved.plan_policy();
+    execute(RebuildRequest {
+        file: &args.file,
+        output: &args.output,
+        arch: &args.arch,
+        runner: &args.runner,
+        cell: args.cell.as_deref(),
+        policy: resolved.plan_policy(),
+        jobs: args.jobs,
+        step_timeout: args.step_timeout,
+        root_image: args.root_image.as_deref(),
+        root_lock: args.root_lock.as_deref(),
+        root: args.root.as_deref(),
+        run_tests: args.run_tests,
+        sbom: args.sbom.as_deref(),
+        test_root_lock: args.test_root_lock.as_deref(),
+        signing: &args.signing,
+        json: args.json,
+        quiet: args.quiet,
+    })
+}
+
+pub fn execute(request: RebuildRequest<'_>) -> Result<Vec<PathBuf>, Error> {
     let signing = crate::commands::load_signing_key(
-        args.signing.signing_key.as_deref(),
-        args.signing.signing_passphrase_env.as_deref(),
+        request.signing.signing_key.as_deref(),
+        request.signing.signing_passphrase_env.as_deref(),
     )?;
-    let state = prepare(&args, signing.as_ref(), policy)?;
+    let state = prepare(&request, signing.as_ref())?;
     let RebuildState {
         work,
         extracted,
@@ -43,15 +86,15 @@ pub fn run(args: RebuildArgs) -> Result<Vec<PathBuf>, Error> {
         assembled_root,
         signature_timestamp,
     } = state;
-    let output = args.output.clone();
-    let run_tests = args.run_tests;
-    let sbom_path = args.sbom.as_deref();
-    let quiet = args.quiet;
-    let json = args.json;
-    let jobs = args.jobs;
-    let step_timeout = args.step_timeout;
-    let runner = args.runner.as_str();
-    let arch = args.arch.as_str();
+    let output = request.output.to_path_buf();
+    let run_tests = request.run_tests;
+    let sbom_path = request.sbom;
+    let quiet = request.quiet;
+    let json = request.json;
+    let jobs = request.jobs;
+    let step_timeout = request.step_timeout;
+    let runner = request.runner;
+    let arch = request.arch;
 
     let host_arch = rpmx_core::arch::Arch::current()?;
     let target_arch = rpmx_core::arch::Arch::parse(arch)?;
@@ -65,7 +108,7 @@ pub fn run(args: RebuildArgs) -> Result<Vec<PathBuf>, Error> {
         workspace: &build,
         stage: &stage,
         root: assembled_root.as_deref(),
-        image: args.root_image.as_deref(),
+        image: request.root_image,
         source_date_epoch: extracted.source_date_epoch,
         jobs,
         timeout: step_timeout,
@@ -192,7 +235,7 @@ pub fn run(args: RebuildArgs) -> Result<Vec<PathBuf>, Error> {
             stage: &stage,
             active_lock: active_lock.as_ref(),
             builder_image: builder_image.as_deref(),
-            pinned_lock: args.test_root_lock.as_deref(),
+            pinned_lock: request.test_root_lock,
             arch,
             runner: runner_kind,
             source_date_epoch: extracted.source_date_epoch,
