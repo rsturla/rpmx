@@ -2,10 +2,10 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::Value;
 
-use crate::error::{codes, Error, Result};
 use crate::matrix::Cell;
 use crate::model::{Output, Recipe, Step, Test};
 use crate::template;
+use rpmx_base::error::{codes, Error, Result};
 
 use super::validate::validate_file_metadata;
 use super::{plan_steps, PlannedOutput, PlannedTest};
@@ -79,15 +79,24 @@ pub(crate) fn base_scope_without_cell(
     scope.insert("arch".into(), Value::String(arch.to_string()));
     scope.insert(
         "source.dir".into(),
-        Value::String(crate::guest::BUILD.into()),
+        Value::String(rpmx_base::guest::BUILD.into()),
     );
     scope.insert(
         "build.dir".into(),
-        Value::String(crate::guest::BUILD.into()),
+        Value::String(rpmx_base::guest::BUILD.into()),
     );
-    scope.insert("stage".into(), Value::String(crate::guest::STAGE.into()));
-    scope.insert("prefix".into(), Value::String(crate::guest::PREFIX.into()));
-    scope.insert("libdir".into(), Value::String(crate::guest::LIBDIR.into()));
+    scope.insert(
+        "stage".into(),
+        Value::String(rpmx_base::guest::STAGE.into()),
+    );
+    scope.insert(
+        "prefix".into(),
+        Value::String(rpmx_base::guest::PREFIX.into()),
+    );
+    scope.insert(
+        "libdir".into(),
+        Value::String(rpmx_base::guest::LIBDIR.into()),
+    );
     scope.insert("jobs".into(), Value::String("1".into()));
     scope
 }

@@ -3,7 +3,7 @@ use serde::de::DeserializeOwned;
 use crate::error::{codes, Code, Error, Result};
 
 /// Decode a document with the project-wide strict YAML policy.
-pub(crate) fn parse_strict<T: DeserializeOwned>(text: &str, code: Code) -> Result<T> {
+pub fn parse_strict<T: DeserializeOwned>(text: &str, code: Code) -> Result<T> {
     reject_constructs(text)?;
     serde_yaml_ng::from_str(text).map_err(|error| {
         let mapped = Error::new(code, error.to_string());
@@ -14,7 +14,7 @@ pub(crate) fn parse_strict<T: DeserializeOwned>(text: &str, code: Code) -> Resul
     })
 }
 
-fn reject_constructs(text: &str) -> Result<()> {
+pub fn reject_constructs(text: &str) -> Result<()> {
     use saphyr_parser::{Event, Parser};
 
     let mut parser = Parser::new_from_str(text);

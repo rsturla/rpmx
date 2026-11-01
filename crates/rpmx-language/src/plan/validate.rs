@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 
-use crate::error::{codes, Code, Error, Result};
 use crate::model::{Output, Recipe, Step, Tool};
+use rpmx_base::error::{codes, Code, Error, Result};
 
 use super::SCHEMA_VERSION;
 

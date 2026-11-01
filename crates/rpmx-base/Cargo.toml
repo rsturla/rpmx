@@ -1,0 +1,11 @@
+[package]
+name = "rpmx-base"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_yaml_ng.workspace = true
+saphyr-parser.workspace = true
+sha2.workspace = true

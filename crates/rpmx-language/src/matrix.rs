@@ -2,8 +2,8 @@ use std::collections::BTreeMap;
 
 use serde_json::Value;
 
-use crate::error::{codes, Error, Result};
 use crate::model::Matrix;
+use rpmx_base::error::{codes, Error, Result};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Cell {

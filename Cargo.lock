@@ -1821,6 +1821,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "rpmx-base"
+version = "0.0.0"
+dependencies = [
+ "saphyr-parser",
+ "serde",
+ "serde_yaml_ng",
+ "sha2",
+]
+
+[[package]]
 name = "rpmx-core"
 version = "0.0.0"
 dependencies = [
@@ -1828,6 +1838,8 @@ dependencies = [
  "globset",
  "goblin",
  "rpm",
+ "rpmx-base",
+ "rpmx-language",
  "saphyr-parser",
  "serde",
  "serde_json",
@@ -1837,6 +1849,17 @@ dependencies = [
  "tempfile",
  "ureq",
  "zstd",
+]
+
+[[package]]
+name = "rpmx-language"
+version = "0.0.0"
+dependencies = [
+ "rpmx-base",
+ "serde",
+ "serde_json",
+ "serde_yaml_ng",
+ "sha2",
 ]
 
 [[package]]

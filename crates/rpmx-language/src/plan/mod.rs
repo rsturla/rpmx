@@ -3,11 +3,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::error::{codes, Error, Result};
 use crate::matrix::{self, Cell};
 use crate::model::{Recipe, SourceAssembly, Step};
 use crate::steps;
 use crate::template;
+use rpmx_base::error::{codes, Error, Result};
 
 mod expand;
 

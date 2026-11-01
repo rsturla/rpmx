@@ -5,8 +5,8 @@ use serde::Deserialize;
 use serde_json::Value;
 use sha2::{Digest, Sha512};
 
-use crate::error::{codes, Error, Result};
 use crate::template;
+use rpmx_base::error::{codes, Error, Result};
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]

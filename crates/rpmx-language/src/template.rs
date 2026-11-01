@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use serde_json::Value;
 
-use crate::error::{codes, Error, Result};
+use rpmx_base::error::{codes, Error, Result};
 
 pub fn expand_vars(
     raw: &BTreeMap<String, Value>,
