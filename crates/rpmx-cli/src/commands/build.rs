@@ -166,18 +166,18 @@ fn build_from_recipe(
 fn report(json: bool, rpms: &[PathBuf], srpms: &[PathBuf]) -> Result<Vec<PathBuf>, Error> {
     crate::commands::report::print(
         json,
+        "build",
         &[
             crate::commands::report::ArtifactGroup {
-                key: "srpms",
+                kind: "srpm",
                 paths: srpms,
             },
             crate::commands::report::ArtifactGroup {
-                key: "rpms",
+                kind: "rpm",
                 paths: rpms,
             },
         ],
         None,
-        false,
     )?;
     Ok(rpms.to_vec())
 }

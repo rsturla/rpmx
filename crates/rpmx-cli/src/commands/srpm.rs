@@ -135,12 +135,12 @@ pub fn execute(request: SrpmRequest<'_>) -> Result<Vec<PathBuf>, Error> {
     if !request.quiet {
         crate::commands::report::print(
             request.json,
+            "srpm",
             &[crate::commands::report::ArtifactGroup {
-                key: "srpms",
+                kind: "srpm",
                 paths: &written,
             }],
             signing.as_ref().map(|key| key.fingerprint()),
-            true,
         )?;
     }
     Ok(written)

@@ -56,7 +56,8 @@ fn rebuild_uses_the_policy_recorded_in_the_srpm() {
         .arg("fc45")
         .output()
         .expect("run mismatching rebuild");
-    assert_eq!(mismatch.status.code(), Some(2));
+    // A rebuild that contradicts the SRPM lock is lock drift.
+    assert_eq!(mismatch.status.code(), Some(3));
     let stderr = String::from_utf8_lossy(&mismatch.stderr);
     assert!(stderr.contains("RPMX-SRPM-012"), "stderr: {stderr}");
     assert!(
@@ -71,7 +72,8 @@ fn rebuild_uses_the_policy_recorded_in_the_srpm() {
         .arg(&srpm)
         .output()
         .expect("run matching rebuild");
-    assert_eq!(matching.status.code(), Some(2));
+    // A missing root is a resolution failure.
+    assert_eq!(matching.status.code(), Some(4));
     let stderr = String::from_utf8_lossy(&matching.stderr);
     assert!(!stderr.contains("RPMX-SRPM-012"), "stderr: {stderr}");
     assert!(stderr.contains("RPMX-ROOT-016"), "stderr: {stderr}");

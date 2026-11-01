@@ -136,10 +136,14 @@ pub fn execute(request: SourceRequest<'_>) -> Result<PathBuf, Error> {
 
     if !request.quiet {
         if request.json {
-            let value = serde_json::json!({
-                "ok": true,
-                "snapshot": snapshot.display().to_string(),
-            });
+            let value = crate::commands::report::document(
+                "source",
+                &[crate::commands::report::ArtifactGroup {
+                    kind: "source-snapshot",
+                    paths: std::slice::from_ref(&snapshot),
+                }],
+                None,
+            );
             println!(
                 "{}",
                 serde_json::to_string_pretty(&value)

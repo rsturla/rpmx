@@ -16,11 +16,11 @@ pub(super) fn print_artifacts(
     }
     report::print(
         json,
+        "rebuild",
         &[ArtifactGroup {
-            key: "rpms",
+            kind: "rpm",
             paths: written,
         }],
         signing_key,
-        true,
     )
 }

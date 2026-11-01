@@ -13,6 +13,24 @@ pub struct Cli {
 }
 
 impl Cli {
+    /// Stable command name for machine-readable documents.
+    pub fn command_name(&self) -> &'static str {
+        match &self.command {
+            Command::Lint(_) => "lint",
+            Command::Plan(_) => "plan",
+            Command::Root { .. } => "root",
+            Command::Fetch(_) => "fetch",
+            Command::Source(_) => "source",
+            Command::Srpm(_) => "srpm",
+            Command::Rebuild(_) => "rebuild",
+            Command::Repo(_) => "repo",
+            Command::Cache { .. } => "cache",
+            Command::Keygen(_) => "keygen",
+            Command::Sign(_) => "sign",
+            Command::Build(_) => "build",
+        }
+    }
+
     pub fn json(&self) -> bool {
         match &self.command {
             Command::Root { command } => command.json(),

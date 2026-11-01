@@ -21,7 +21,9 @@ pub fn run(args: LintArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
     )?;
     if args.json {
         let value = serde_json::json!({
+            "schema": 1,
             "ok": true,
+            "command": "lint",
             "cells": plan.cells.len(),
             "ids": plan.cells.iter().map(|cell| &cell.id).collect::<Vec<_>>(),
         });
