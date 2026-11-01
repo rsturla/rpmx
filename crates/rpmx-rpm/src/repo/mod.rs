@@ -14,7 +14,7 @@ use crate::sign::SigningKey;
 
 mod record;
 
-use record::record;
+use record::RepoMetadata;
 
 pub struct RepoOptions<'a> {
     pub rpms: &'a Path,
@@ -73,17 +73,7 @@ pub fn generate(options: RepoOptions<'_>) -> Result<RepoReport, Error> {
         )
     })?;
 
-    let mut primary = String::from(
-        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<metadata xmlns=\"http://linux.duke.edu/metadata/common\" xmlns:rpm=\"http://linux.duke.edu/metadata/rpm\" packages=\"PACKAGE_COUNT\">\n",
-    );
-    let mut filelists = String::from(
-        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<filelists xmlns=\"http://linux.duke.edu/metadata/filelists\" packages=\"PACKAGE_COUNT\">\n",
-    );
-    let mut other = String::from(
-        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<otherdata xmlns=\"http://linux.duke.edu/metadata/other\" packages=\"PACKAGE_COUNT\">\n",
-    );
-
-    let mut package_count = 0usize;
+    let mut metadata = RepoMetadata::new();
     for entry in rpms {
         let source = entry.path();
         let filename = entry.file_name().to_string_lossy().into_owned();
@@ -116,23 +106,13 @@ pub fn generate(options: RepoOptions<'_>) -> Result<RepoReport, Error> {
                 ),
             )
         })?;
-        record(
-            &package,
-            &filename,
-            &checksum,
-            bytes.len() as u64,
-            &mut primary,
-            &mut filelists,
-            &mut other,
-        )?;
-        package_count += 1;
+        metadata.add(&package, &filename, &checksum, bytes.len() as u64)?;
     }
-    primary.push_str("</metadata>\n");
-    filelists.push_str("</filelists>\n");
-    other.push_str("</otherdata>\n");
-    primary = primary.replace("PACKAGE_COUNT", &package_count.to_string());
-    filelists = filelists.replace("PACKAGE_COUNT", &package_count.to_string());
-    other = other.replace("PACKAGE_COUNT", &package_count.to_string());
+    let blobs = metadata.finish();
+    let package_count = blobs.packages;
+    let primary = blobs.primary;
+    let filelists = blobs.filelists;
+    let other = blobs.other;
 
     let (primary_gz, primary_open) = gzip(primary.as_bytes())?;
     let (filelists_gz, filelists_open) = gzip(filelists.as_bytes())?;

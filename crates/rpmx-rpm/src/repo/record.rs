@@ -2,6 +2,70 @@ use rpm::IndexTag;
 
 use rpmx_core::Error;
 
+pub(super) struct RepoMetadata {
+    primary: String,
+    filelists: String,
+    other: String,
+    packages: usize,
+}
+
+pub(super) struct RepoBlobs {
+    pub primary: String,
+    pub filelists: String,
+    pub other: String,
+    pub packages: usize,
+}
+
+impl RepoMetadata {
+    pub(super) fn new() -> Self {
+        Self {
+            primary: String::from(
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<metadata xmlns=\"http://linux.duke.edu/metadata/common\" xmlns:rpm=\"http://linux.duke.edu/metadata/rpm\" packages=\"PACKAGE_COUNT\">\n",
+            ),
+            filelists: String::from(
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<filelists xmlns=\"http://linux.duke.edu/metadata/filelists\" packages=\"PACKAGE_COUNT\">\n",
+            ),
+            other: String::from(
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<otherdata xmlns=\"http://linux.duke.edu/metadata/other\" packages=\"PACKAGE_COUNT\">\n",
+            ),
+            packages: 0,
+        }
+    }
+
+    pub(super) fn add(
+        &mut self,
+        package: &rpm::Package,
+        filename: &str,
+        checksum: &str,
+        package_size: u64,
+    ) -> Result<(), Error> {
+        record(
+            package,
+            filename,
+            checksum,
+            package_size,
+            &mut self.primary,
+            &mut self.filelists,
+            &mut self.other,
+        )?;
+        self.packages += 1;
+        Ok(())
+    }
+
+    pub(super) fn finish(mut self) -> RepoBlobs {
+        self.primary.push_str("</metadata>\n");
+        self.filelists.push_str("</filelists>\n");
+        self.other.push_str("</otherdata>\n");
+        let count = self.packages.to_string();
+        RepoBlobs {
+            primary: self.primary.replace("PACKAGE_COUNT", &count),
+            filelists: self.filelists.replace("PACKAGE_COUNT", &count),
+            other: self.other.replace("PACKAGE_COUNT", &count),
+            packages: self.packages,
+        }
+    }
+}
+
 fn split_evr(value: &str) -> (String, String, String) {
     let (epoch, rest) = match value.split_once(':') {
         Some((epoch, rest)) => (epoch, rest),
