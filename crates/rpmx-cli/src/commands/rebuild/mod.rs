@@ -283,22 +283,15 @@ pub fn run(args: RebuildArgs<'_>) -> Result<Vec<PathBuf>, Error> {
     }
 
     if !quiet {
-        if json {
-            let value = serde_json::json!({
-                "ok": true,
-                "rpms": written.iter().map(|path| path.display().to_string()).collect::<Vec<_>>(),
-                "signing_key": signing.as_ref().map(|key| key.fingerprint()),
-            });
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&value)
-                    .map_err(|error| Error::new(codes::CLI_005, error.to_string()))?
-            );
-        } else {
-            for path in &written {
-                println!("{}", path.display());
-            }
-        }
+        crate::commands::report::print(
+            json,
+            &[crate::commands::report::ArtifactGroup {
+                key: "rpms",
+                paths: &written,
+            }],
+            signing.as_ref().map(|key| key.fingerprint()),
+            true,
+        )?;
     }
     Ok(written)
 }

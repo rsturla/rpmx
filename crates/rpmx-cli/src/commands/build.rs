@@ -233,21 +233,20 @@ fn build_from_recipe(args: BuildArgs<'_>) -> Result<Vec<PathBuf>, Error> {
 }
 
 fn report(json: bool, rpms: &[PathBuf], srpms: &[PathBuf]) -> Result<Vec<PathBuf>, Error> {
-    if json {
-        let value = serde_json::json!({
-            "ok": true,
-            "srpms": srpms.iter().map(|path| path.display().to_string()).collect::<Vec<_>>(),
-            "rpms": rpms.iter().map(|path| path.display().to_string()).collect::<Vec<_>>(),
-        });
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&value)
-                .map_err(|error| Error::new(codes::CLI_004, error.to_string()))?
-        );
-    } else {
-        for path in srpms.iter().chain(rpms) {
-            println!("{}", path.display());
-        }
-    }
+    crate::commands::report::print(
+        json,
+        &[
+            crate::commands::report::ArtifactGroup {
+                key: "srpms",
+                paths: srpms,
+            },
+            crate::commands::report::ArtifactGroup {
+                key: "rpms",
+                paths: rpms,
+            },
+        ],
+        None,
+        false,
+    )?;
     Ok(rpms.to_vec())
 }
