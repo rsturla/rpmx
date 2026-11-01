@@ -7,8 +7,23 @@ use crate::error::{codes, Error, Result};
 use crate::runner::RunnerRequest;
 
 /// Keep error diagnostics useful without letting a hostile or noisy guest
-/// grow host memory without bound. The rest is drained and discarded.
+/// grow host memory without bound. The last `STDERR_LIMIT` bytes are retained;
+/// everything older is drained and discarded.
 const STDERR_LIMIT: usize = 64 * 1024;
+/// Hard ceiling for a guest archive staged on the host. This bounds disk and
+/// the memory the tar crate may use for extension headers.
+const MAX_TRANSFER_BYTES: u64 = 8 * 1024 * 1024 * 1024;
+/// GNU long-name/link and PAX extension headers are read fully into memory by
+/// the tar crate; keep that allocation small.
+const MAX_EXTENSION_BYTES: u64 = 1024 * 1024;
+
+fn retain_tail(buffer: &mut Vec<u8>, bytes: &[u8]) {
+    buffer.extend_from_slice(bytes);
+    if buffer.len() > STDERR_LIMIT {
+        let overflow = buffer.len() - STDERR_LIMIT;
+        buffer.drain(..overflow);
+    }
+}
 
 fn take_stderr(child: &mut Child) -> Option<JoinHandle<std::io::Result<Vec<u8>>>> {
     child.stderr.take().map(|mut stderr| {
@@ -20,10 +35,7 @@ fn take_stderr(child: &mut Child) -> Option<JoinHandle<std::io::Result<Vec<u8>>>
                 if read == 0 {
                     break;
                 }
-                let remaining = STDERR_LIMIT.saturating_sub(buffer.len());
-                if remaining > 0 {
-                    buffer.extend_from_slice(&chunk[..read.min(remaining)]);
-                }
+                retain_tail(&mut buffer, &chunk[..read]);
             }
             Ok(buffer)
         })
@@ -43,10 +55,7 @@ pub(super) fn take_stderr_with_echo(
                     break;
                 }
                 let _ = std::io::stderr().write_all(&chunk[..read]);
-                let remaining = STDERR_LIMIT.saturating_sub(buffer.len());
-                if remaining > 0 {
-                    buffer.extend_from_slice(&chunk[..read.min(remaining)]);
-                }
+                retain_tail(&mut buffer, &chunk[..read]);
             }
             Ok(buffer)
         })
@@ -170,6 +179,166 @@ pub(super) fn stream_tar_in(mut child: Child, source: &Path, label: &str) -> Res
     Ok(())
 }
 
+fn read_tar_header(reader: &mut std::fs::File, header: &mut [u8; 512]) -> std::io::Result<bool> {
+    let mut filled = 0;
+    while filled < header.len() {
+        let read = reader.read(&mut header[filled..])?;
+        if read == 0 {
+            if filled == 0 {
+                return Ok(false);
+            }
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "truncated tar header",
+            ));
+        }
+        filled += read;
+    }
+    Ok(true)
+}
+
+fn parse_tar_size(field: &[u8], remote: &str) -> Result<u64> {
+    if field.first().is_some_and(|byte| byte & 0x80 != 0) {
+        let mut value = u64::from(field[0] & 0x7f);
+        for byte in &field[1..] {
+            value = value
+                .checked_shl(8)
+                .and_then(|value| value.checked_add(u64::from(*byte)))
+                .ok_or_else(|| {
+                    Error::new(
+                        codes::RUNNER_003,
+                        format!("archive from {remote} has an overflowing entry size"),
+                    )
+                })?;
+        }
+        return Ok(value);
+    }
+    let text = std::str::from_utf8(field).map_err(|error| {
+        Error::new(
+            codes::RUNNER_003,
+            format!("archive from {remote} has a non-UTF-8 entry size: {error}"),
+        )
+    })?;
+    let text = text.trim_matches(|character: char| character == '\0' || character == ' ');
+    if text.is_empty() {
+        return Ok(0);
+    }
+    u64::from_str_radix(text, 8).map_err(|error| {
+        Error::new(
+            codes::RUNNER_003,
+            format!("archive from {remote} has an invalid entry size: {error}"),
+        )
+    })
+}
+
+fn copy_archive(
+    reader: &mut impl Read,
+    archive: &mut std::fs::File,
+    remote: &str,
+    host: &Path,
+) -> Result<()> {
+    copy_archive_with_limit(reader, archive, remote, host, MAX_TRANSFER_BYTES)
+}
+
+fn copy_archive_with_limit(
+    reader: &mut impl Read,
+    archive: &mut std::fs::File,
+    remote: &str,
+    host: &Path,
+    limit: u64,
+) -> Result<()> {
+    let mut chunk = [0u8; 64 * 1024];
+    let mut total = 0u64;
+    loop {
+        let read = reader.read(&mut chunk).map_err(|error| {
+            Error::new(
+                codes::RUNNER_003,
+                format!("cannot read {remote} from qemu: {error}"),
+            )
+        })?;
+        if read == 0 {
+            return Ok(());
+        }
+        total = total.saturating_add(read as u64);
+        if total > limit {
+            return Err(Error::new(
+                codes::RUNNER_003,
+                format!("archive from {remote} exceeds the {limit}-byte transfer limit"),
+            ));
+        }
+        archive.write_all(&chunk[..read]).map_err(|error| {
+            Error::new(
+                codes::RUNNER_003,
+                format!(
+                    "cannot write the archive for {remote} in {}: {error}",
+                    host.display()
+                ),
+            )
+        })?;
+    }
+}
+
+fn validate_archive(archive: &mut std::fs::File, remote: &str) -> Result<()> {
+    archive.seek(SeekFrom::Start(0)).map_err(|error| {
+        Error::new(
+            codes::RUNNER_003,
+            format!("cannot rewind the archive from {remote}: {error}"),
+        )
+    })?;
+    let mut header = [0u8; 512];
+    loop {
+        if !read_tar_header(archive, &mut header).map_err(|error| {
+            Error::new(
+                codes::RUNNER_003,
+                format!("cannot read the archive from {remote}: {error}"),
+            )
+        })? {
+            break;
+        }
+        if header.iter().all(|byte| *byte == 0) {
+            break;
+        }
+        let size = parse_tar_size(&header[124..136], remote)?;
+        if size > MAX_TRANSFER_BYTES {
+            return Err(Error::new(
+                codes::RUNNER_003,
+                format!(
+                    "archive from {remote} declares a {size}-byte entry; the transfer limit is {MAX_TRANSFER_BYTES} bytes"
+                ),
+            ));
+        }
+        let typeflag = header[156];
+        if matches!(typeflag, b'L' | b'K' | b'x' | b'g') && size > MAX_EXTENSION_BYTES {
+            return Err(Error::new(
+                codes::RUNNER_003,
+                format!(
+                    "archive from {remote} has a {size}-byte tar extension header; the limit is {MAX_EXTENSION_BYTES} bytes"
+                ),
+            ));
+        }
+        let skip = size.div_ceil(512).saturating_mul(512);
+        let skip = i64::try_from(skip).map_err(|_| {
+            Error::new(
+                codes::RUNNER_003,
+                format!("archive from {remote} has an entry too large to skip"),
+            )
+        })?;
+        archive.seek(SeekFrom::Current(skip)).map_err(|error| {
+            Error::new(
+                codes::RUNNER_003,
+                format!("cannot scan the archive from {remote}: {error}"),
+            )
+        })?;
+    }
+    archive.seek(SeekFrom::Start(0)).map_err(|error| {
+        Error::new(
+            codes::RUNNER_003,
+            format!("cannot rewind the archive from {remote}: {error}"),
+        )
+    })?;
+    Ok(())
+}
+
 pub(super) fn stream_tar_out(
     mut child: Child,
     remote: &str,
@@ -183,7 +352,7 @@ pub(super) fn stream_tar_out(
             "ssh stdout is not available for sync-out",
         )
     })?;
-    let copy = std::io::copy(&mut stdout, &mut archive);
+    let copy = copy_archive(&mut stdout, &mut archive, remote, host);
     // Closing stdout is the abort signal: ssh sees EPIPE if the guest is still
     // writing. Do not kill the direct child here, for the timeout reason above.
     drop(stdout);
@@ -191,16 +360,10 @@ pub(super) fn stream_tar_out(
         .wait()
         .map_err(|error| Error::new(codes::RUNNER_003, format!("ssh failed: {error}")))?;
     let stderr = join_stderr(stderr_reader)?;
-    if let Err(error) = &copy {
-        let remote_detail = if stderr.is_empty() {
-            String::new()
-        } else {
-            format!("; remote: {}", remote_detail(&stderr))
-        };
-        return Err(Error::new(
-            codes::RUNNER_003,
-            format!("cannot read {remote} from qemu: {error}{remote_detail}"),
-        ));
+    if let Err(error) = copy {
+        if status.success() || stderr.is_empty() {
+            return Err(error);
+        }
     }
     if !status.success() {
         return Err(Error::new(
@@ -212,18 +375,7 @@ pub(super) fn stream_tar_out(
             ),
         ));
     }
-    copy.map_err(|error| {
-        Error::new(
-            codes::RUNNER_003,
-            format!("cannot read {remote} from qemu: {error}"),
-        )
-    })?;
-    archive.seek(SeekFrom::Start(0)).map_err(|error| {
-        Error::new(
-            codes::RUNNER_003,
-            format!("cannot rewind the archive from {remote}: {error}"),
-        )
-    })?;
+    validate_archive(&mut archive, remote)?;
     tar::Archive::new(archive).unpack(host).map_err(|error| {
         Error::new(
             codes::RUNNER_003,
@@ -325,6 +477,50 @@ mod tests {
         let (status, stderr) = stream_command_output(child, None).expect("stream output");
         assert!(status.success());
         assert_eq!(stderr, b"warning\n");
+    }
+
+    #[test]
+    fn archive_transfer_is_capped() {
+        let root = tempfile::tempdir().expect("work");
+        let path = root.path().join("archive");
+        let mut archive = std::fs::File::create(&path).expect("archive");
+        let mut reader = std::io::Cursor::new(vec![0u8; 100]);
+        let error =
+            super::copy_archive_with_limit(&mut reader, &mut archive, "remote", root.path(), 8)
+                .expect_err("transfer cap");
+        assert!(
+            error.message.contains("transfer limit"),
+            "{}",
+            error.message
+        );
+    }
+
+    #[test]
+    fn oversized_tar_extension_headers_are_rejected() {
+        use std::io::{Seek, SeekFrom, Write};
+
+        let root = tempfile::tempdir().expect("work");
+        let path = root.path().join("archive");
+        let mut archive = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&path)
+            .expect("archive");
+        let mut header = [0u8; 512];
+        header[156] = b'L';
+        let size = format!("{:011o}\0", 2 * 1024 * 1024);
+        header[124..136].copy_from_slice(size.as_bytes());
+        archive.write_all(&header).expect("header");
+        archive.seek(SeekFrom::Start(0)).expect("rewind");
+
+        let error = super::validate_archive(&mut archive, "remote").expect_err("extension cap");
+        assert!(
+            error.message.contains("extension header"),
+            "{}",
+            error.message
+        );
     }
 
     #[test]
