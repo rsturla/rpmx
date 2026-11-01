@@ -42,6 +42,19 @@ pub struct Requirement {
     pub digest: String,
 }
 
+/// The distribution tag declared by a recipe's named root profile.
+pub fn profile_dist_tag(recipe: &Recipe, recipe_path: &Path) -> Result<Option<String>, Error> {
+    let Some(spec) = &recipe.build.root else {
+        return Ok(None);
+    };
+    let Some(name) = &spec.profile else {
+        return Ok(None);
+    };
+    let recipe_dir = recipe_path.parent().unwrap_or_else(|| Path::new("."));
+    let path = discover_profile(name, recipe_dir)?;
+    Ok(load_profile(&path)?.dist_tag()?)
+}
+
 /// Build the merged root requirement without touching the network or cache.
 ///
 /// Returns `None` when the recipe names no profile and the caller gave none.

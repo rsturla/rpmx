@@ -20,7 +20,12 @@ pub fn run(args: ExplainArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> 
         "policy" => serde_json::json!({
             "dist_tag": plan.dist_tag,
             "build_release": plan.build_release,
-            "profile": args.policy.profile.as_ref().map(|path| path.display().to_string()),
+            "profile": args
+                .policy
+                .profile
+                .as_ref()
+                .map(|path| path.display().to_string())
+                .or_else(|| recipe.build.root.as_ref().and_then(|root| root.profile.clone())),
             "release": plan.cells.iter().map(|cell| &cell.release).collect::<Vec<_>>(),
             "source_date_epoch": crate::commands::source_date_epoch(&recipe, None),
         }),

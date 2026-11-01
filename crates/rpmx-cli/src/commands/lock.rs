@@ -86,6 +86,7 @@ pub fn run(args: LockArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
         policy,
         args.policy.profile.as_deref(),
         &args.arch,
+        None,
     )?;
     let path = args
         .output
@@ -126,6 +127,7 @@ pub fn verify(
     policy: PlanPolicy<'_>,
     profile: Option<&Path>,
     arch: &str,
+    explicit_source_date_epoch: Option<u32>,
 ) -> Result<(), Error> {
     let path = default_path(recipe_path);
     if !path.is_file() {
@@ -139,7 +141,15 @@ pub fn verify(
         .at(path.display().to_string()));
     }
     let existing = read(&path)?;
-    let actual = build(recipe, plan, recipe_path, policy, profile, arch)?;
+    let actual = build(
+        recipe,
+        plan,
+        recipe_path,
+        policy,
+        profile,
+        arch,
+        explicit_source_date_epoch,
+    )?;
     if existing != actual {
         return Err(Error::new(
             codes::LOCK_002,
@@ -161,6 +171,7 @@ pub fn build(
     policy: PlanPolicy<'_>,
     profile: Option<&Path>,
     arch: &str,
+    explicit_source_date_epoch: Option<u32>,
 ) -> Result<PackageLock, Error> {
     let bytes = std::fs::read(recipe_path).map_err(|error| {
         Error::new(
@@ -214,7 +225,7 @@ pub fn build(
     Ok(PackageLock {
         schema: SCHEMA,
         recipe_digest: sha512_hex(&bytes),
-        source_date_epoch: source_date_epoch(recipe, None),
+        source_date_epoch: source_date_epoch(recipe, explicit_source_date_epoch),
         policy: LockedPolicy {
             dist_tag: policy.dist_tag.map(str::to_string),
             build_release: policy.build_release,
@@ -354,7 +365,16 @@ outputs:
             },
         )
         .expect("plan");
-        build(&recipe, &plan, path, PlanPolicy::default(), None, "x86_64").expect("lock")
+        build(
+            &recipe,
+            &plan,
+            path,
+            PlanPolicy::default(),
+            None,
+            "x86_64",
+            None,
+        )
+        .expect("lock")
     }
 
     #[test]
@@ -391,8 +411,16 @@ outputs:
             },
         )
         .expect("plan");
-        let second =
-            build(&recipe, &plan, &path, PlanPolicy::default(), None, "x86_64").expect("lock");
+        let second = build(
+            &recipe,
+            &plan,
+            &path,
+            PlanPolicy::default(),
+            None,
+            "x86_64",
+            None,
+        )
+        .expect("lock");
         assert_eq!(first, second);
     }
 }

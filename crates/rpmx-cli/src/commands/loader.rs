@@ -19,13 +19,21 @@ pub fn load_plan(
 ) -> Result<(Recipe, Plan), Error> {
     let recipe = load_recipe(file)?;
     let root = step_root(pipeline_dir, file);
+    // A named root profile carries the distribution tag even when the caller
+    // did not pass --profile. Leaking one short string per plan keeps
+    // `PlanPolicy` borrowed while making every command agree on the release.
+    let dist_tag = match policy.dist_tag {
+        Some(tag) => Some(tag),
+        None => crate::commands::autoroot::profile_dist_tag(&recipe, file)?
+            .map(|tag| &*Box::leak(tag.into_boxed_str())),
+    };
     let plan = plan_with_options(
         &recipe,
         PlanOptions {
             arch,
             step_root: root.as_deref(),
             allow_builtin_override,
-            dist_tag: policy.dist_tag,
+            dist_tag,
             build_release: policy.build_release,
         },
     )?;

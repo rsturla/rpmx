@@ -280,9 +280,6 @@ pub struct TestArgs {
     /// Run only the named test; repeat for several.
     #[arg(long = "test", value_name = "NAME")]
     pub selected: Vec<String>,
-    /// Test an existing directory of RPMs instead of building first.
-    #[arg(long)]
-    pub install_dir: Option<PathBuf>,
     /// Write a JUnit XML report.
     #[arg(long)]
     pub junit: Option<PathBuf>,

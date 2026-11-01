@@ -26,7 +26,12 @@ pub fn check(packages: &[BinaryPackageSpec]) -> Vec<Finding> {
         }
         let has_license = package.files.iter().any(|file| file.license);
         for file in &package.files {
-            findings.extend(check_file(&file.path, file.mode, file.license));
+            findings.extend(check_file(
+                &file.path,
+                file.mode,
+                file.license,
+                file.target.is_some(),
+            ));
         }
         if !has_license {
             findings.push(Finding {
@@ -43,16 +48,16 @@ pub fn check(packages: &[BinaryPackageSpec]) -> Vec<Finding> {
 }
 
 /// The per-path rules, exposed for tests.
-pub fn check_file(path: &str, mode: u32, license: bool) -> Vec<Finding> {
+pub fn check_file(path: &str, mode: u32, license: bool, symlink: bool) -> Vec<Finding> {
     let mut findings = Vec::new();
-    if mode & 0o002 != 0 {
+    if !symlink && mode & 0o002 != 0 {
         findings.push(Finding {
             path: path.to_string(),
             severity: Severity::Error,
             message: format!("{path} is world-writable (mode {mode:04o})"),
         });
     }
-    if mode & 0o6000 != 0 {
+    if !symlink && mode & 0o6000 != 0 {
         findings.push(Finding {
             path: path.to_string(),
             severity: Severity::Error,
@@ -113,26 +118,26 @@ mod tests {
 
     #[test]
     fn world_writable_and_setuid_files_fail() {
-        assert!(check_file("/usr/bin/x", 0o777, false)
+        assert!(check_file("/usr/bin/x", 0o777, false, false)
             .iter()
             .any(|finding| finding.severity == Severity::Error));
-        assert!(check_file("/usr/bin/x", 0o4755, false)
+        assert!(check_file("/usr/bin/x", 0o4755, false, false)
             .iter()
             .any(|finding| finding.severity == Severity::Error));
     }
 
     #[test]
     fn temporary_and_non_usr_prefixes_are_reported() {
-        assert!(check_file("/tmp/x", 0o644, false)
+        assert!(check_file("/tmp/x", 0o644, false, false)
             .iter()
             .any(|finding| finding.severity == Severity::Error));
-        assert!(check_file("/opt/x", 0o644, false)
+        assert!(check_file("/opt/x", 0o644, false, false)
             .iter()
             .any(|finding| finding.severity == Severity::Warning));
     }
 
     #[test]
     fn ordinary_files_pass() {
-        assert!(check_file("/usr/bin/x", 0o755, false).is_empty());
+        assert!(check_file("/usr/bin/x", 0o755, false, false).is_empty());
     }
 }

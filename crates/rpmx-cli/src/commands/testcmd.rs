@@ -22,14 +22,22 @@ pub fn run(args: TestArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
     })?;
     let policy: PlanPolicy<'_> = resolved.plan_policy();
 
-    if args.install_dir.is_some() {
-        return Err(Error::new(
-            codes::TEST_004,
-            "--install-dir is not implemented yet; run `rpmx build` first and then `rpmx test` without it",
-        ));
-    }
-
     let (recipe, plan) = load_plan(&args.file, &args.arch, pipeline_dir, false, policy)?;
+    if !args.selected.is_empty() {
+        let known: std::collections::BTreeSet<_> = plan
+            .cells
+            .iter()
+            .flat_map(|cell| cell.tests.iter().map(|test| test.name.as_str()))
+            .collect();
+        for name in &args.selected {
+            if !known.contains(name.as_str()) {
+                return Err(Error::new(
+                    codes::TEST_004,
+                    format!("no test named '{name}' in this recipe"),
+                ));
+            }
+        }
+    }
     if args.selected.is_empty() && plan.cells.iter().all(|cell| cell.tests.is_empty()) {
         return Err(Error::new(
             codes::TEST_006,

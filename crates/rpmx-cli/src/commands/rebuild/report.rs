@@ -10,6 +10,7 @@ pub(super) fn print_artifacts(
     json: bool,
     written: &[PathBuf],
     evidence: &[PathBuf],
+    repository: &[PathBuf],
     signing_key: Option<&str>,
 ) -> Result<(), Error> {
     if quiet {
@@ -26,6 +27,10 @@ pub(super) fn print_artifacts(
             ArtifactGroup {
                 kind: "evidence",
                 paths: evidence,
+            },
+            ArtifactGroup {
+                kind: "repository",
+                paths: repository,
             },
         ],
         signing_key,

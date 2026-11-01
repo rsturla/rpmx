@@ -40,6 +40,17 @@ fn package_stage(
         args.signing.signing_passphrase_env.as_deref(),
     )?;
     let (recipe, plan) = load_plan(args.file.as_path(), &args.arch, pipeline_dir, false, policy)?;
+    if args.locked {
+        crate::commands::lock::verify(
+            &recipe,
+            &plan,
+            args.file.as_path(),
+            policy,
+            args.policy.profile.as_deref(),
+            &args.arch,
+            args.source_date_epoch,
+        )?;
+    }
     let source_date_epoch = crate::commands::source_date_epoch(&recipe, args.source_date_epoch);
     let signature_timestamp = crate::commands::signature_timestamp(
         args.signing.signing_timestamp,
@@ -97,10 +108,19 @@ fn package_stage(
         }
     }
 
-    report(args.json, &written, &[], &[])?;
+    let mut repository = Vec::new();
     if !args.no_index {
-        crate::commands::repo::index(output, signing.as_ref(), source_date_epoch)?;
+        let report = crate::commands::repo::index(
+            output,
+            signing.as_ref(),
+            signature_timestamp.unwrap_or(source_date_epoch),
+        )?;
+        repository.push(report.repomd);
+        if let Some(signature) = report.signature {
+            repository.push(signature);
+        }
     }
+    report(args.json, &written, &[], &[], &repository)?;
     Ok(written)
 }
 
@@ -142,8 +162,31 @@ fn build_from_recipe(
 
     let run_tests = run_tests || !test.is_empty();
     let (recipe, plan) = load_plan(&file, &arch, pipeline_dir, false, policy)?;
+    if !test.is_empty() {
+        let known: std::collections::BTreeSet<_> = plan
+            .cells
+            .iter()
+            .flat_map(|cell| cell.tests.iter().map(|test| test.name.as_str()))
+            .collect();
+        for name in &test {
+            if !known.contains(name.as_str()) {
+                return Err(Error::new(
+                    codes::TEST_004,
+                    format!("no test named '{name}' in this recipe"),
+                ));
+            }
+        }
+    }
     if locked {
-        crate::commands::lock::verify(&recipe, &plan, &file, policy, profile, &arch)?;
+        crate::commands::lock::verify(
+            &recipe,
+            &plan,
+            &file,
+            policy,
+            profile,
+            &arch,
+            source_date_epoch,
+        )?;
     }
     let automatic = if root_lock.is_none() && root.is_none() && !unsafe_host_root {
         crate::commands::autoroot::ensure(
@@ -218,15 +261,35 @@ fn build_from_recipe(
         pipeline_dir,
     };
     let built = pipeline.execute(&selected)?;
-    report(json, &built.rpms, &built.srpms, &built.evidence)?;
+    let mut repository = Vec::new();
     if !no_index {
         let timestamp = crate::commands::source_date_epoch(&recipe, source_date_epoch);
         let key = crate::commands::load_signing_key(
             signing.signing_key.as_deref(),
             signing.signing_passphrase_env.as_deref(),
         )?;
-        crate::commands::repo::index(output, key.as_ref(), timestamp)?;
+        let signature_timestamp = crate::commands::signature_timestamp(
+            signing.signing_timestamp,
+            timestamp,
+            key.as_ref(),
+        )?;
+        let report = crate::commands::repo::index(
+            output,
+            key.as_ref(),
+            signature_timestamp.unwrap_or(timestamp),
+        )?;
+        repository.push(report.repomd);
+        if let Some(signature) = report.signature {
+            repository.push(signature);
+        }
     }
+    report(
+        json,
+        &built.rpms,
+        &built.srpms,
+        &built.evidence,
+        &repository,
+    )?;
     Ok(built.rpms)
 }
 
@@ -235,6 +298,7 @@ fn report(
     rpms: &[PathBuf],
     srpms: &[PathBuf],
     evidence: &[PathBuf],
+    repository: &[PathBuf],
 ) -> Result<Vec<PathBuf>, Error> {
     crate::commands::report::print(
         json,
@@ -251,6 +315,10 @@ fn report(
             crate::commands::report::ArtifactGroup {
                 kind: "evidence",
                 paths: evidence,
+            },
+            crate::commands::report::ArtifactGroup {
+                kind: "repository",
+                paths: repository,
             },
         ],
         None,

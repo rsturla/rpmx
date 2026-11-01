@@ -78,7 +78,7 @@ pub fn run(args: RebuildArgs) -> Result<Vec<PathBuf>, Error> {
         cache: args.cache.as_deref(),
         offline: args.offline,
         verify_root: true,
-        run_tests: args.run_tests,
+        run_tests: args.run_tests || !args.test.is_empty(),
         test_filter: &args.test,
         no_index: args.no_index,
         no_lint: args.no_lint,
@@ -282,16 +282,26 @@ pub fn execute(request: RebuildRequest<'_>) -> Result<RebuildOutput, Error> {
         }
     }
 
+    let mut repository = Vec::new();
+    if !request.no_index {
+        let report = crate::commands::repo::index(
+            &output,
+            signing.as_ref(),
+            signature_timestamp.unwrap_or(extracted.source_date_epoch),
+        )?;
+        repository.push(report.repomd);
+        if let Some(signature) = report.signature {
+            repository.push(signature);
+        }
+    }
     report::print_artifacts(
         quiet,
         json,
         &written,
         &evidence,
+        &repository,
         signing.as_ref().map(|key| key.fingerprint()),
     )?;
-    if !request.no_index {
-        crate::commands::repo::index(&output, signing.as_ref(), extracted.source_date_epoch)?;
-    }
     Ok(RebuildOutput {
         rpms: written,
         evidence,

@@ -9,14 +9,13 @@ pub fn index(
     output: &std::path::Path,
     signing_key: Option<&rpmx_rpm::sign::SigningKey>,
     timestamp: u32,
-) -> Result<(), Error> {
+) -> Result<rpmx_rpm::repo::RepoReport, Error> {
     generate(RepoOptions {
         rpms: output,
         output,
         signing_key,
         timestamp,
     })
-    .map(|_| ())
 }
 
 pub fn run(args: RepoArgs) -> Result<(), Error> {

@@ -41,10 +41,8 @@ pub(super) fn run(options: TestRunOptions<'_>) -> Result<Option<PathBuf>, Error>
         .cloned()
         .collect();
     if !options.filter.is_empty() && tests.is_empty() {
-        return Err(Error::new(
-            codes::TEST_004,
-            format!("no test matches '{}'", options.filter.join(", ")),
-        ));
+        // Another matrix cell may own the selected test.
+        return Ok(None);
     }
     let cache = crate::commands::fetch::default_cache()?;
     let prepared = if tests.iter().any(|test| test.stage == "installed") {
@@ -134,9 +132,10 @@ pub(super) fn run(options: TestRunOptions<'_>) -> Result<Option<PathBuf>, Error>
         None
     };
     if !failed.is_empty() {
-        return Err(
-            Error::new(codes::TEST_003, format!("{} test(s) failed", failed.len())).reported(),
-        );
+        return Err(Error::new(
+            codes::TEST_003,
+            format!("{} test(s) failed", failed.len()),
+        ));
     }
     let _ = evidence;
     Ok(evidence)

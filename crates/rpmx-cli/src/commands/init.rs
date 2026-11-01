@@ -180,7 +180,7 @@ outputs:
     files:
       include:
         - /usr/lib/python3*/site-packages/{module}/**
-        - /usr/lib/python3*/site-packages/{name}-*.dist-info/**
+        - /usr/lib/python3*/site-packages/{module}-*.dist-info/**
 
 tests:
   - name: import
