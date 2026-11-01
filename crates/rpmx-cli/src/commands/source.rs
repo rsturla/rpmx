@@ -99,8 +99,9 @@ pub fn run(args: SourceArgs<'_>) -> Result<std::path::PathBuf, Error> {
     })?;
 
     if let Some(selection) = &selected {
-        let text = serde_yaml_ng::to_string(&selection.lock)
+        let mut text = serde_json::to_string_pretty(&selection.lock)
             .map_err(|error| Error::new(codes::CLI_006, error.to_string()))?;
+        text.push('\n');
         let path = output.join("source-root.lock.json");
         std::fs::write(&path, text).map_err(|error| {
             Error::new(
