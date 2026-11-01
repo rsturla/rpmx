@@ -16,7 +16,7 @@ pub const VERSION: &str = "0.2.3";
 /// builder, and the upstream parser ignores unknown fields.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Manifest {
+pub struct RpmPackageManifest {
     pub document: String,
     pub version: String,
     pub data: ManifestData,
@@ -59,7 +59,7 @@ pub struct ManifestPackage {
     pub parent_archs: Option<Vec<String>>,
 }
 
-pub fn from_lock(lock: &RootLock) -> Manifest {
+pub fn from_lock(lock: &RootLock) -> RpmPackageManifest {
     let repositories = lock
         .repositories
         .iter()
@@ -93,7 +93,7 @@ pub fn from_lock(lock: &RootLock) -> Manifest {
         );
     }
 
-    Manifest {
+    RpmPackageManifest {
         document: DOCUMENT.to_string(),
         version: VERSION.to_string(),
         data: ManifestData {
@@ -104,7 +104,7 @@ pub fn from_lock(lock: &RootLock) -> Manifest {
 }
 
 pub fn to_lock(
-    manifest: &Manifest,
+    manifest: &RpmPackageManifest,
     profile: &str,
     arch: Option<&str>,
     releasever: &str,

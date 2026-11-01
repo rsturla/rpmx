@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use rpmx_core::error::codes;
-use rpmx_core::pkgmanifest::{self, Manifest};
+use rpmx_core::pkgmanifest::{self, RpmPackageManifest};
 use rpmx_core::profile::load_profile;
 use rpmx_core::root::{
     assemble as assemble_root, load_lock, resolve_profile, write_lock, AssembleOptions, RootLock,
@@ -138,7 +138,7 @@ pub fn import(args: RootImportArgs<'_>) -> Result<(), Error> {
             format!("cannot read {}: {error}", args.manifest.display()),
         )
     })?;
-    let manifest: Manifest = serde_yaml_ng::from_str(&text)
+    let manifest: RpmPackageManifest = serde_yaml_ng::from_str(&text)
         .map_err(|error| Error::new(codes::ROOT_006, format!("invalid manifest: {error}")))?;
     let lock = pkgmanifest::to_lock(&manifest, args.profile, args.arch, args.releasever)?;
     emit_lock(&lock, args.output)?;

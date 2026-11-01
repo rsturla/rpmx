@@ -105,7 +105,7 @@ fn lock_round_trips_through_pkgmanifest_without_losing_the_closure() {
     let original = lock();
     let manifest = pkgmanifest::from_lock(&original);
     let text = serde_yaml_ng::to_string(&manifest).unwrap();
-    let parsed: pkgmanifest::Manifest = serde_yaml_ng::from_str(&text).unwrap();
+    let parsed: pkgmanifest::RpmPackageManifest = serde_yaml_ng::from_str(&text).unwrap();
     let imported = pkgmanifest::to_lock(&parsed, "fedora-44", Some("x86_64"), "44").unwrap();
     assert_eq!(original.closure_digest, imported.closure_digest);
     assert_eq!(original.packages, imported.packages);

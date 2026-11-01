@@ -172,7 +172,7 @@ pub struct LockBuildRef<'a> {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct LockFile {
+pub struct PackageLock {
     pub schema: u32,
     pub recipe_digest: String,
     pub version: String,
@@ -190,32 +190,32 @@ pub struct LockFile {
 }
 
 #[derive(Debug, Serialize)]
-pub struct ManifestRecipe {
+pub struct SourceManifestRecipe {
     pub path: String,
     pub digest: String,
 }
 
 #[derive(Debug, Serialize)]
-pub struct ManifestLock {
+pub struct SourceManifestLock {
     pub path: String,
     pub digest: String,
 }
 
 #[derive(Debug, Serialize)]
-pub struct ManifestSource {
+pub struct SourceManifestSource {
     pub path: String,
     pub digest: String,
     pub size: usize,
 }
 
 #[derive(Debug, Serialize)]
-pub struct Manifest {
+pub struct SourceManifest {
     pub schema: u32,
     pub generator: String,
     pub source_date_epoch: u32,
-    pub recipe: ManifestRecipe,
-    pub lock: ManifestLock,
-    pub sources: Vec<ManifestSource>,
+    pub recipe: SourceManifestRecipe,
+    pub lock: SourceManifestLock,
+    pub sources: Vec<SourceManifestSource>,
     pub steps: Vec<LockStep>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub root_lock: Option<LockRoot>,
@@ -233,7 +233,7 @@ pub fn lock_json(
     steps: &[LockStep],
     context: LockBuildRef<'_>,
 ) -> Result<String> {
-    let value = LockFile {
+    let value = PackageLock {
         schema: 1,
         recipe_digest: recipe_digest.to_string(),
         version: version.to_string(),
@@ -262,14 +262,14 @@ pub fn lock_json(
 }
 
 /// Load the release identity recorded inside an SRPM.
-pub fn load_lock_file(path: &Path) -> Result<LockFile> {
+pub fn load_lock_file(path: &Path) -> Result<PackageLock> {
     let text = std::fs::read_to_string(path).map_err(|error| {
         Error::new(
             codes::SRPM_006,
             format!("cannot read {}: {error}", path.display()),
         )
     })?;
-    let lock: LockFile = serde_json::from_str(&text)
+    let lock: PackageLock = serde_json::from_str(&text)
         .map_err(|error| Error::new(codes::SRPM_006, format!("invalid package lock: {error}")))?;
     if lock.schema != 1 {
         return Err(Error::new(
@@ -291,21 +291,21 @@ pub fn manifest_json(
     steps: &[LockStep],
     root_lock: Option<&LockRoot>,
 ) -> Result<String> {
-    let value = Manifest {
+    let value = SourceManifest {
         schema: 1,
         generator: format!("rpmx {}", env!("CARGO_PKG_VERSION")),
         source_date_epoch,
-        recipe: ManifestRecipe {
+        recipe: SourceManifestRecipe {
             path: "package.yaml".to_string(),
             digest: recipe_digest.to_string(),
         },
-        lock: ManifestLock {
+        lock: SourceManifestLock {
             path: "package.lock.json".to_string(),
             digest: lock_digest.to_string(),
         },
         sources: sources
             .iter()
-            .map(|file| ManifestSource {
+            .map(|file| SourceManifestSource {
                 path: file.path.clone(),
                 digest: file.digest.clone(),
                 size: file.data.len(),
