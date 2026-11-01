@@ -6,7 +6,6 @@ pub use rpmx_root::{pkgmanifest, profile, root, test_root};
 pub use rpmx_runner::{build_env, runner, sandbox, terminal, test_runner};
 pub use rpmx_store::{cas, srpm, tar_guard, tree};
 
-/// Hard ceiling for an untrusted archive staged or downloaded by the tool.
 pub use rpmx_language::{
     load_recipe, matrix, model, normalize_dist_tag, parse_recipe, plan, plan_with_options, steps,
     template, Plan, PlanOptions, PlannedCell, PlannedOutput, PlannedStep, PlannedTest, Recipe,

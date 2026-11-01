@@ -11,17 +11,10 @@ rpmx-store = { path = "../rpmx-store" }
 rpmx-runner = { path = "../rpmx-runner" }
 rpmx-root = { path = "../rpmx-root" }
 rpmx-build = { path = "../rpmx-build" }
-serde.workspace = true
-serde_json.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
 serde_yaml_ng.workspace = true
-rpm.workspace = true
-ureq.workspace = true
+serde_json.workspace = true
 tar.workspace = true
 flate2 = "1"
-saphyr-parser.workspace = true
-sha2.workspace = true
-globset.workspace = true
-goblin.workspace = true
-zstd = "0.14"
-tempfile = "3"
-
