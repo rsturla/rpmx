@@ -45,6 +45,12 @@ pub struct LockedPolicy {
 pub struct LockedRoot {
     pub profile: String,
     pub requirement: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub arch: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub closure_digest: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub root_digest: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -87,6 +93,11 @@ pub fn run(args: LockArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
         args.policy.profile.as_deref(),
         &args.arch,
         None,
+        args.root_lock
+            .as_deref()
+            .map(rpmx_core::root::load_lock)
+            .transpose()?
+            .as_ref(),
     )?;
     let path = args
         .output
@@ -128,6 +139,7 @@ pub fn verify(
     profile: Option<&Path>,
     arch: &str,
     explicit_source_date_epoch: Option<u32>,
+    active_root: Option<&rpmx_core::root::RootLock>,
 ) -> Result<(), Error> {
     let path = default_path(recipe_path);
     if !path.is_file() {
@@ -149,6 +161,7 @@ pub fn verify(
         profile,
         arch,
         explicit_source_date_epoch,
+        active_root,
     )?;
     if existing != actual {
         return Err(Error::new(
@@ -172,6 +185,7 @@ pub fn build(
     profile: Option<&Path>,
     arch: &str,
     explicit_source_date_epoch: Option<u32>,
+    active_root: Option<&rpmx_core::root::RootLock>,
 ) -> Result<PackageLock, Error> {
     let bytes = std::fs::read(recipe_path).map_err(|error| {
         Error::new(
@@ -179,11 +193,18 @@ pub fn build(
             format!("cannot read {}: {error}", recipe_path.display()),
         )
     })?;
-    let root =
-        autoroot::requirement(recipe, plan, recipe_path, profile, arch)?.map(|root| LockedRoot {
+    let root = autoroot::requirement(recipe, plan, recipe_path, profile, arch)?.map(|root| {
+        let resolved = active_root
+            .cloned()
+            .or_else(|| autoroot::cached_lock_for_requirement(&root.digest));
+        LockedRoot {
             profile: root.name,
             requirement: root.digest,
-        });
+            arch: Some(arch.to_string()),
+            closure_digest: resolved.as_ref().map(|lock| lock.closure_digest.clone()),
+            root_digest: resolved.as_ref().and_then(|lock| lock.root_digest.clone()),
+        }
+    });
     let cells = plan
         .cells
         .iter()
@@ -373,6 +394,7 @@ outputs:
             None,
             "x86_64",
             None,
+            None,
         )
         .expect("lock")
     }
@@ -418,6 +440,7 @@ outputs:
             PlanPolicy::default(),
             None,
             "x86_64",
+            None,
             None,
         )
         .expect("lock");

@@ -42,6 +42,14 @@ pub struct Requirement {
     pub digest: String,
 }
 
+/// A cached root lock for a requirement digest, if this host has one.
+pub fn cached_lock_for_requirement(digest: &str) -> Option<RootLock> {
+    let cas = default_cache().ok()?;
+    let roots = cas.parent().unwrap_or(&cas).join("roots");
+    let key = digest.strip_prefix("sha512:").unwrap_or(digest);
+    load_lock(&roots.join(key).join("root.lock.yaml")).ok()
+}
+
 /// The distribution tag declared by a recipe's named root profile.
 pub fn profile_dist_tag(recipe: &Recipe, recipe_path: &Path) -> Result<Option<String>, Error> {
     let Some(spec) = &recipe.build.root else {

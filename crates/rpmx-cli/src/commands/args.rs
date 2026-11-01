@@ -334,6 +334,9 @@ pub struct LockArgs {
     /// Verify the lock without writing it; exit 3 on drift.
     #[arg(long)]
     pub check: bool,
+    /// Root lock to record the resolved closure from.
+    #[arg(long)]
+    pub root_lock: Option<PathBuf>,
     /// Write the lock here (default: package.lock.json next to the recipe).
     #[arg(long, short)]
     pub output: Option<PathBuf>,

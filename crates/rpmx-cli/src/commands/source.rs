@@ -112,6 +112,10 @@ pub fn execute(request: SourceRequest<'_>) -> Result<PathBuf, Error> {
     let root_lock = request.root_lock.or(automatic_lock);
     let root = request.root.or(automatic_root);
     if request.locked {
+        let active_lock = root_lock
+            .as_deref()
+            .map(rpmx_core::root::load_lock)
+            .transpose()?;
         crate::commands::lock::verify(
             &recipe,
             &plan,
@@ -120,6 +124,7 @@ pub fn execute(request: SourceRequest<'_>) -> Result<PathBuf, Error> {
             request.profile,
             request.arch,
             request.source_date_epoch,
+            active_lock.as_ref(),
         )?;
     }
     let source_date_epoch = crate::commands::source_date_epoch(&recipe, request.source_date_epoch);
