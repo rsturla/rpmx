@@ -57,7 +57,10 @@ pub fn check_build_tools(
     let _ = std::fs::remove_file(&marker);
     let mut args = vec![
         "-c".to_string(),
-        "for tool do command -v \"$tool\" >/dev/null 2>&1 || printf '%s\n' \"$tool\"; done > /tmp/build/.rpmx-missing-tools".to_string(),
+        format!(
+            "for tool do command -v \"$tool\" >/dev/null 2>&1 || printf '%s\n' \"$tool\"; done > {}/.rpmx-missing-tools",
+            crate::guest::BUILD
+        ),
         "sh".to_string(),
     ];
     args.extend(candidates.iter().cloned());
