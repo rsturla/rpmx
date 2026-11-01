@@ -11,7 +11,7 @@ inputs:
 needs:
   tools: [make]
 run:
-  cwd: /tmp/build
+  cwd: "${source.dir}"
   runs: |
     make -j"$JOBS" ${inputs.args}
     make check

@@ -497,3 +497,22 @@ fn kind(value: &Value) -> &'static str {
         Value::Object(_) => "map",
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn builtin_steps_do_not_hardcode_guest_paths_in_cwd() {
+        for (name, source) in BUILTINS {
+            let file: StepFile = serde_yaml_ng::from_str(source)
+                .unwrap_or_else(|error| panic!("built-in step '{name}' is invalid: {error}"));
+            if let Some(cwd) = &file.run.cwd {
+                assert!(
+                    cwd.starts_with("${"),
+                    "built-in step '{name}' hardcodes cwd '{cwd}'; use a ${{...}} placeholder so a recipe author never needs to know a guest path"
+                );
+            }
+        }
+    }
+}

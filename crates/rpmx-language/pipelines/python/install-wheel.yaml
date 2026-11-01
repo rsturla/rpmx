@@ -11,6 +11,6 @@ inputs:
 needs:
   tools: [python3-pip]
 run:
-  cwd: /tmp/build
+  cwd: "${source.dir}"
   runs: |
     ${inputs.python} -m pip install --root "$STAGE" --prefix ${inputs.prefix} --no-index --no-deps dist/*.whl

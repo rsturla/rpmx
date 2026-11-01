@@ -14,6 +14,6 @@ inputs:
 needs:
   tools: [go]
 run:
-  cwd: /tmp/build
+  cwd: "${source.dir}"
   runs: |
     go build ${inputs.args} -o "$STAGE${inputs.output}" ${inputs.packages}

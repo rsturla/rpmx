@@ -4,6 +4,6 @@ summary: Run make
 needs:
   tools: [make]
 run:
-  cwd: /tmp/build
+  cwd: "${source.dir}"
   runs: |
     make -j1

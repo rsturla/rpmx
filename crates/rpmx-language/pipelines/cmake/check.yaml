@@ -4,6 +4,6 @@ summary: Run CTest tests
 needs:
   tools: [cmake]
 run:
-  cwd: /tmp/build
+  cwd: "${source.dir}"
   runs: |
     ctest --test-dir build --output-on-failure

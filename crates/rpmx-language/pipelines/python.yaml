@@ -11,7 +11,7 @@ inputs:
 needs:
   tools: [python3-build, python3-setuptools, python3-wheel, python3-pip]
 run:
-  cwd: /tmp/build
+  cwd: "${source.dir}"
   runs: |
     ${inputs.python} -m build --wheel --no-isolation --outdir dist
     ${inputs.python} -m pip install --root "$STAGE" --prefix ${inputs.prefix} --no-index --no-deps dist/*.whl

@@ -4,6 +4,6 @@ summary: Run Meson tests
 needs:
   tools: [meson]
 run:
-  cwd: /tmp/build
+  cwd: "${source.dir}"
   runs: |
     meson test -C build --print-errorlogs

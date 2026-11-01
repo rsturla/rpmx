@@ -8,6 +8,6 @@ inputs:
 needs:
   tools: [cmake]
 run:
-  cwd: /tmp/build
+  cwd: "${source.dir}"
   runs: |
     cmake -S . -B build -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=lib64 ${inputs.args}

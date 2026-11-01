@@ -4,6 +4,6 @@ summary: Run an autotools project's checks
 needs:
   tools: [make]
 run:
-  cwd: /tmp/build
+  cwd: "${source.dir}"
   runs: |
     make check

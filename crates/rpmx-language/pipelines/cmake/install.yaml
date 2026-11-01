@@ -4,6 +4,6 @@ summary: Install a CMake project into the staging root
 needs:
   tools: [cmake]
 run:
-  cwd: /tmp/build
+  cwd: "${source.dir}"
   runs: |
     DESTDIR="$STAGE" cmake --install build --prefix /usr

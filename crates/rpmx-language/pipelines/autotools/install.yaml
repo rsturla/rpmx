@@ -4,6 +4,6 @@ summary: Install an autotools project into the staging root
 needs:
   tools: [make]
 run:
-  cwd: /tmp/build
+  cwd: "${source.dir}"
   runs: |
     make install DESTDIR="$STAGE"

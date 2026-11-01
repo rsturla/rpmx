@@ -4,6 +4,6 @@ summary: Install npm dependencies from the lockfile, offline
 needs:
   tools: [npm]
 run:
-  cwd: /tmp/build
+  cwd: "${source.dir}"
   runs: |
     npm ci --offline

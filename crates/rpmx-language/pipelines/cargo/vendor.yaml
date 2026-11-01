@@ -4,6 +4,6 @@ summary: Vendor Cargo dependencies
 needs:
   tools: [cargo]
 run:
-  cwd: /tmp/build
+  cwd: "${source.dir}"
   runs: |
     cargo vendor

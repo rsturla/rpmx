@@ -4,6 +4,6 @@ summary: Install a Meson project into the staging root
 needs:
   tools: [meson]
 run:
-  cwd: /tmp/build
+  cwd: "${source.dir}"
   runs: |
     meson install -C build --destdir "$STAGE"

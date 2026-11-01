@@ -8,6 +8,6 @@ inputs:
 needs:
   tools: [make]
 run:
-  cwd: /tmp/build
+  cwd: "${source.dir}"
   runs: |
     ./configure --prefix=/usr --libdir=/usr/lib64 ${inputs.args}

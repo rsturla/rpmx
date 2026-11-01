@@ -9,6 +9,6 @@ needs:
   tools: [go, omnibump]
 render: omnibump-deps
 run:
-  cwd: /tmp/build
+  cwd: "${source.dir}"
   runs: |
     omnibump --deps deps.yaml --tidy

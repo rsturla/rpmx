@@ -4,6 +4,6 @@ summary: Vendor Go modules
 needs:
   tools: [go]
 run:
-  cwd: /tmp/build
+  cwd: "${source.dir}"
   runs: |
     go mod vendor

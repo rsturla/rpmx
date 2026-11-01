@@ -4,6 +4,6 @@ summary: Build a CMake project
 needs:
   tools: [cmake]
 run:
-  cwd: /tmp/build
+  cwd: "${source.dir}"
   runs: |
     cmake --build build --parallel 1
