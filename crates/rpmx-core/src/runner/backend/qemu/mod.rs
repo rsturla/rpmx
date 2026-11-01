@@ -16,7 +16,7 @@ use disk::{
     unpack_kernel,
 };
 use guest::{generate_ssh_key, inject_network, inject_ssh};
-use ssh::{step_script, stream_tar_in, stream_tar_out};
+use ssh::{shell_quote, step_script, stream_tar_in, stream_tar_out};
 
 pub struct QemuBackend<'a> {
     pub root: &'a Path,
@@ -88,8 +88,8 @@ impl QemuSession {
             timeout: config.timeout,
         };
         session.wait_for_ssh()?;
-        session.copy_in(config.workspace, crate::guest::BUILD)?;
-        session.copy_in(config.stage, crate::guest::STAGE)?;
+        session.copy_in(config.workspace, crate::guest::BUILD, "workspace")?;
+        session.copy_in(config.stage, crate::guest::STAGE, "stage")?;
         Ok(Box::new(session))
     }
 
@@ -215,9 +215,10 @@ impl QemuSession {
         }
     }
 
-    fn copy_in(&self, source: &Path, destination: &str) -> Result<()> {
+    fn copy_in(&self, source: &Path, destination: &str, label: &str) -> Result<()> {
+        let destination = shell_quote(destination);
         let command = format!("mkdir -p {destination} && tar -C {destination} -xf -");
-        stream_tar_in(self.ssh_child(&[command.as_str()])?, source)
+        stream_tar_in(self.ssh_child(&[command.as_str()])?, source, label)
     }
 
     fn sync_path(&self, remote: &str, host: &Path) -> Result<()> {
@@ -236,7 +237,11 @@ impl QemuSession {
                 ),
             )
         })?;
-        let command = format!("tar -C {remote} -cf - .");
+        // Stage the stream in the destination directory and unpack only after
+        // the guest exits successfully, so a failed transfer cannot leave a
+        // partial tree behind. This trades memory for disk, not RAM.
+        let quoted = shell_quote(remote);
+        let command = format!("tar -C {quoted} -cf - .");
         stream_tar_out(self.ssh_child(&[command.as_str()])?, remote, host, archive)
     }
 }
@@ -310,7 +315,7 @@ mod tests {
 
         let quoted = shell_quote(&destination.display().to_string());
         let child = piped(&format!("mkdir -p {quoted} && tar -C {quoted} -xf -"));
-        stream_tar_in(child, &source).expect("stream copy-in");
+        stream_tar_in(child, &source, "workspace").expect("stream copy-in");
 
         let copied = std::fs::read(destination.join("nested/payload.bin")).expect("copied payload");
         assert_eq!(copied.len(), 1024 * 1024);
@@ -345,7 +350,7 @@ mod tests {
         std::fs::write(source.join("file.txt"), b"x").expect("payload");
 
         let child = piped("cat >/dev/null; echo boom >&2; exit 1");
-        let error = stream_tar_in(child, &source).expect_err("remote failure");
+        let error = stream_tar_in(child, &source, "workspace").expect_err("remote failure");
         assert!(error.message.contains("boom"), "{}", error.message);
     }
 
@@ -360,6 +365,78 @@ mod tests {
         let error = stream_tar_out(child, "remote", &host, archive).expect_err("remote failure");
         assert!(error.message.contains("boom"), "{}", error.message);
     }
+    #[test]
+    fn streamed_copy_in_drains_remote_stdout() {
+        let root = tempfile::tempdir().expect("work");
+        let source = root.path().join("source");
+        let destination = root.path().join("destination");
+        std::fs::create_dir_all(&source).expect("source dir");
+        std::fs::write(source.join("payload.bin"), vec![0x5a; 512 * 1024]).expect("payload");
+
+        // tee echoes the tar stream to stdout while tar extracts it. A buffered
+        // copy-in would fill the stdout pipe and deadlock; timeout bounds the
+        // test if that regression returns.
+        let child = piped(&format!(
+            "timeout 20 sh -c 'mkdir -p {}; p={}/pipe; mkfifo \"$p\"; tar -C {} -xf \"$p\" & tee \"$p\"; wait'",
+            destination.display(),
+            destination.display(),
+            destination.display()
+        ));
+        stream_tar_in(child, &source, "workspace").expect("stream copy-in");
+
+        assert_eq!(
+            std::fs::read(destination.join("payload.bin")).expect("copied payload"),
+            vec![0x5a; 512 * 1024]
+        );
+    }
+
+    #[test]
+    fn stderr_diagnostics_are_bounded() {
+        let root = tempfile::tempdir().expect("work");
+        let source = root.path().join("source");
+        std::fs::create_dir_all(&source).expect("source dir");
+        std::fs::write(source.join("file.txt"), b"x").expect("payload");
+
+        let child = piped(
+            "cat >/dev/null; i=0; while [ $i -lt 2000 ]; do printf '%050d\\n' $i >&2; i=$((i+1)); done; exit 1",
+        );
+        let error = stream_tar_in(child, &source, "workspace").expect_err("remote failure");
+        assert!(
+            error.message.len() < 70 * 1024,
+            "stderr diagnostics grew to {} bytes",
+            error.message.len()
+        );
+    }
+
+    #[test]
+    fn sync_out_reports_a_local_write_failure() {
+        let full = std::path::Path::new("/dev/full");
+        if !full.exists() {
+            eprintln!("/dev/full is not available; skipping local write failure test");
+            return;
+        }
+        let root = tempfile::tempdir().expect("work");
+        let host = root.path().join("host");
+        std::fs::create_dir_all(&host).expect("host dir");
+        let archive = std::fs::OpenOptions::new()
+            .write(true)
+            .open(full)
+            .expect("/dev/full");
+
+        let child = piped("head -c 1048576 /dev/zero");
+        let error = stream_tar_out(child, "remote", &host, archive).expect_err("full disk");
+        assert!(
+            error.message.contains("cannot read remote from qemu"),
+            "{}",
+            error.message
+        );
+        assert!(
+            error.message.to_lowercase().contains("space"),
+            "{}",
+            error.message
+        );
+    }
+
     #[test]
     fn failed_sync_out_does_not_modify_the_host() {
         let root = tempfile::tempdir().expect("work");
@@ -389,5 +466,23 @@ mod tests {
             std::fs::read(host.join("existing.txt")).expect("host file"),
             b"old"
         );
+    }
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn local_write_error_is_reported_with_remote_failure() {
+        let root = tempfile::tempdir().expect("work");
+        let child = piped("head -c 4096 /dev/zero; echo warning >&2; exit 1");
+        let archive = std::fs::OpenOptions::new()
+            .write(true)
+            .open("/dev/full")
+            .expect("/dev/full");
+        let error =
+            stream_tar_out(child, "remote", root.path(), archive).expect_err("write failure");
+        assert!(
+            error.message.contains("cannot read remote"),
+            "{}",
+            error.message
+        );
+        assert!(error.message.contains("warning"), "{}", error.message);
     }
 }
