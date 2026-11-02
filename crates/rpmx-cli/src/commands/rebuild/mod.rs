@@ -193,6 +193,12 @@ pub fn execute(request: RebuildRequest<'_>) -> Result<RebuildOutput, Error> {
         // A host dependency is satisfied by either root: the build root holds
         // native packages, the sysroot holds target ones.
         let mut available = locked_packages.clone();
+        // An automatic root was resolved from a profile that already included
+        // these dependencies, and resolution may have substituted a virtual
+        // provide (`zlib-devel` -> `zlib-ng-compat-devel`) that the lock
+        // records under the provider's name. Only an explicit root needs the
+        // names checked literally.
+        let trusted = !request.verify_root;
         if effective_sysroot.is_some() {
             if let Some(packages) = request.sysroot_packages {
                 available.extend(packages.iter().cloned());
@@ -210,6 +216,8 @@ pub fn execute(request: RebuildRequest<'_>) -> Result<RebuildOutput, Error> {
             // `zlib-ng-compat-devel`. Resolution already proved the declared
             // dependency exists; the link-closure check proves the library
             // does, which is the stronger claim.
+            available.extend(cell.host.iter().chain(cell.target.iter()).cloned());
+        } else if trusted {
             available.extend(cell.host.iter().chain(cell.target.iter()).cloned());
         }
         // A cross build installs test dependencies into a target test root
