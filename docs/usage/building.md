@@ -5,7 +5,9 @@
 ```console
 rpmx build                       # defaults to ./package.yaml
 rpmx build hello/package.yaml
-rpmx build --output /tmp/out
+rpmx build --output /tmp/out                 # /tmp/out/<arch>/
+rpmx build --arch x86_64,aarch64 --arch-jobs 2
+rpmx build --arch all --arch-jobs all
 rpmx build --jobs 32
 rpmx build --run-tests
 rpmx build --test installed --junit report.xml
@@ -15,6 +17,12 @@ rpmx build --offline
 rpmx build --no-index
 rpmx build --signing-key key.asc
 ```
+
+`--output ROOT` is an artifacts root; every architecture writes to
+`ROOT/<arch>/`, so the default is `packages/<arch>/`. `--arch-jobs` defaults to
+the number of architectures (capped by available parallelism) for bwrap/binfmt
+and to 1 for `--runner qemu`. `--jobs` is divided across the active
+architectures.
 
 `--stage DIR` packages a staged tree; it does not run source assembly, SRPM
 creation or builds. It verifies the lock when `--locked` is given.
@@ -31,24 +39,24 @@ Progress goes to stderr as leveled lines, with guest stdout labelled `INFO` and
 guest stderr labelled `WARN`:
 
 ```text
-INFO plan     hello 0.1.0-1.fc44 · x86_64
-INFO root     fedora-44-build · x86_64 · 209 packages · cache hit
-INFO          builder registry.fedoraproject.org/fedora:44
-INFO          repositories fedora, updates
-INFO source   x86_64 assembling RPMX-SOURCE.tar.gz
-INFO source   step [1/1] runs
-INFO source   x86_64 RPMX-SOURCE.tar.gz · 0.4s
-INFO srpm     hello-0.1.0-1.fc44.src.rpm · 0.2s
-INFO wrote    packages/x86_64/src/hello-0.1.0-1.fc44.src.rpm
-INFO build    x86_64 · 3 steps
-INFO build    step [1/3] runs
-INFO build    step [2/3] make
-INFO build    gcc -O2 -Wall -Wextra -Werror -o hello hello.c
-INFO build    step [3/3] strip
-INFO package  x86_64 · hello · 0.1s
-INFO wrote    packages/x86_64/hello-0.1.0-1.fc44.x86_64.rpm
-INFO index    1 package in packages/x86_64
-INFO done     4 artifacts in packages/x86_64 · 12.4s
+INFO plan     [x86_64] hello 0.1.0-1.fc44
+INFO root     [x86_64] fedora-44-build · 209 packages · cache hit
+INFO root     [x86_64] builder registry.fedoraproject.org/fedora:44
+INFO root     [x86_64] repositories fedora, updates
+INFO source   [x86_64] assembling RPMX-SOURCE.tar.gz
+INFO source   [x86_64] step [1/1] runs
+INFO source   [x86_64] RPMX-SOURCE.tar.gz · 0.4s
+INFO srpm     [x86_64] hello-0.1.0-1.fc44.src.rpm · 0.2s
+INFO wrote    [x86_64] packages/x86_64/src/hello-0.1.0-1.fc44.src.rpm
+INFO build    [x86_64] 3 steps
+INFO build    [x86_64] step [1/3] runs
+INFO build    [x86_64] step [2/3] make
+INFO [x86_64] gcc -O2 -Wall -Wextra -Werror -o hello hello.c
+INFO build    [x86_64] step [3/3] strip
+INFO package  [x86_64] hello · 0.1s
+INFO wrote    [x86_64] packages/x86_64/hello-0.1.0-1.fc44.x86_64.rpm
+INFO index    [x86_64] 1 package in packages/x86_64
+INFO done     [x86_64] 4 artifacts in packages/x86_64 · 12.4s
 ```
 
 Every line carries the stage it belongs to: step headers, guest output, and the

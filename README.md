@@ -272,7 +272,7 @@ sbom: true
 ./target/release/rpmx keygen --output key.asc
 ./target/release/rpmx build package.yaml --root-lock root.assembled.yaml \
   --root ./root --signing-key key.asc --output ./out
-./target/release/rpmx repo --rpms ./out --output ./repo --signing-key key.asc
+./target/release/rpmx repo --rpms ./out/x86_64 --output ./repo --signing-key key.asc
 ```
 
 `rpmx` does not sign automatically and does not hold keys.
@@ -300,7 +300,11 @@ Patches are a top-level list and are applied before source assembly.
 Every command distinguishes the **host architecture** (where `rpmx` runs) from
 the **target architecture** (the packages it produces). `--arch` defaults to
 the native architecture and drives templates, SRPM metadata, outputs and the
-repository.
+repository. On `rpmx build` it is repeatable or comma-separated:
+`--arch x86_64,aarch64`; `--arch all` expands to the profile's allowed arches
+(capped to x86_64/aarch64 for `--runner qemu`). `--arch-jobs N|all` controls
+how many architecture builds run at once. Each architecture writes to
+`<output>/<arch>/`, default `packages/<arch>/`.
 
 The runner is session-based. A runner creates an execution environment once;
 the session runs every step and is destroyed at the end:
@@ -385,6 +389,9 @@ explicit escape hatch.
   through qemu-user. `--runner qemu` is the explicit full-VM path and requires
   `qemu-system-<arch>` plus an assembled transport appliance. The build root
   itself is not bootable and does not need kernel or SSH packages.
+- Multi-arch `build` rejects `--locked`, `--stage`, `--root`, `--root-lock`,
+  `--test-root-lock`, `--junit` and `--sbom` until per-arch lock/evidence
+  aggregation lands. `--run-tests` and `--cell` work per architecture.
 - Repository snapshots, module streams and seccomp/cgroup enforcement are not
   implemented.
 - CPE is emitted in SBOMs, not in the RPM header.
