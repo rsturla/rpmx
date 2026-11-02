@@ -1,9 +1,12 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime};
 
 use rpmx_base::error::{codes, Error, Result};
 use rpmx_base::hash::{sha256_hex, sha512_hex};
+
+static TEMPORARY_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// The on-disk name for a content-addressed payload.
 pub fn path(cache: &Path, digest: &str) -> Result<PathBuf> {
@@ -45,20 +48,53 @@ pub fn store(cache: &Path, bytes: &[u8]) -> Result<String> {
             format!("cannot create {}: {error}", parent.display()),
         )
     })?;
-    let temporary = target.with_extension(format!("tmp.{}", std::process::id()));
-    std::fs::write(&temporary, bytes).map_err(|error| {
-        Error::new(
-            codes::ROOT_011,
-            format!("cannot write {}: {error}", temporary.display()),
-        )
-    })?;
+
+    let temporary = publish(bytes, &target)?;
     std::fs::rename(&temporary, &target).map_err(|error| {
+        let _ = std::fs::remove_file(&temporary);
         Error::new(
             codes::ROOT_011,
             format!("cannot publish {}: {error}", target.display()),
         )
     })?;
     Ok(digest)
+}
+
+/// Write `bytes` to a new, uniquely named temporary file next to `target`.
+///
+/// A process-wide counter and the PID make the name unique per publication, so
+/// two workers in one process can publish the same digest concurrently. The
+/// caller renames the result into place.
+fn publish(bytes: &[u8], target: &Path) -> Result<PathBuf> {
+    loop {
+        let nonce = TEMPORARY_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let temporary = target.with_extension(format!("tmp.{}.{}", std::process::id(), nonce));
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+        {
+            Ok(mut file) => {
+                use std::io::Write;
+                if let Err(error) = file.write_all(bytes) {
+                    drop(file);
+                    let _ = std::fs::remove_file(&temporary);
+                    return Err(Error::new(
+                        codes::ROOT_011,
+                        format!("cannot write {}: {error}", temporary.display()),
+                    ));
+                }
+                return Ok(temporary);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                return Err(Error::new(
+                    codes::ROOT_011,
+                    format!("cannot write {}: {error}", temporary.display()),
+                ));
+            }
+        }
+    }
 }
 
 /// Move an already-verified file into the CAS. The caller must have checked
@@ -217,6 +253,41 @@ mod tests {
             load(cache.path(), &digest).expect("load"),
             b"sha512 payload"
         );
+    }
+
+    #[test]
+    fn concurrent_publication_of_one_digest_is_safe() {
+        let bytes = b"same payload".to_vec();
+
+        // Repeat fresh rounds: a single round can accidentally serialize even
+        // with a barrier, and the old PID-only name fails only when the
+        // publishers overlap.
+        for _ in 0..16 {
+            let cache = tempfile::tempdir().expect("cache");
+            let barrier = std::sync::Arc::new(std::sync::Barrier::new(8));
+            let mut handles = Vec::new();
+            for _ in 0..8 {
+                let cache = cache.path().to_path_buf();
+                let bytes = bytes.clone();
+                let barrier = barrier.clone();
+                handles.push(std::thread::spawn(move || {
+                    barrier.wait();
+                    store(&cache, &bytes)
+                }));
+            }
+
+            let digests: Vec<String> = handles
+                .into_iter()
+                .map(|handle| handle.join().expect("thread").expect("store"))
+                .collect();
+            assert!(digests.windows(2).all(|pair| pair[0] == pair[1]));
+            assert_eq!(load(cache.path(), &digests[0]).expect("load"), bytes);
+
+            let entries: Vec<_> = std::fs::read_dir(cache.path().join("sha512"))
+                .expect("read cache")
+                .collect();
+            assert_eq!(entries.len(), 1, "a temporary file was left behind");
+        }
     }
 
     #[test]
