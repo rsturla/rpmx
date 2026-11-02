@@ -1,7 +1,7 @@
 //! Yarn classic and Berry `yarn.lock` cataloger.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use rpmx_base::error::{codes, Error, Result};
 use serde_json::Value;
@@ -33,7 +33,7 @@ impl Cataloger for YarnLock {
             let text = read_text(file)?;
             let evidence = context.relative(file);
             let mut entries = parse(&text, &evidence)?;
-            if let Some(production) = production_names(root)? {
+            if let Some(production) = production_descriptors(root)? {
                 let selected = reachable(&entries, &production);
                 entries = entries
                     .into_iter()
@@ -64,7 +64,8 @@ impl Cataloger for YarnLock {
 struct Entry {
     name: String,
     version: String,
-    dependencies: BTreeSet<String>,
+    descriptors: BTreeSet<String>,
+    dependencies: BTreeMap<String, String>,
 }
 
 fn installed(root: &Path) -> bool {
@@ -74,53 +75,99 @@ fn installed(root: &Path) -> bool {
         || root.join(".pnp.js").is_file()
 }
 
-fn production_names(root: &Path) -> Result<Option<BTreeSet<String>>> {
-    let manifest = root.join("package.json");
-    if !manifest.is_file() {
+fn production_descriptors(root: &Path) -> Result<Option<BTreeSet<String>>> {
+    let root_manifest = root.join("package.json");
+    if !root_manifest.is_file() {
         return Ok(None);
     }
-    let text = read_text(&manifest)?;
-    let value: Value = serde_json::from_str(&text).map_err(|error| {
-        Error::new(
-            codes::BUNDLED_001,
-            format!("invalid {}: {error}", manifest.display()),
-        )
-    })?;
-    let mut names = BTreeSet::new();
-    for key in ["dependencies", "optionalDependencies"] {
-        let Some(dependencies) = value.get(key).and_then(Value::as_object) else {
-            continue;
-        };
-        for (name, spec) in dependencies {
-            names.insert(name.clone());
-            if let Some(target) = spec.as_str().and_then(npm_alias_target) {
-                names.insert(target.to_string());
+    let text = read_text(&root_manifest)?;
+    let root_value: Value = match serde_json::from_str(&text) {
+        Ok(value) => value,
+        // A malformed manifest is not a reason to fail every cataloger.
+        Err(_) => return Ok(None),
+    };
+    let mut manifests = vec![(root_manifest, root_value.clone())];
+    if root_value.get("workspaces").is_some() {
+        let mut paths = Vec::new();
+        collect_workspace_manifests(root, root, 0, &mut paths)?;
+        for path in paths {
+            if let Ok(text) = read_text(&path) {
+                if let Ok(value) = serde_json::from_str(&text) {
+                    manifests.push((path, value));
+                }
             }
         }
     }
-    Ok(Some(names))
+    let mut descriptors = BTreeSet::new();
+    for (_, value) in manifests {
+        for key in ["dependencies", "optionalDependencies"] {
+            let Some(dependencies) = value.get(key).and_then(Value::as_object) else {
+                continue;
+            };
+            for (name, spec) in dependencies {
+                if let Some(spec) = spec.as_str() {
+                    descriptors.insert(format!("{name}@{spec}"));
+                }
+            }
+        }
+    }
+    Ok(Some(descriptors))
 }
 
-fn npm_alias_target(spec: &str) -> Option<&str> {
-    let target = spec.strip_prefix("npm:")?;
-    let start = usize::from(target.starts_with('@'));
-    let at = target[start..].find('@')? + start;
-    Some(&target[..at])
+fn collect_workspace_manifests(
+    root: &Path,
+    directory: &Path,
+    depth: u8,
+    manifests: &mut Vec<PathBuf>,
+) -> Result<()> {
+    if depth > 4 {
+        return Ok(());
+    }
+    let entries = match rpmx_base::io::sorted_entries(directory, codes::BUNDLED_003) {
+        Ok(entries) => entries,
+        Err(_) if directory != root => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    for entry in entries {
+        let path = entry.path();
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if matches!(
+            name.as_ref(),
+            ".git" | "node_modules" | "target" | ".yarn" | "vendor"
+        ) {
+            continue;
+        }
+        if !entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+            continue;
+        }
+        let manifest = path.join("package.json");
+        if depth > 0 && manifest.is_file() {
+            manifests.push(manifest);
+        }
+        collect_workspace_manifests(root, &path, depth + 1, manifests)?;
+    }
+    Ok(())
 }
 
 fn reachable(entries: &[Entry], production: &BTreeSet<String>) -> Vec<bool> {
-    let mut by_name: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
+    let mut by_descriptor: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
     for (index, entry) in entries.iter().enumerate() {
-        by_name.entry(entry.name.as_str()).or_default().push(index);
+        for descriptor in &entry.descriptors {
+            by_descriptor
+                .entry(descriptor.as_str())
+                .or_default()
+                .push(index);
+        }
     }
     let mut selected = vec![false; entries.len()];
     let mut pending = production.iter().cloned().collect::<BTreeSet<_>>();
     let mut seen = BTreeSet::new();
-    while let Some(name) = pending.pop_first() {
-        if !seen.insert(name.clone()) {
+    while let Some(descriptor) = pending.pop_first() {
+        if !seen.insert(descriptor.clone()) {
             continue;
         }
-        let Some(indexes) = by_name.get(name.as_str()) else {
+        let Some(indexes) = by_descriptor.get(descriptor.as_str()) else {
             continue;
         };
         for index in indexes {
@@ -128,7 +175,10 @@ fn reachable(entries: &[Entry], production: &BTreeSet<String>) -> Vec<bool> {
                 continue;
             }
             selected[*index] = true;
-            pending.extend(entries[*index].dependencies.iter().cloned());
+            for (name, range) in &entries[*index].dependencies {
+                pending.insert(format!("{name}@{range}"));
+                pending.insert(format!("{name}@npm:{range}"));
+            }
         }
     }
     selected
@@ -142,6 +192,9 @@ fn installed_component(root: &Path, component: &Component) -> bool {
             .join("package.json"),
         component,
     ) {
+        return true;
+    }
+    if alias_manifest_matches(&root.join("node_modules"), component) {
         return true;
     }
     if nested_manifest_matches(&root.join("node_modules"), component, 0) {
@@ -167,6 +220,35 @@ fn installed_component(root: &Path, component: &Component) -> bool {
             };
             hash.len() >= 6 && hash.chars().all(|ch| ch.is_ascii_hexdigit())
         })
+}
+
+fn alias_manifest_matches(node_modules: &Path, component: &Component) -> bool {
+    let Ok(entries) = std::fs::read_dir(node_modules) else {
+        return false;
+    };
+    for entry in entries.filter_map(std::result::Result::ok) {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name.starts_with('@') {
+            let Ok(scoped) = std::fs::read_dir(&path) else {
+                continue;
+            };
+            for package in scoped.filter_map(std::result::Result::ok) {
+                if package.path().is_dir()
+                    && manifest_matches(&package.path().join("package.json"), component)
+                {
+                    return true;
+                }
+            }
+        } else if manifest_matches(&path.join("package.json"), component) {
+            return true;
+        }
+    }
+    false
 }
 
 fn manifest_matches(path: &Path, component: &Component) -> bool {
@@ -195,9 +277,7 @@ fn nested_manifest_matches(directory: &Path, component: &Component, depth: u8) -
         if !path.is_dir() {
             continue;
         }
-        if entry.file_name() == "node_modules"
-            && manifest_matches(&path.join(&component.name).join("package.json"), component)
-        {
+        if entry.file_name() == "node_modules" && alias_manifest_matches(&path, component) {
             return true;
         }
         if nested_manifest_matches(&path, component, depth + 1) {
@@ -219,7 +299,7 @@ fn parse_classic(text: &str) -> Vec<Entry> {
     let mut entries = Vec::new();
     let mut selector: Option<String> = None;
     let mut version: Option<String> = None;
-    let mut dependencies = BTreeSet::new();
+    let mut dependencies = BTreeMap::new();
     let mut in_dependencies = false;
 
     for line in text.lines() {
@@ -242,9 +322,9 @@ fn parse_classic(text: &str) -> Vec<Entry> {
             };
             continue;
         }
-        let Some(current) = &selector else {
+        if selector.is_none() {
             continue;
-        };
+        }
         if let Some(value) = trimmed.strip_prefix("version ") {
             version = Some(value.trim().trim_matches('"').to_string());
             in_dependencies = false;
@@ -255,11 +335,13 @@ fn parse_classic(text: &str) -> Vec<Entry> {
             continue;
         }
         if in_dependencies {
-            if let Some((name, _)) = trimmed.split_once(' ') {
-                dependencies.insert(name.trim().trim_matches('"').to_string());
+            if let Some((name, range)) = trimmed.split_once(' ') {
+                dependencies.insert(
+                    name.trim().trim_matches('"').to_string(),
+                    range.trim().trim_matches('"').to_string(),
+                );
             }
         }
-        let _ = current;
     }
     finish_classic(&mut entries, &mut selector, &mut version, &mut dependencies);
     entries
@@ -269,7 +351,7 @@ fn finish_classic(
     entries: &mut Vec<Entry>,
     selector: &mut Option<String>,
     version: &mut Option<String>,
-    dependencies: &mut BTreeSet<String>,
+    dependencies: &mut BTreeMap<String, String>,
 ) {
     let Some(selector) = selector.take() else {
         version.take();
@@ -284,6 +366,10 @@ fn finish_classic(
         entries.push(Entry {
             name,
             version,
+            descriptors: selector
+                .split(',')
+                .map(|part| part.trim().trim_matches('"').to_string())
+                .collect(),
             dependencies: std::mem::take(dependencies),
         });
     } else {
@@ -337,31 +423,38 @@ fn parse_berry(text: &str, evidence: &str) -> Result<Vec<Entry>> {
         let Some(name) = resolution_name(resolution).or_else(|| selector_name(selector)) else {
             continue;
         };
+        let mut descriptors = BTreeSet::from([selector.to_string()]);
+        if let Some((name, range)) = selector.split_once("@npm:") {
+            if !range.is_empty() && !name.is_empty() {
+                descriptors.insert(format!("{name}@{range}"));
+            }
+        }
         result.push(Entry {
             name,
             version: version.to_string(),
+            descriptors,
             dependencies: berry_dependencies(entry),
         });
     }
     Ok(result)
 }
 
-fn berry_dependencies(entry: &serde_yaml_ng::Mapping) -> BTreeSet<String> {
-    let mut names = BTreeSet::new();
+fn berry_dependencies(entry: &serde_yaml_ng::Mapping) -> BTreeMap<String, String> {
+    let mut dependencies = BTreeMap::new();
     for key in ["dependencies", "optionalDependencies"] {
-        let Some(dependencies) = entry
+        let Some(values) = entry
             .get(serde_yaml_ng::Value::String(key.to_string()))
             .and_then(serde_yaml_ng::Value::as_mapping)
         else {
             continue;
         };
-        for (name, _) in dependencies {
-            if let Some(name) = name.as_str() {
-                names.insert(name.to_string());
+        for (name, range) in values {
+            if let (Some(name), Some(range)) = (name.as_str(), range.as_str()) {
+                dependencies.insert(name.to_string(), range.to_string());
             }
         }
     }
-    names
+    dependencies
 }
 
 fn classic_name(selector: &str) -> Option<String> {

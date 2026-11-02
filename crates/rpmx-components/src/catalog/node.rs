@@ -58,13 +58,121 @@ impl Cataloger for NodeInstalled {
             if governed_by_lock(directory, context.root()) {
                 continue;
             }
-            components.extend(parse_installed(
+            let mut installed = parse_installed(
                 directory,
                 &context.relative(directory),
                 context.auto_outputs(),
-            )?);
+            )?;
+            if let Some(production) = production_names_for_install(directory, context.root())? {
+                installed.retain(|component| production.contains(&component.name));
+            }
+            components.extend(installed);
         }
         Ok(components)
+    }
+}
+
+fn production_names_for_install(
+    node_modules: &Path,
+    root: &Path,
+) -> Result<Option<std::collections::BTreeSet<String>>> {
+    let manifest = root.join("package.json");
+    if !manifest.is_file() {
+        return Ok(None);
+    }
+    let text = read_text(&manifest)?;
+    let value: Value = match serde_json::from_str(&text) {
+        Ok(value) => value,
+        Err(_) => return Ok(None),
+    };
+    let mut pending = std::collections::BTreeSet::new();
+    for key in ["dependencies", "optionalDependencies"] {
+        let Some(dependencies) = value.get(key).and_then(Value::as_object) else {
+            continue;
+        };
+        for (name, spec) in dependencies {
+            pending.insert(name.clone());
+            if let Some(target) = spec.as_str().and_then(npm_alias_target) {
+                pending.insert(target.to_string());
+            }
+        }
+    }
+
+    let installed = installed_dependencies(node_modules)?;
+    let mut allowed = std::collections::BTreeSet::new();
+    while let Some(name) = pending.pop_first() {
+        if !allowed.insert(name.clone()) {
+            continue;
+        }
+        if let Some(dependencies) = installed.get(&name) {
+            pending.extend(dependencies.iter().cloned());
+        }
+    }
+    Ok(Some(allowed))
+}
+
+fn installed_dependencies(
+    node_modules: &Path,
+) -> Result<std::collections::BTreeMap<String, std::collections::BTreeSet<String>>> {
+    let mut result = std::collections::BTreeMap::new();
+    for entry in rpmx_base::io::sorted_entries(node_modules, codes::BUNDLED_003)? {
+        let path = entry.path();
+        if !entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+            continue;
+        }
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name.starts_with('@') {
+            for scoped in rpmx_base::io::sorted_entries(&path, codes::BUNDLED_003)? {
+                if scoped.file_type().is_ok_and(|kind| kind.is_dir()) {
+                    read_dependencies(&scoped.path(), &mut result)?;
+                }
+            }
+        } else if name != ".bin" {
+            read_dependencies(&path, &mut result)?;
+        }
+    }
+    Ok(result)
+}
+
+fn read_dependencies(
+    directory: &Path,
+    result: &mut std::collections::BTreeMap<String, std::collections::BTreeSet<String>>,
+) -> Result<()> {
+    let manifest = directory.join("package.json");
+    if !manifest.is_file() {
+        return Ok(());
+    }
+    let text = read_text(&manifest)?;
+    let value: Value = match serde_json::from_str(&text) {
+        Ok(value) => value,
+        Err(_) => return Ok(()),
+    };
+    let Some(name) = value.get("name").and_then(Value::as_str) else {
+        return Ok(());
+    };
+    let mut dependencies = std::collections::BTreeSet::new();
+    for key in ["dependencies", "optionalDependencies"] {
+        let Some(values) = value.get(key).and_then(Value::as_object) else {
+            continue;
+        };
+        for (dependency, spec) in values {
+            dependencies.insert(dependency.clone());
+            if let Some(target) = spec.as_str().and_then(npm_alias_target) {
+                dependencies.insert(target.to_string());
+            }
+        }
+    }
+    result.insert(name.to_string(), dependencies);
+    Ok(())
+}
+
+fn npm_alias_target(spec: &str) -> Option<&str> {
+    let target = spec.strip_prefix("npm:")?;
+    let start = usize::from(target.starts_with('@'));
+    match target[start..].find('@') {
+        Some(at) => Some(&target[..start + at]),
+        None => Some(target),
     }
 }
 

@@ -217,7 +217,7 @@ fn validate_bundled(output: &Output) -> Result<()> {
                 || version.chars().any(|ch| {
                     ch.is_whitespace()
                         || ch.is_control()
-                        || matches!(ch, '=' | '(' | ')' | '/' | ':' | '-')
+                        || matches!(ch, '=' | '(' | ')' | '/' | ':' | '-' | '[' | ']')
                 })
             {
                 return Err(Error::new(

@@ -565,7 +565,7 @@ packages:
 }
 
 #[test]
-fn yarn_classic_finds_nested_installed_versions() {
+fn yarn_classic_does_not_select_an_unreachable_nested_version() {
     let directory = tempdir().expect("tempdir");
     let root = directory.path();
     let plan = recipe(root);
@@ -598,7 +598,7 @@ fn yarn_classic_finds_nested_installed_versions() {
         "{provides:?}"
     );
     assert!(
-        provides.contains(&"bundled(nodejs-ms) = 0.7.3".to_string()),
+        !provides.contains(&"bundled(nodejs-ms) = 0.7.3".to_string()),
         "{provides:?}"
     );
 }
@@ -719,5 +719,184 @@ outputs:
             .any(|provide| provide.contains("python3dist(requests)")),
         "{:?}",
         inventory.provides_for(&plan.cells[0].outputs[0])
+    );
+}
+
+#[test]
+fn yarn_workspace_production_dependencies_are_found() {
+    let directory = tempdir().expect("tempdir");
+    let root = directory.path();
+    let plan = recipe(root);
+    let cells = plan.cells.iter().collect::<Vec<_>>();
+    write(
+        root,
+        "package.json",
+        r#"{"private":true,"workspaces":["packages/*"]}"#,
+    );
+    write(
+        root,
+        "packages/app/package.json",
+        r#"{"name":"app","dependencies":{"left-pad":"^1.0.0"}}"#,
+    );
+    write(
+        root,
+        "node_modules/left-pad/package.json",
+        r#"{"name":"left-pad","version":"1.3.0"}"#,
+    );
+    write(
+        root,
+        "yarn.lock",
+        "# yarn lockfile v1\n\nleft-pad@^1.0.0:\n  version \"1.3.0\"\n\n\"app@workspace:packages/app\":\n  version \"0.0.0-use.local\"\n",
+    );
+    let inventory = discover(root, &cells).expect("yarn workspace");
+    let provides = inventory.provides_for(&plan.cells[0].outputs[0]);
+    assert!(
+        provides.contains(&"bundled(nodejs-left-pad) = 1.3.0".to_string()),
+        "{provides:?}"
+    );
+    assert!(
+        !provides
+            .iter()
+            .any(|provide| provide.contains("nodejs-app")),
+        "{provides:?}"
+    );
+}
+
+#[test]
+fn yarn_classic_alias_resolves_the_installed_alias_directory() {
+    let directory = tempdir().expect("tempdir");
+    let root = directory.path();
+    let plan = recipe(root);
+    let cells = plan.cells.iter().collect::<Vec<_>>();
+    write(
+        root,
+        "package.json",
+        r#"{"dependencies":{"left-pad-alias":"npm:left-pad@^1.3.0"}}"#,
+    );
+    write(
+        root,
+        "node_modules/left-pad-alias/package.json",
+        r#"{"name":"left-pad","version":"1.3.0"}"#,
+    );
+    write(
+        root,
+        "yarn.lock",
+        "# yarn lockfile v1\n\n\"left-pad-alias@npm:left-pad@^1.3.0\":\n  version \"1.3.0\"\n",
+    );
+    let inventory = discover(root, &cells).expect("yarn alias");
+    let provides = inventory.provides_for(&plan.cells[0].outputs[0]);
+    assert!(
+        provides.contains(&"bundled(nodejs-left-pad) = 1.3.0".to_string()),
+        "{provides:?}"
+    );
+    assert!(
+        !provides
+            .iter()
+            .any(|provide| provide.contains("left-pad-alias")),
+        "{provides:?}"
+    );
+}
+
+#[test]
+fn pnpm_workspace_importers_seed_the_production_closure() {
+    let directory = tempdir().expect("tempdir");
+    let root = directory.path();
+    let plan = recipe(root);
+    let cells = plan.cells.iter().collect::<Vec<_>>();
+    write(
+        root,
+        "node_modules/left-pad/package.json",
+        r#"{"name":"left-pad","version":"1.3.0"}"#,
+    );
+    write(
+        root,
+        "pnpm-lock.yaml",
+        r#"lockfileVersion: '9.0'
+
+importers:
+  .: {}
+  packages/app:
+    dependencies:
+      left-pad:
+        specifier: ^1.0.0
+        version: 1.3.0
+
+packages:
+  left-pad@1.3.0:
+    resolution: {integrity: sha512-example}
+
+snapshots:
+  left-pad@1.3.0: {}
+"#,
+    );
+    let inventory = discover(root, &cells).expect("pnpm workspace");
+    let provides = inventory.provides_for(&plan.cells[0].outputs[0]);
+    assert!(
+        provides.contains(&"bundled(nodejs-left-pad) = 1.3.0".to_string()),
+        "{provides:?}"
+    );
+}
+
+#[test]
+fn yarn_does_not_select_a_dev_only_version_of_a_production_dependency() {
+    let directory = tempdir().expect("tempdir");
+    let root = directory.path();
+    let plan = recipe(root);
+    let cells = plan.cells.iter().collect::<Vec<_>>();
+    write(
+        root,
+        "package.json",
+        r#"{"dependencies":{"foo":"^1.0.0"},"devDependencies":{"foo":"^2.0.0"}}"#,
+    );
+    write(
+        root,
+        "node_modules/foo/package.json",
+        r#"{"name":"foo","version":"2.0.0"}"#,
+    );
+    write(
+        root,
+        "yarn.lock",
+        "# yarn lockfile v1\n\nfoo@^1.0.0:\n  version \"1.0.0\"\n\nfoo@^2.0.0:\n  version \"2.0.0\"\n",
+    );
+    let inventory = discover(root, &cells).expect("yarn");
+    let provides = inventory.provides_for(&plan.cells[0].outputs[0]);
+    assert!(
+        !provides
+            .iter()
+            .any(|provide| provide.contains("nodejs-foo")),
+        "{provides:?}"
+    );
+}
+
+#[test]
+fn installed_node_modules_without_a_lockfile_still_filters_dev_dependencies() {
+    let directory = tempdir().expect("tempdir");
+    let root = directory.path();
+    let plan = recipe(root);
+    let cells = plan.cells.iter().collect::<Vec<_>>();
+    write(
+        root,
+        "package.json",
+        r#"{"dependencies":{"left-pad":"^1.0.0"},"devDependencies":{"dev-only":"^1.0.0"}}"#,
+    );
+    write(
+        root,
+        "node_modules/left-pad/package.json",
+        r#"{"name":"left-pad","version":"1.3.0"}"#,
+    );
+    write(
+        root,
+        "node_modules/dev-only/package.json",
+        r#"{"name":"dev-only","version":"9.9.9"}"#,
+    );
+    let inventory = discover(root, &cells).expect("installed");
+    let provides = inventory.provides_for(&plan.cells[0].outputs[0]);
+    assert!(
+        provides.contains(&"bundled(nodejs-left-pad) = 1.3.0".to_string()),
+        "{provides:?}"
+    );
+    assert!(
+        !provides.iter().any(|provide| provide.contains("dev-only")),
+        "{provides:?}"
     );
 }

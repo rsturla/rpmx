@@ -10,7 +10,8 @@ does not promise a stable schema or CLI yet.
   `Cargo.lock` when a `vendor/` tree exists, and Node projects read
   `package-lock.json`, `yarn.lock` (classic and Berry) or `pnpm-lock.yaml`
   plus their installed tree/cache. Node catalogers follow the production
-  dependency closure and do not advertise dev-only packages. Python reads `.dist-info`/`.egg-info`
+  dependency closure, including workspace importers, and do not advertise
+  dev-only packages. Python reads `.dist-info`/`.egg-info`
   metadata and `vendored.txt`, Ruby reads `Gemfile.lock` and vendored
   gemspecs, and PHP reads `composer.lock` or `vendor/composer/installed.json`.
   Locks without a vendor tree or installed payload are warnings, not provides.

@@ -187,28 +187,36 @@ fn dependency_names(entry: &Value) -> BTreeSet<String> {
 }
 
 fn production_names(mapping: &serde_yaml_ng::Mapping) -> Option<BTreeSet<String>> {
-    let root = mapping
+    let importers = mapping
         .get(Value::String("importers".to_string()))
-        .and_then(Value::as_mapping)
-        .and_then(|importers| importers.get(Value::String(".".to_string())))
-        .and_then(Value::as_mapping)
-        .or_else(|| {
+        .and_then(Value::as_mapping);
+    let roots: Vec<&serde_yaml_ng::Mapping> = match importers {
+        // Every importer is a workspace (including "."). Their production
+        // dependencies are roots; their devDependencies are not.
+        Some(importers) => importers.values().filter_map(Value::as_mapping).collect(),
+        None => {
             mapping
                 .get(Value::String("dependencies".to_string()))
-                .and_then(Value::as_mapping)
-                .map(|_| mapping)
-        })?;
+                .and_then(Value::as_mapping)?;
+            vec![mapping]
+        }
+    };
+    if roots.is_empty() {
+        return Some(BTreeSet::new());
+    }
     let mut names = BTreeSet::new();
-    for key in ["dependencies", "optionalDependencies"] {
-        let Some(dependencies) = root
-            .get(Value::String(key.to_string()))
-            .and_then(Value::as_mapping)
-        else {
-            continue;
-        };
-        for (name, _) in dependencies {
-            if let Some(name) = name.as_str() {
-                names.insert(name.to_string());
+    for root in roots {
+        for key in ["dependencies", "optionalDependencies"] {
+            let Some(dependencies) = root
+                .get(Value::String(key.to_string()))
+                .and_then(Value::as_mapping)
+            else {
+                continue;
+            };
+            for (name, _) in dependencies {
+                if let Some(name) = name.as_str() {
+                    names.insert(name.to_string());
+                }
             }
         }
     }

@@ -217,9 +217,9 @@ the contributor document.
 A lockfile without its vendor tree is only a declaration, not evidence that the
 code is bundled, so it does not produce a provide. Node catalogers follow the
 production dependency closure; a lock entry that is only reachable from
-`devDependencies` is not reported. Yarn derives that closure from the root
-`package.json` and lock edges, pnpm from its importers and snapshots, and npm
-from its lockfile flags.
+`devDependencies` is not reported. Yarn derives that closure from the root and
+workspace `package.json` files and lock descriptors, pnpm from all importers
+and snapshots, and npm from its lockfile flags.
 
 Python and Ruby do not record development groups in the metadata we read.
 They rely on the installed/vendored tree, so a vendor tree that still contains
