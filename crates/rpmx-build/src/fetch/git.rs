@@ -21,24 +21,29 @@ pub(crate) fn git_archive(
             format!("git locator for '{}' has no commit", source.name),
         )
     })?;
-    let scratch = cache
-        .join("tmp")
-        .join(format!("git-{}-{}", std::process::id(), source.name));
-    if scratch.exists() {
-        std::fs::remove_dir_all(&scratch).ok();
-    }
-    std::fs::create_dir_all(&scratch).map_err(|error| {
+    let scratch_parent = cache.join("tmp");
+    std::fs::create_dir_all(&scratch_parent).map_err(|error| {
         Error::new(
             codes::FETCH_003,
-            format!("cannot create {}: {error}", scratch.display()),
+            format!("cannot create {}: {error}", scratch_parent.display()),
         )
     })?;
+    let scratch = tempfile::Builder::new()
+        .prefix(&format!("git-{}-", source.name))
+        .tempdir_in(&scratch_parent)
+        .map_err(|error| {
+            Error::new(
+                codes::FETCH_003,
+                format!("cannot create a git scratch directory: {error}"),
+            )
+        })?;
+    let scratch = scratch.path();
     let result = (|| {
-        run_git(&scratch, &["init", "-q"])?;
-        run_git(&scratch, &["remote", "add", "origin", url])?;
+        run_git(scratch, &["init", "-q"])?;
+        run_git(scratch, &["remote", "add", "origin", url])?;
         let fetch = std::process::Command::new("git")
             .arg("-C")
-            .arg(&scratch)
+            .arg(scratch)
             .args(["fetch", "-q", "--depth=1", "origin", commit])
             .output()
             .map_err(|error| Error::new(codes::FETCH_003, format!("cannot run git: {error}")))?;
@@ -46,10 +51,10 @@ pub(crate) fn git_archive(
             // Some servers refuse fetching an arbitrary commit; fetch the
             // configured ref (or the default ref) and check out the commit.
             let reference = locator.reference.as_deref().unwrap_or("HEAD");
-            run_git(&scratch, &["fetch", "-q", "--depth=1", "origin", reference])?;
+            run_git(scratch, &["fetch", "-q", "--depth=1", "origin", reference])?;
         }
-        run_git(&scratch, &["checkout", "-q", "--detach", commit])?;
-        let head = git_output(&scratch, &["rev-parse", "HEAD"])?;
+        run_git(scratch, &["checkout", "-q", "--detach", commit])?;
+        let head = git_output(scratch, &["rev-parse", "HEAD"])?;
         if head.trim() != commit {
             return Err(Error::new(
                 codes::FETCH_004,
@@ -61,9 +66,8 @@ pub(crate) fn git_archive(
                 ),
             ));
         }
-        build_git_tar(&scratch, &source.name, temp_dir)
+        build_git_tar(scratch, &source.name, temp_dir)
     })();
-    std::fs::remove_dir_all(&scratch).ok();
     result
 }
 

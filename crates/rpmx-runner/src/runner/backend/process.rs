@@ -36,8 +36,12 @@ pub(crate) fn spawn(
                 format!("cannot start {program} for '{label}': {error}"),
             )
         })?;
-    let stdout = child.stdout.take().map(|reader| pump(reader, false));
-    let stderr = child.stderr.take().map(|reader| pump(reader, true));
+    let arch = rpmx_base::output::current_arch();
+    let stdout = child
+        .stdout
+        .take()
+        .map(|reader| pump(reader, false, arch.clone()));
+    let stderr = child.stderr.take().map(|reader| pump(reader, true, arch));
     let status = child.wait().map_err(|error| {
         Error::new(
             codes::SANDBOX_001,
@@ -56,9 +60,14 @@ pub(crate) fn spawn(
     })
 }
 
-fn pump(mut reader: impl Read + Send + 'static, stderr: bool) -> Receiver<()> {
+fn pump(
+    mut reader: impl Read + Send + 'static,
+    stderr: bool,
+    arch: Option<String>,
+) -> Receiver<()> {
     let (done, finished) = mpsc::channel();
     std::thread::spawn(move || {
+        rpmx_base::output::set_arch(arch.as_deref());
         let mut sanitizer = Sanitizer::default();
         let mut clean = Vec::new();
         let mut chunk = [0u8; 8192];

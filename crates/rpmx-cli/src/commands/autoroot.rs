@@ -36,7 +36,6 @@ static APPLIANCE_TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 pub struct AutomaticRoot {
     pub lock: PathBuf,
     pub root: PathBuf,
-    pub appliance: Option<PathBuf>,
     pub document: RootLock,
     pub profile: String,
     pub packages: usize,
@@ -252,7 +251,6 @@ pub fn ensure(
     Ok(Some(AutomaticRoot {
         lock: lock_path,
         root: root_path,
-        appliance: None,
         document,
         profile: name,
         packages,
@@ -608,7 +606,6 @@ fn load_cached(
     Ok(Some(AutomaticRoot {
         lock: lock_path.to_path_buf(),
         root: path,
-        appliance: None,
         packages: count_packages(&document),
         profile: document.profile.clone(),
         document,

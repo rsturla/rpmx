@@ -18,6 +18,10 @@ pub const INTERNAL: u8 = 9;
 
 /// Return the process exit code for a diagnostic.
 pub fn code_for(code: Code) -> u8 {
+    if code == codes::CLI_001 {
+        // Invalid command-line value, such as --arch or --arch-jobs.
+        return RECIPE;
+    }
     if code == codes::BUILD_007 {
         // Installed-test setup or execution failed.
         return TEST;
@@ -79,6 +83,7 @@ mod tests {
 
     #[test]
     fn stage_specific_overrides_win_over_the_domain() {
+        assert_eq!(code_for(codes::CLI_001), 2);
         assert_eq!(code_for(codes::BUILD_007), 6);
         assert_eq!(code_for(codes::SRPM_011), 3);
         assert_eq!(code_for(codes::SRPM_012), 3);

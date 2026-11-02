@@ -9,9 +9,9 @@
 //! the single JSON document. Every crate reports through this module, which
 //! keeps levels, phase names and alignment in one place.
 
+use std::cell::RefCell;
 use std::io::IsTerminal;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
-use std::sync::Mutex;
 
 static LOGS_TO_STDERR: AtomicBool = AtomicBool::new(false);
 static KEEP_WORKDIR: AtomicBool = AtomicBool::new(false);
@@ -20,8 +20,12 @@ static JSON: AtomicBool = AtomicBool::new(false);
 static VERBOSE: AtomicBool = AtomicBool::new(false);
 /// 0 = auto, 1 = always, 2 = never.
 static COLOR: AtomicU8 = AtomicU8::new(0);
-/// The stage that step lines and guest output belong to, when one is active.
-static CURRENT_PHASE: Mutex<Option<&'static str>> = Mutex::new(None);
+thread_local! {
+    /// The stage that step lines and guest output belong to.
+    static CURRENT_PHASE: RefCell<Option<&'static str>> = const { RefCell::new(None) };
+    /// The target architecture for progress and guest lines.
+    static ARCH_SCOPE: RefCell<Option<String>> = const { RefCell::new(None) };
+}
 
 const RESET: &str = "\x1b[0m";
 const BOLD: &str = "\x1b[1m";
@@ -118,10 +122,7 @@ fn color_enabled() -> bool {
 /// Make `phase` the stage for step lines and guest output until the guard is
 /// dropped. Guards nest: dropping one restores the enclosing stage.
 pub fn enter_phase(phase: &'static str) -> PhaseGuard {
-    let previous = CURRENT_PHASE
-        .lock()
-        .ok()
-        .and_then(|mut slot| slot.replace(phase));
+    let previous = CURRENT_PHASE.with(|slot| slot.replace(Some(phase)));
     PhaseGuard { previous }
 }
 
@@ -131,27 +132,42 @@ pub struct PhaseGuard {
 
 impl Drop for PhaseGuard {
     fn drop(&mut self) {
-        if let Ok(mut slot) = CURRENT_PHASE.lock() {
-            *slot = self.previous;
-        }
+        CURRENT_PHASE.with(|slot| *slot.borrow_mut() = self.previous);
     }
 }
 
 /// The active stage, if a phase guard is held.
 pub fn current_phase() -> Option<&'static str> {
-    CURRENT_PHASE.lock().ok().and_then(|slot| *slot)
+    CURRENT_PHASE.with(|slot| *slot.borrow())
+}
+
+/// Set the architecture tag for this thread's progress and guest output.
+pub fn set_arch(arch: Option<&str>) {
+    ARCH_SCOPE.with(|slot| *slot.borrow_mut() = arch.map(str::to_string));
+}
+
+/// The architecture tag for this thread, if one is set.
+pub fn current_arch() -> Option<String> {
+    ARCH_SCOPE.with(|slot| slot.borrow().clone())
+}
+
+fn arch_tag() -> String {
+    current_arch()
+        .map(|arch| format!("[{arch}] "))
+        .unwrap_or_default()
 }
 
 fn write(level: Level, phase: &str, detail: impl std::fmt::Display) {
+    let arch = arch_tag();
     if color_enabled() {
         eprintln!(
-            "{}{}{} {BOLD}{phase:<8}{RESET} {detail}",
+            "{}{}{} {BOLD}{phase:<8}{RESET} {arch}{detail}",
             level.color(),
             level.tag(),
             RESET
         );
     } else {
-        eprintln!("{:<4} {phase:<8} {detail}", level.tag());
+        eprintln!("{:<4} {phase:<8} {arch}{detail}", level.tag());
     }
 }
 
@@ -166,7 +182,7 @@ pub fn phase(phase: &str, detail: impl std::fmt::Display) {
 /// Format one phase line without color or writing it, so the layout is
 /// testable.
 pub fn phase_line(phase: &str, detail: impl std::fmt::Display) -> String {
-    format!("{:<4} {phase:<8} {detail}", Level::Info.tag())
+    format!("{:<4} {phase:<8} {}{detail}", Level::Info.tag(), arch_tag())
 }
 
 /// Report something the user should look at but that does not fail the build.
@@ -229,6 +245,7 @@ pub fn count(n: usize, one: &str, many: &str) -> String {
 pub struct GuestWriter {
     level: Level,
     phase: Option<&'static str>,
+    arch: Option<String>,
     pending: Vec<u8>,
 }
 
@@ -240,6 +257,7 @@ impl GuestWriter {
         Self {
             level: if stderr { Level::Warn } else { Level::Info },
             phase: current_phase(),
+            arch: current_arch(),
             pending: Vec::new(),
         }
     }
@@ -251,6 +269,7 @@ impl GuestWriter {
             write_guest(
                 self.level,
                 self.phase.unwrap_or(""),
+                self.arch.as_deref(),
                 &line[..line.len().saturating_sub(1)],
             );
         }
@@ -262,12 +281,17 @@ impl GuestWriter {
     pub fn flush(&mut self) {
         if !self.pending.is_empty() {
             let line = std::mem::take(&mut self.pending);
-            write_guest(self.level, self.phase.unwrap_or(""), &line);
+            write_guest(
+                self.level,
+                self.phase.unwrap_or(""),
+                self.arch.as_deref(),
+                &line,
+            );
         }
     }
 }
 
-fn write_guest(level: Level, phase: &str, line: &[u8]) {
+fn write_guest(level: Level, phase: &str, arch: Option<&str>, line: &[u8]) {
     use std::io::Write;
     let mut stderr = std::io::stderr().lock();
     if color_enabled() {
@@ -281,6 +305,9 @@ fn write_guest(level: Level, phase: &str, line: &[u8]) {
         } else {
             let _ = write!(stderr, "{phase:<8} ");
         }
+    }
+    if let Some(arch) = arch {
+        let _ = write!(stderr, "[{arch}] ");
     }
     let _ = stderr.write_all(line);
     let _ = stderr.write_all(b"\n");

@@ -2,6 +2,7 @@ use std::io::Write;
 use std::num::NonZeroU64;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use crate::runner::{Runner, RunnerAssetKind, RunnerConfig, RunnerRequest, Session};
@@ -16,6 +17,8 @@ use disk::{
     command_exists, find_initrd, find_kernel, free_port, make_disk, qemu_binary, start_vm,
     unpack_kernel,
 };
+static QEMU_START_LOCK: Mutex<()> = Mutex::new(());
+
 use guest::{
     generate_ssh_key, inject_build_mount, inject_network, inject_ssh, known_hosts, APPLIANCE_LABEL,
     BUILD_LABEL, BUILD_ROOT_MOUNT,
@@ -101,6 +104,12 @@ impl QemuSession {
         inject_network(appliance, &appliance_disk, temp.path())?;
         inject_build_mount(&appliance_disk, temp.path())?;
 
+        // Port allocation is a probe-then-bind window. Serialize VM startup
+        // within this process so two architecture workers cannot choose the
+        // same forwarding port.
+        let _starting = QEMU_START_LOCK
+            .lock()
+            .map_err(|_| Error::new(codes::RUNNER_003, "qemu start lock is poisoned"))?;
         let control_port = free_port()?;
         let build_port = free_port()?;
         let known_hosts = known_hosts(

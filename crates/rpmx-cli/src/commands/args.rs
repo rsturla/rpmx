@@ -51,13 +51,16 @@ pub struct BuildArgs {
         ]
     )]
     pub stage: Option<PathBuf>,
-    /// Output directory for binary RPMs and build-level SBOMs
+    /// Artifacts root; each architecture writes to ROOT/<arch>
     /// (default: ./packages/<arch>).
     #[arg(long, visible_alias = "out-dir")]
     pub output: Option<PathBuf>,
-    /// Architecture for outputs that do not declare one.
-    #[arg(long, default_value = rpmx_core::arch::native_arch())]
-    pub arch: String,
+    /// Target architectures (repeatable or comma-separated; default: native).
+    #[arg(long, value_delimiter = ',')]
+    pub arch: Vec<String>,
+    /// Concurrent architecture builds: a number, or "all" (default: auto).
+    #[arg(long, value_name = "N|all")]
+    pub arch_jobs: Option<String>,
     /// Runner: auto, bwrap, podman or qemu.
     #[arg(long, default_value = "auto", value_parser = ["auto", "bwrap", "podman", "qemu"])]
     pub runner: String,

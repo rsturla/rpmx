@@ -14,6 +14,14 @@ pub enum Arch {
 }
 
 impl Arch {
+    pub const ALL: &'static [Self] = &[
+        Self::X86_64,
+        Self::Aarch64,
+        Self::Ppc64le,
+        Self::S390x,
+        Self::I686,
+    ];
+
     /// The architecture this process is running on.
     pub fn current() -> Result<Self> {
         Self::parse(std::env::consts::ARCH)
