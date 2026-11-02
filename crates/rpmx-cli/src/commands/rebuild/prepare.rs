@@ -169,6 +169,7 @@ pub(super) fn prepare(
             ));
         }
     }
+    let allow_appliance_resolve = requested_lock.is_some();
     let active_lock = requested_lock.or(embedded_lock);
     if let Some(lock) = &active_lock {
         crate::commands::autoroot::report_root(lock, &lock.profile, "from lock");
@@ -216,6 +217,7 @@ pub(super) fn prepare(
                     request.arch,
                     needs_appliance,
                     request.runner_asset_root,
+                    allow_appliance_resolve,
                 )?;
                 assembled_appliance = roots.appliance;
                 roots.root
@@ -229,6 +231,7 @@ pub(super) fn prepare(
                 runner_kind,
                 request.arch,
                 request.runner_asset_root,
+                allow_appliance_resolve,
             )?;
         }
         Some(path)

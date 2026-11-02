@@ -209,6 +209,5 @@ pub fn to_lock(
         closure_digest: closure,
         root_digest: None,
         builder: None,
-        runner_assets: None,
     })
 }

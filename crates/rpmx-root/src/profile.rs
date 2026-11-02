@@ -189,12 +189,6 @@ impl Profile {
                 "profile must declare at least one architecture",
             ));
         }
-        if self.archs.len() > 1 {
-            return Err(Error::new(
-                codes::ROOT_006,
-                "multi-architecture roots are not supported yet; declare one arch",
-            ));
-        }
         for arch in &self.archs {
             normalize_arch(arch)?;
         }
@@ -303,8 +297,40 @@ impl Profile {
     }
 
     pub fn arch(&self) -> &'static str {
-        // Validation guarantees exactly one entry and accepts it.
+        // A profile is derived for one target before it reaches the resolver.
+        debug_assert_eq!(self.archs.len(), 1, "resolve a profile for one target");
         normalize_arch(&self.archs[0]).expect("validated profile arch")
+    }
+
+    /// Derive the single-target profile used to resolve one root.
+    ///
+    /// `archs` is an allowed set. A profile may name several targets; a root is
+    /// always resolved for exactly one. A requested target outside the set is
+    /// an error, not a silent first-entry selection.
+    pub fn for_target(&self, arch: &str) -> Result<Profile> {
+        let target = normalize_arch(arch)?;
+        let mut profile = self.clone();
+        if profile.archs.is_empty() {
+            profile.archs = vec![target.to_string()];
+            return Ok(profile);
+        }
+        let allowed: Vec<&'static str> = profile
+            .archs
+            .iter()
+            .map(|arch| normalize_arch(arch))
+            .collect::<Result<_>>()?;
+        if !allowed.contains(&target) {
+            return Err(Error::new(
+                codes::ROOT_006,
+                format!(
+                    "profile '{}' allows {}, but the requested architecture is {target}",
+                    profile.name("profile"),
+                    allowed.join(", ")
+                ),
+            ));
+        }
+        profile.archs = vec![target.to_string()];
+        Ok(profile)
     }
 
     pub fn builder_image(&self) -> String {
@@ -521,6 +547,24 @@ packages:
     #[test]
     fn ordinary_repository_ids_are_accepted() {
         parse_profile(&profile("fedora-44_updates.1")).expect("valid id");
+    }
+
+    #[test]
+    fn a_profile_allows_several_targets_and_derives_one() {
+        let text = profile("base").replace("archs: [x86_64]", "archs: [x86_64, aarch64]");
+        let profile = parse_profile(&text).expect("valid profile");
+
+        let x86 = profile.for_target("amd64").expect("x86 target");
+        assert_eq!(x86.archs, vec!["x86_64".to_string()]);
+        let arm = profile.for_target("arm64").expect("arm target");
+        assert_eq!(arm.archs, vec!["aarch64".to_string()]);
+    }
+
+    #[test]
+    fn a_target_outside_the_profile_set_is_rejected() {
+        let profile = parse_profile(&profile("base")).expect("valid profile");
+        let error = profile.for_target("aarch64").expect_err("not allowed");
+        assert_eq!(error.code, codes::ROOT_006);
     }
 
     #[test]

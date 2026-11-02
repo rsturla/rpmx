@@ -71,8 +71,6 @@ pub fn run(args: TestArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
             args.offline,
             false,
             &args.arch,
-            args.runner.parse::<rpmx_core::runner::RunnerKind>()?,
-            args.runner_asset_root.as_deref(),
         )?
     } else {
         None
@@ -243,6 +241,7 @@ fn run_installed(
         runner,
         &args.arch,
         args.runner_asset_root.as_deref(),
+        true,
     )?;
     let source_date_epoch = 0;
     let timeout = NonZeroU64::new(3600).expect("timeout");

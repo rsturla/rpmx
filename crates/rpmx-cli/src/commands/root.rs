@@ -1,13 +1,11 @@
 use std::path::{Path, PathBuf};
 
-use rpmx_core::appliance;
 use rpmx_core::error::codes;
 use rpmx_core::pkgmanifest::{self, RpmPackageManifest};
 use rpmx_core::profile::load_profile;
 use rpmx_core::root::{
     assemble as assemble_root, load_lock, resolve_profile, write_lock, AssembleOptions, RootLock,
 };
-use rpmx_core::runner::RunnerKind;
 use rpmx_core::tree::{digest_root, tree_digest};
 use rpmx_core::Arch;
 
@@ -19,7 +17,21 @@ use crate::commands::{
 
 pub fn resolve(args: RootResolveArgs) -> Result<(), Error> {
     let output = args.output.as_deref();
-    let profile = load_profile(&args.profile)?;
+    let loaded = load_profile(&args.profile)?;
+    let requested = match args.arch.as_deref() {
+        Some(arch) => arch.to_string(),
+        None if loaded.archs.len() == 1 => Arch::parse(&loaded.archs[0])?.as_str().to_string(),
+        None => {
+            return Err(Error::new(
+                codes::ROOT_006,
+                format!(
+                    "profile allows {}; pass --arch to choose one",
+                    loaded.archs.join(", ")
+                ),
+            ))
+        }
+    };
+    let profile = loaded.for_target(&requested)?;
     let fallback = args
         .profile
         .file_stem()
@@ -28,28 +40,7 @@ pub fn resolve(args: RootResolveArgs) -> Result<(), Error> {
     let name = profile.name(fallback);
     let cache = cache_dir(args.cache.cache.as_deref())?;
     let (work, temporary) = scratch(args.work.as_deref())?;
-    let host = Arch::current()?;
-    let target = Arch::parse(profile.arch())?;
-    let needs_appliance = args
-        .appliance
-        .should_resolve(host, target, RunnerKind::Auto);
-
-    let result = resolve_profile(&profile, &name, &work, &cache).and_then(|mut lock| {
-        if needs_appliance {
-            let appliance_work = work.join("appliance");
-            std::fs::create_dir_all(&appliance_work).map_err(|error| {
-                Error::new(
-                    codes::ROOT_004,
-                    format!("cannot create {}: {error}", appliance_work.display()),
-                )
-            })?;
-            lock.set_qemu_appliance(Some(appliance::resolve(
-                &profile,
-                &name,
-                &appliance_work,
-                &cache,
-            )?));
-        }
+    let result = resolve_profile(&profile, &name, &work, &cache).and_then(|lock| {
         crate::commands::autoroot::report_root(&lock, &name, "resolved");
         emit_lock(&lock, output)?;
         if args.output.is_some() {
@@ -63,15 +54,6 @@ pub fn resolve(args: RootResolveArgs) -> Result<(), Error> {
                     package_count(&lock),
                     lock.closure_digest
                 );
-                if let Some(appliance) = lock.qemu_appliance() {
-                    println!(
-                        "appliance {} schema={} closure={} identity={}",
-                        appliance.profile,
-                        appliance.schema,
-                        appliance.closure_digest,
-                        appliance.identity()
-                    );
-                }
             }
         }
         Ok(())
@@ -113,35 +95,6 @@ pub fn assemble(args: RootAssembleArgs) -> Result<(), Error> {
         crate::commands::autoroot::report_root(&lock, &lock.profile, "assembled");
         let digest = digest_root(&root)?;
         lock.root_digest = Some(digest.clone());
-        let appliance_path = if !args.no_appliance {
-            match lock.qemu_appliance() {
-                Some(locked) => match args.runner_asset_root.as_deref() {
-                    Some(path) => {
-                        let path = absolute(path)?;
-                        let appliance_work = work.join("appliance");
-                        std::fs::create_dir_all(&appliance_work).map_err(|error| {
-                            Error::new(
-                                codes::ROOT_004,
-                                format!("cannot create {}: {error}", appliance_work.display()),
-                            )
-                        })?;
-                        appliance::assemble_root(
-                            locked,
-                            AssembleOptions {
-                                cache: &cache,
-                                work: &appliance_work,
-                                root: &path,
-                            },
-                        )?;
-                        Some(path)
-                    }
-                    None => Some(appliance::ensure_cached(locked, &cache, false)?),
-                },
-                None => None,
-            }
-        } else {
-            None
-        };
         emit_lock(&lock, output)?;
         if output.is_some() {
             if rpmx_core::output::json() {
@@ -155,9 +108,6 @@ pub fn assemble(args: RootAssembleArgs) -> Result<(), Error> {
                     root.display(),
                     digest
                 );
-                if let Some(path) = &appliance_path {
-                    println!("runner_asset_root={}", path.display());
-                }
             }
         }
         Ok(())

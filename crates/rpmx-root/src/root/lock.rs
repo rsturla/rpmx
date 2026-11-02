@@ -55,54 +55,6 @@ pub struct RootLock {
     pub root_digest: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub builder: Option<LockedBuilder>,
-    /// Runner-owned locked artifacts. This is where a backend that needs more
-    /// than the build root declares its assets.
-    #[serde(
-        default,
-        rename = "runner-assets",
-        alias = "appliance",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub runner_assets: Option<RunnerAssetsLock>,
-}
-
-/// The runner assets recorded in a root lock.
-///
-/// Only QEMU has an asset today. A future asset-bearing runner adds a field
-/// here and a descriptor in `rpmx-runner`; the build root and closure digest do
-/// not change.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RunnerAssetsLock {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub qemu_appliance: Option<ApplianceLock>,
-}
-
-impl RunnerAssetsLock {
-    pub fn validate(&self) -> Result<()> {
-        if let Some(appliance) = &self.qemu_appliance {
-            appliance.validate()?;
-        }
-        Ok(())
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.qemu_appliance.is_none()
-    }
-}
-
-impl RootLock {
-    pub fn qemu_appliance(&self) -> Option<&ApplianceLock> {
-        self.runner_assets
-            .as_ref()
-            .and_then(|assets| assets.qemu_appliance.as_ref())
-    }
-
-    pub fn set_qemu_appliance(&mut self, appliance: Option<ApplianceLock>) {
-        self.runner_assets = appliance.map(|appliance| RunnerAssetsLock {
-            qemu_appliance: Some(appliance),
-        });
-    }
 }
 
 impl RootLock {
@@ -283,33 +235,6 @@ pub(crate) fn safe_staging_component(value: &str) -> bool {
         && !value.chars().any(char::is_control)
 }
 
-fn sanitize_message(value: &str) -> String {
-    value
-        .chars()
-        .map(|character| {
-            if character.is_control() {
-                '?'
-            } else {
-                character
-            }
-        })
-        .collect()
-}
-
-fn validate_architecture_agreement(lock: &RootLock, appliance: &ApplianceLock) -> Result<()> {
-    let mut appliance_archs = appliance.archs.clone();
-    let mut build_archs = lock.archs.clone();
-    appliance_archs.sort();
-    build_archs.sort();
-    if appliance_archs != build_archs {
-        return Err(Error::new(
-            codes::ROOT_021,
-            "the QEMU appliance architecture does not match the build root architecture",
-        ));
-    }
-    Ok(())
-}
-
 fn valid_sha512_digest(value: &str) -> bool {
     value
         .strip_prefix("sha512:")
@@ -470,7 +395,6 @@ impl ApplianceLock {
             closure_digest: self.closure_digest.clone(),
             root_digest: None,
             builder: Some(self.builder.clone()),
-            runner_assets: None,
         }
     }
 }
@@ -531,57 +455,7 @@ pub fn load_lock(path: &Path) -> Result<RootLock> {
             format!("cannot read root lock {}: {error}", path.display()),
         )
     })?;
-    // Parse the appliance separately first so a malformed or unknown appliance
-    // field is reported as ROOT-021, not as a generic root-lock syntax error.
-    let mut document: serde_yaml_ng::Value = serde_yaml_ng::from_str(&text)
-        .map_err(|error| Error::new(codes::ROOT_006, format!("invalid root lock: {error}")))?;
-    if document.get("runner-assets").is_none() {
-        if let Some(appliance) = document.get("appliance").cloned() {
-            // Legacy locks stored the QEMU appliance directly. Normalise it
-            // into the generic runner-assets shape before deserialising.
-            if let serde_yaml_ng::Value::Mapping(mapping) = &mut document {
-                mapping.remove(serde_yaml_ng::Value::String("appliance".to_string()));
-                let mut assets = serde_yaml_ng::Mapping::new();
-                assets.insert(
-                    serde_yaml_ng::Value::String("qemu_appliance".to_string()),
-                    appliance,
-                );
-                mapping.insert(
-                    serde_yaml_ng::Value::String("runner-assets".to_string()),
-                    serde_yaml_ng::Value::Mapping(assets),
-                );
-            }
-        }
-    }
-    if let Some(assets) = document.get("runner-assets") {
-        let parsed: RunnerAssetsLock =
-            serde_yaml_ng::from_value(assets.clone()).map_err(|error| {
-                Error::new(
-                    codes::ROOT_021,
-                    format!(
-                        "invalid runner assets: {}",
-                        sanitize_message(&error.to_string())
-                    ),
-                )
-            })?;
-        parsed.validate()?;
-    } else if let Some(appliance) = document.get("appliance") {
-        // Legacy lock written before runner assets were generalized.
-        let parsed: ApplianceLock =
-            serde_yaml_ng::from_value(appliance.clone()).map_err(|error| {
-                Error::new(
-                    codes::ROOT_021,
-                    format!(
-                        "invalid QEMU appliance: {}",
-                        sanitize_message(&error.to_string())
-                    ),
-                )
-            })?;
-        parsed.validate()?;
-    }
-    let normalized = serde_yaml_ng::to_string(&document)
-        .map_err(|error| Error::new(codes::ROOT_006, format!("invalid root lock: {error}")))?;
-    let lock: RootLock = serde_yaml_ng::from_str(&normalized)
+    let lock: RootLock = serde_yaml_ng::from_str(&text)
         .map_err(|error| Error::new(codes::ROOT_006, format!("invalid root lock: {error}")))?;
     if lock.document != DOCUMENT {
         return Err(Error::new(
@@ -620,23 +494,11 @@ pub fn load_lock(path: &Path) -> Result<RootLock> {
             ),
         ));
     }
-    if let Some(assets) = &lock.runner_assets {
-        assets.validate()?;
-        if let Some(appliance) = &assets.qemu_appliance {
-            validate_architecture_agreement(&lock, appliance)?;
-        }
-    }
     Ok(lock)
 }
 
 pub fn write_lock(path: &Path, lock: &RootLock) -> Result<()> {
     validate_package_keys(&lock.packages, codes::ROOT_006)?;
-    if let Some(assets) = &lock.runner_assets {
-        assets.validate()?;
-        if let Some(appliance) = &assets.qemu_appliance {
-            validate_architecture_agreement(lock, appliance)?;
-        }
-    }
     let text = serde_yaml_ng::to_string(lock)
         .map_err(|error| Error::new(codes::ROOT_004, error.to_string()))?;
     std::fs::write(path, text).map_err(|error| {

@@ -16,7 +16,7 @@ impl Runner for BwrapBackend<'_> {
     }
 
     fn supports(&self, host: Arch, target: Arch) -> bool {
-        host == target
+        host == target || (self.root.is_some() && crate::runner::emulation_available(target))
     }
 
     fn start(&self, config: &RunnerConfig<'_>) -> Result<Box<dyn Session>> {

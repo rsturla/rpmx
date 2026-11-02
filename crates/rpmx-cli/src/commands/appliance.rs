@@ -7,13 +7,29 @@ use std::path::{Path, PathBuf};
 use rpmx_core::appliance;
 use rpmx_core::error::codes;
 use rpmx_core::profile::load_profile;
-use rpmx_core::root::{load_lock, ApplianceLock, AssembleOptions};
+use rpmx_core::root::{ApplianceLock, AssembleOptions};
 use rpmx_core::Error;
 
 use crate::commands::{ApplianceAssembleArgs, ApplianceInspectArgs, ApplianceResolveArgs};
 
 pub fn resolve(args: ApplianceResolveArgs) -> Result<(), Error> {
-    let profile = load_profile(&args.profile)?;
+    let loaded = load_profile(&args.profile)?;
+    let requested = match args.arch.as_deref() {
+        Some(arch) => arch.to_string(),
+        None if loaded.archs.len() == 1 => rpmx_core::Arch::parse(&loaded.archs[0])?
+            .as_str()
+            .to_string(),
+        None => {
+            return Err(Error::new(
+                codes::ROOT_006,
+                format!(
+                    "profile allows {}; pass --arch to choose one",
+                    loaded.archs.join(", ")
+                ),
+            ))
+        }
+    };
+    let profile = loaded.for_target(&requested)?;
     let cache = cache_dir(args.cache.cache.as_deref())?;
     let fallback = args
         .profile
@@ -98,53 +114,38 @@ pub fn assemble(args: ApplianceAssembleArgs) -> Result<(), Error> {
 }
 
 pub fn inspect(args: ApplianceInspectArgs) -> Result<(), Error> {
-    let lock = match (args.root_lock.as_deref(), args.asset_lock.as_deref()) {
-        (Some(path), None) => load_lock(path)?
-            .qemu_appliance()
-            .cloned()
-            .ok_or_else(|| Error::new(codes::ROOT_020, "the root lock has no QEMU appliance"))?,
-        (None, Some(path)) => {
-            let text = std::fs::read_to_string(path).map_err(|error| {
-                Error::new(
-                    codes::ROOT_004,
-                    format!("cannot read {}: {error}", path.display()),
-                )
-            })?;
-            let lock: ApplianceLock = serde_yaml_ng::from_str(&text).map_err(|error| {
-                Error::new(codes::ROOT_021, format!("invalid appliance lock: {error}"))
-            })?;
-            lock
-        }
-        _ => {
-            return Err(Error::new(
-                codes::ROOT_020,
-                "pass exactly one of --root-lock or --asset-lock",
-            ))
-        }
-    };
+    let text = std::fs::read_to_string(&args.asset_lock).map_err(|error| {
+        Error::new(
+            codes::ROOT_004,
+            format!("cannot read {}: {error}", args.asset_lock.display()),
+        )
+    })?;
+    let lock: ApplianceLock = serde_yaml_ng::from_str(&text)
+        .map_err(|error| Error::new(codes::ROOT_021, format!("invalid appliance lock: {error}")))?;
     lock.validate()?;
     let packages = count_packages(&lock);
     if rpmx_core::output::json() {
         println!(
             "{}",
             serde_json::json!({
-                "profile": lock.profile,
                 "schema": lock.schema,
-                "releasever": lock.releasever,
+                "profile": lock.profile,
                 "archs": lock.archs,
+                "releasever": lock.releasever,
                 "closure_digest": lock.closure_digest,
                 "identity": lock.identity(),
                 "packages": packages,
             })
         );
     } else {
-        println!("profile={}", lock.profile);
-        println!("schema={}", lock.schema);
-        println!("releasever={}", lock.releasever);
-        println!("archs={}", lock.archs.join(","));
-        println!("packages={packages}");
-        println!("closure_digest={}", lock.closure_digest);
-        println!("identity={}", lock.identity());
+        println!(
+            "{} {} {} packages closure={} identity={}",
+            lock.profile,
+            lock.archs.join(","),
+            packages,
+            lock.closure_digest,
+            lock.identity()
+        );
     }
     Ok(())
 }

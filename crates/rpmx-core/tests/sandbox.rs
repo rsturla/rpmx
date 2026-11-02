@@ -69,36 +69,36 @@ fn constructing_a_foreign_sandbox_does_not_start_a_runner() {
     };
     let work = tempfile::tempdir().expect("work");
     let stage = tempfile::tempdir().expect("stage");
+    let root = tempfile::tempdir().expect("root");
 
     Sandbox::new(SandboxConfig {
+        runner: RunnerKind::Qemu,
         target,
+        root: Some(root.path()),
         ..config(work.path(), stage.path())
     })
-    .expect("constructing a sandbox that runs no step must not check the runner");
+    .expect("constructing a sandbox that runs no step must not start the runner");
 }
 
 #[test]
-fn native_runners_reject_a_foreign_target() {
+fn foreign_bwrap_requires_binfmt() {
     let host = Arch::current().expect("host arch");
     let target = if host == Arch::X86_64 {
         Arch::Aarch64
     } else {
         Arch::X86_64
     };
-    let work = tempfile::tempdir().expect("work");
-    let stage = tempfile::tempdir().expect("stage");
-    let sandbox = Sandbox::new(SandboxConfig {
-        target,
-        ..config(work.path(), stage.path())
-    })
-    .expect("sandbox");
-    let error = match sandbox.run(&step("true", &[])) {
-        Ok(()) => panic!("bwrap cannot execute foreign architecture binaries"),
-        Err(error) => error,
-    };
-
-    assert_eq!(error.code, "RPMX-RUNNER-002");
-    assert!(error.message.contains("use a runner"));
+    let root = tempfile::tempdir().expect("root");
+    let result = RunnerKind::Bwrap.resolve(host, target, Some(root.path()), None);
+    if rpmx_core::runner::emulation_available(target) {
+        assert_eq!(result.expect("binfmt").name(), "bubblewrap");
+    } else {
+        let error = match result {
+            Ok(_) => panic!("bwrap cannot cross without binfmt"),
+            Err(error) => error,
+        };
+        assert_eq!(error.code, "RPMX-RUNNER-002");
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -453,18 +453,30 @@ fn runner_selection_is_centralized() {
     } else {
         Arch::X86_64
     };
-    assert_eq!(
-        RunnerKind::Auto
-            .resolve(host, foreign, Some(root), None)
-            .expect("foreign auto")
-            .name(),
-        "qemu-system"
-    );
-    let error = match RunnerKind::Bwrap.resolve(host, foreign, Some(root), None) {
-        Ok(_) => panic!("bwrap cannot cross"),
-        Err(error) => error,
-    };
-    assert_eq!(error.code, "RPMX-RUNNER-002");
+    if rpmx_core::runner::emulation_available(foreign) {
+        assert_eq!(
+            RunnerKind::Auto
+                .resolve(host, foreign, Some(root), None)
+                .expect("foreign auto")
+                .name(),
+            "bubblewrap"
+        );
+        assert_eq!(
+            RunnerKind::Bwrap
+                .resolve(host, foreign, Some(root), None)
+                .expect("foreign bwrap")
+                .name(),
+            "bubblewrap"
+        );
+    } else {
+        for kind in [RunnerKind::Auto, RunnerKind::Bwrap] {
+            let error = match kind.resolve(host, foreign, Some(root), None) {
+                Ok(_) => panic!("binfmt is required"),
+                Err(error) => error,
+            };
+            assert_eq!(error.code, "RPMX-RUNNER-002");
+        }
+    }
     let error = match RunnerKind::Qemu.resolve(host, foreign, None, None) {
         Ok(_) => panic!("qemu needs a root"),
         Err(error) => error,

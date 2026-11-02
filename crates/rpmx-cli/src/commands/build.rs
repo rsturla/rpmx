@@ -233,7 +233,6 @@ fn build_from_recipe(
         )?;
     }
     let automatic = if root_lock.is_none() && root.is_none() && !unsafe_host_root {
-        let runner_kind = runner.parse::<rpmx_core::runner::RunnerKind>()?;
         crate::commands::autoroot::ensure(
             &bundle.recipe,
             &plan,
@@ -243,8 +242,6 @@ fn build_from_recipe(
             offline,
             false,
             &arch,
-            runner_kind,
-            args.runner_asset_root.as_deref(),
         )?
     } else {
         None

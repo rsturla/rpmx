@@ -472,6 +472,9 @@ pub struct SrpmArgs {
 pub struct RootResolveArgs {
     /// Profile file.
     pub profile: PathBuf,
+    /// Target architecture (default: the profile's only arch).
+    #[arg(long)]
+    pub arch: Option<String>,
     /// Write the root lock here (default: standard output).
     #[arg(long, short)]
     pub output: Option<PathBuf>,
@@ -481,14 +484,6 @@ pub struct RootResolveArgs {
     /// Keep the resolver scratch directory.
     #[arg(long)]
     pub keep: bool,
-    /// Resolve the QEMU transport appliance with the root.
-    #[arg(
-        long,
-        value_name = "POLICY",
-        default_value = "always",
-        value_parser = parse_appliance_policy
-    )]
-    pub appliance: rpmx_core::appliance::Policy,
     #[command(flatten)]
     pub cache: CacheArgs,
 }
@@ -511,24 +506,15 @@ pub struct RootAssembleArgs {
     /// Keep the assembly scratch directory.
     #[arg(long)]
     pub keep: bool,
-    /// Assemble the QEMU appliance here (default: its content-addressed cache).
-    #[arg(long, visible_alias = "appliance-root", value_name = "DIR")]
-    pub runner_asset_root: Option<PathBuf>,
-    /// Assemble only the build root, not the QEMU appliance.
-    #[arg(long)]
-    pub no_appliance: bool,
-}
-
-fn parse_appliance_policy(value: &str) -> Result<rpmx_core::appliance::Policy, String> {
-    value
-        .parse::<rpmx_core::appliance::Policy>()
-        .map_err(|error| error.message)
 }
 
 #[derive(Debug, clap::Args)]
 pub struct ApplianceResolveArgs {
     /// Profile supplying repositories, releasever and the builder image.
     pub profile: PathBuf,
+    /// Target architecture (default: the profile's only arch).
+    #[arg(long)]
+    pub arch: Option<String>,
     /// Write the standalone appliance lock here (default: standard output).
     #[arg(long, short)]
     pub output: Option<PathBuf>,
@@ -558,12 +544,9 @@ pub struct ApplianceAssembleArgs {
 
 #[derive(Debug, clap::Args)]
 pub struct ApplianceInspectArgs {
-    /// Inspect the runner asset embedded in a root lock.
-    #[arg(long, conflicts_with = "asset_lock")]
-    pub root_lock: Option<PathBuf>,
-    /// Inspect a standalone runner asset lock.
-    #[arg(long, alias = "appliance-lock", conflicts_with = "root_lock")]
-    pub asset_lock: Option<PathBuf>,
+    /// Standalone runner asset lock.
+    #[arg(long, alias = "appliance-lock")]
+    pub asset_lock: PathBuf,
 }
 
 #[derive(Debug, clap::Args)]

@@ -57,7 +57,6 @@ fn lock() -> RootLock {
         closure_digest: digest,
         root_digest: None,
         builder: None,
-        runner_assets: None,
     }
 }
 
@@ -176,10 +175,15 @@ fn profile_rejects_two_repository_sources() {
 }
 
 #[test]
-fn profile_rejects_multiple_archs() {
+fn profile_accepts_multiple_archs_and_derives_a_target() {
     let text = MINIMAL_PROFILE.replace("archs: [x86_64]", "archs: [x86_64, aarch64]");
-    let error = parse_profile(&text).unwrap_err();
-    assert!(error.message.contains("multi-architecture"));
+    let profile = parse_profile(&text).expect("multi-arch profile");
+    assert_eq!(
+        profile.archs,
+        vec!["x86_64".to_string(), "aarch64".to_string()]
+    );
+    let target = profile.for_target("aarch64").expect("derived target");
+    assert_eq!(target.archs, vec!["aarch64".to_string()]);
 }
 
 #[test]

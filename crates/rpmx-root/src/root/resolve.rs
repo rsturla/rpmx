@@ -17,6 +17,16 @@ pub fn resolve_profile(
     work: &Path,
     cache: &Path,
 ) -> Result<RootLock> {
+    if profile.archs.len() != 1 {
+        return Err(Error::new(
+            codes::ROOT_006,
+            format!(
+                "resolve_profile needs one target architecture; profile '{}' allows {}",
+                profile_name,
+                profile.archs.join(", ")
+            ),
+        ));
+    }
     let arch = profile.arch();
     let image = profile.builder_image();
     let image_digest = image_digest_for_arch(&image, profile.arch())?;
@@ -126,7 +136,6 @@ pub fn resolve_profile(
             image,
             image_digest,
         }),
-        runner_assets: None,
     })
 }
 

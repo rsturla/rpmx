@@ -93,8 +93,6 @@ pub fn execute(request: SourceRequest<'_>) -> Result<PathBuf, Error> {
                 request.offline,
                 false,
                 request.arch,
-                request.runner.parse::<rpmx_core::runner::RunnerKind>()?,
-                request.runner_asset_root,
             )?
         } else {
             None

@@ -126,7 +126,10 @@ pub struct RunnerRequest<'a> {
 }
 
 /// Whether the host has an enabled qemu-user binfmt handler for `target`.
-/// Root assembly still uses this; build steps use the QEMU system runner.
+///
+/// The `F` flag is required: without it the kernel resolves the interpreter
+/// path in the exec'ing mount namespace, where a bubblewrap guest root is `/`
+/// and the host interpreter is absent.
 pub fn emulation_available(target: Arch) -> bool {
     let qemu = match target {
         Arch::I686 => "i386",
@@ -136,12 +139,20 @@ pub fn emulation_available(target: Arch) -> bool {
     let Ok(contents) = std::fs::read_to_string(path) else {
         return false;
     };
+    binfmt_record_usable(&contents)
+}
+
+fn binfmt_record_usable(contents: &str) -> bool {
     let enabled = contents.lines().any(|line| line.trim() == "enabled");
+    let has_f = contents
+        .lines()
+        .find_map(|line| line.strip_prefix("flags:"))
+        .is_some_and(|flags| flags.contains('F'));
     let interpreter = contents
         .lines()
         .find_map(|line| line.strip_prefix("interpreter "))
         .map(Path::new);
-    enabled && interpreter.is_some_and(Path::exists)
+    enabled && has_f && interpreter.is_some_and(Path::exists)
 }
 
 pub trait Session {
@@ -205,6 +216,37 @@ enum Selection<'a> {
     Podman(&'a str),
 }
 
+/// The bubblewrap decision. Native targets run directly. A foreign target
+/// needs an assembled root and a usable host binfmt handler.
+fn bwrap<'a>(
+    host: Arch,
+    target: Arch,
+    root: Option<&'a Path>,
+    emulation: bool,
+) -> Result<Selection<'a>> {
+    if host == target {
+        return Ok(Selection::Bwrap(root));
+    }
+    match root {
+        Some(root) if emulation => Ok(Selection::Bwrap(Some(root))),
+        Some(_) => Err(Error::new(
+            codes::RUNNER_002,
+            format!(
+                "bubblewrap cannot execute {target} on a {host} host: no enabled \
+                 F-flag qemu-user binfmt handler; install qemu-user-static or use \
+                 --runner qemu"
+            ),
+        )),
+        None => Err(Error::new(
+            codes::RUNNER_002,
+            format!(
+                "bubblewrap needs an assembled {target} root for a foreign target; \
+                 use --runner qemu or resolve a target root"
+            ),
+        )),
+    }
+}
+
 impl RunnerKind {
     fn choose<'a>(
         self,
@@ -212,6 +254,7 @@ impl RunnerKind {
         target: Arch,
         root: Option<&'a Path>,
         image: Option<&'a str>,
+        emulation: bool,
     ) -> Result<Selection<'a>> {
         match self {
             Self::Qemu => {
@@ -220,14 +263,7 @@ impl RunnerKind {
                 })?;
                 Ok(Selection::Qemu(root))
             }
-            Self::Bwrap => match root {
-                Some(_root) if host != target => Err(Error::new(
-                    codes::RUNNER_002,
-                    "bubblewrap cannot run a foreign target; use --runner qemu",
-                )),
-                Some(root) => Ok(Selection::Bwrap(Some(root))),
-                None => Ok(Selection::Bwrap(None)),
-            },
+            Self::Bwrap => bwrap(host, target, root, emulation),
             Self::Podman => match image {
                 Some(image) => Ok(Selection::Podman(image)),
                 None => Err(Error::new(
@@ -236,11 +272,14 @@ impl RunnerKind {
                 )),
             },
             Self::Auto => match root {
-                Some(root) if host == target => Ok(Selection::Bwrap(Some(root))),
-                Some(root) => Ok(Selection::Qemu(root)),
+                Some(root) => bwrap(host, target, Some(root), emulation),
                 None => match image {
-                    Some(image) => Ok(Selection::Podman(image)),
-                    None => Ok(Selection::Bwrap(None)),
+                    Some(image) if host == target => Ok(Selection::Podman(image)),
+                    Some(_) => Err(Error::new(
+                        codes::RUNNER_002,
+                        "a foreign builder image needs a target root or --runner qemu",
+                    )),
+                    None => bwrap(host, target, None, emulation),
                 },
             },
         }
@@ -256,7 +295,8 @@ impl RunnerKind {
         root: Option<&'a Path>,
         image: Option<&'a str>,
     ) -> Result<Box<dyn Runner + 'a>> {
-        Ok(match self.choose(host, target, root, image)? {
+        let emulation = host != target && emulation_available(target);
+        Ok(match self.choose(host, target, root, image, emulation)? {
             Selection::Bwrap(root) => Box::new(BwrapBackend { root }),
             Selection::Qemu(root) => Box::new(QemuBackend { root }),
             Selection::Podman(image) => Box::new(PodmanBackend { image }),
@@ -286,12 +326,7 @@ mod tests {
         image: Option<&'a str>,
     ) -> Result<Selection<'a>, rpmx_base::error::Error> {
         let host = Arch::X86_64;
-        let target = if kind == RunnerKind::Auto {
-            Arch::X86_64
-        } else {
-            host
-        };
-        kind.choose(host, target, root, image)
+        kind.choose(host, host, root, image, false)
     }
 
     #[test]
@@ -327,12 +362,21 @@ mod tests {
     }
 
     #[test]
-    fn foreign_auto_binds_the_root_inside_qemu() {
+    fn foreign_auto_uses_bubblewrap_with_binfmt() {
         let root = Path::new("/root");
         let selection = RunnerKind::Auto
-            .choose(Arch::X86_64, Arch::Aarch64, Some(root), None)
+            .choose(Arch::X86_64, Arch::Aarch64, Some(root), None, true)
             .expect("foreign auto");
-        assert!(matches!(selection, Selection::Qemu(path) if path == root));
+        assert!(matches!(selection, Selection::Bwrap(Some(path)) if path == root));
+    }
+
+    #[test]
+    fn foreign_auto_without_binfmt_is_an_error() {
+        let root = Path::new("/root");
+        let error = RunnerKind::Auto
+            .choose(Arch::X86_64, Arch::Aarch64, Some(root), None, false)
+            .expect_err("foreign auto needs binfmt");
+        assert_eq!(error.code, "RPMX-RUNNER-002");
     }
 
     #[test]
@@ -349,10 +393,54 @@ mod tests {
     }
 
     #[test]
-    fn bwrap_cannot_cross_build() {
+    fn foreign_bwrap_uses_the_target_root_with_binfmt() {
+        let root = Path::new("/root");
+        let selection = RunnerKind::Bwrap
+            .choose(Arch::X86_64, Arch::Aarch64, Some(root), None, true)
+            .expect("foreign bwrap");
+        assert!(matches!(selection, Selection::Bwrap(Some(path)) if path == root));
+    }
+
+    #[test]
+    fn foreign_bwrap_without_binfmt_is_an_error() {
         let error = RunnerKind::Bwrap
-            .choose(Arch::X86_64, Arch::Aarch64, Some(Path::new("/root")), None)
-            .expect_err("bwrap cannot cross");
+            .choose(
+                Arch::X86_64,
+                Arch::Aarch64,
+                Some(Path::new("/root")),
+                None,
+                false,
+            )
+            .expect_err("bwrap cannot cross without binfmt");
         assert_eq!(error.code, "RPMX-RUNNER-002");
+    }
+
+    #[test]
+    fn foreign_bwrap_without_a_root_is_an_error() {
+        let error = RunnerKind::Bwrap
+            .choose(Arch::X86_64, Arch::Aarch64, None, None, true)
+            .expect_err("bwrap needs a target root");
+        assert_eq!(error.code, "RPMX-RUNNER-002");
+    }
+
+    fn handler(flags: &str, enabled: bool) -> String {
+        format!(
+            "{}\ninterpreter /bin/sh\nflags: {flags}\n",
+            if enabled { "enabled" } else { "disabled" }
+        )
+    }
+
+    #[test]
+    fn binfmt_flags_need_the_f_character() {
+        assert!(super::binfmt_record_usable(&handler("F", true)));
+        assert!(super::binfmt_record_usable(&handler("POCF", true)));
+        assert!(!super::binfmt_record_usable(&handler("POC", true)));
+        assert!(!super::binfmt_record_usable(&handler("F", false)));
+    }
+
+    #[test]
+    fn binfmt_requires_an_existing_interpreter() {
+        let missing = "enabled\ninterpreter /definitely/not/here\nflags: F\n";
+        assert!(!super::binfmt_record_usable(missing));
     }
 }

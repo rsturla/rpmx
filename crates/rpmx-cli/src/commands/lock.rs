@@ -222,15 +222,7 @@ pub fn build(
     explicit_source_date_epoch: Option<u32>,
     active_root: Option<&rpmx_core::root::RootLock>,
 ) -> Result<PackageLock, Error> {
-    let needs_appliance = rpmx_core::Arch::parse(arch)? != rpmx_core::Arch::current()?;
-    let root = match autoroot::requirement(
-        &bundle.recipe,
-        plan,
-        &bundle.root,
-        profile,
-        arch,
-        needs_appliance,
-    )? {
+    let root = match autoroot::requirement(&bundle.recipe, plan, &bundle.root, profile, arch)? {
         Some(root) => {
             let resolved = active_root
                 .cloned()

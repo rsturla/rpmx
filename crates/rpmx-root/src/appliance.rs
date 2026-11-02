@@ -11,9 +11,10 @@
 use std::path::{Path, PathBuf};
 
 use crate::cache_lock::CacheLock;
-use crate::profile::{Packages, Profile, ResolveOptions, DOCUMENT, VERSION};
+use crate::profile::{Builder, Packages, Paths, Profile, ResolveOptions, DOCUMENT, VERSION};
 use crate::root::{
-    assemble, remove_tree, resolve_profile, ApplianceLock, AssembleOptions, APPLIANCE_SCHEMA,
+    assemble, remove_tree, resolve_profile, ApplianceLock, AssembleOptions, RootLock,
+    APPLIANCE_SCHEMA,
 };
 use rpmx_base::arch::Arch;
 use rpmx_base::error::{codes, Error, Result};
@@ -44,11 +45,13 @@ impl std::str::FromStr for Policy {
 }
 
 impl Policy {
-    pub fn should_resolve(self, host: Arch, target: Arch, runner: RunnerKind) -> bool {
+    pub fn should_resolve(self, _host: Arch, _target: Arch, runner: RunnerKind) -> bool {
         match self {
             Self::Always => true,
             Self::Never => false,
-            Self::Auto => runner == RunnerKind::Qemu || host != target,
+            // Only the VM needs transport. Bubblewrap reaches a foreign target
+            // through host binfmt and has no appliance.
+            Self::Auto => runner == RunnerKind::Qemu,
         }
     }
 }
@@ -103,6 +106,43 @@ pub fn profile_for(profile: &Profile, name: &str) -> Profile {
         debuginfo: false,
         sbom: false,
     }
+}
+
+/// Reconstruct the distribution inputs from a root lock.
+///
+/// A root produced by a binfmt build has no embedded appliance. A later
+/// `--runner qemu` rebuild resolves the appliance from this profile.
+pub fn profile_from_lock(lock: &RootLock) -> Result<Profile> {
+    let builder = lock.builder.as_ref().ok_or_else(|| {
+        Error::new(
+            codes::ROOT_021,
+            "the root lock has no builder image; cannot resolve a QEMU appliance",
+        )
+    })?;
+    Ok(Profile {
+        document: DOCUMENT.to_string(),
+        version: VERSION,
+        name: Some(format!("{}-qemu-appliance", lock.profile)),
+        releasever: lock.releasever.clone(),
+        dist_tag: lock.dist_tag.clone(),
+        archs: lock.archs.clone(),
+        builder: Builder {
+            image: Some(builder.image.clone()),
+        },
+        repositories: lock.repositories.clone(),
+        packages: Packages {
+            install: Vec::new(),
+            reinstall: Vec::new(),
+        },
+        modules: Default::default(),
+        options: lock.options.clone(),
+        paths: Paths {
+            prefix: lock.prefix.clone(),
+            libdir: lock.libdir.clone(),
+        },
+        debuginfo: false,
+        sbom: false,
+    })
 }
 
 /// Resolve the appliance closure for a build profile.
@@ -318,7 +358,8 @@ mod tests {
 
         assert!(Policy::Always.should_resolve(Arch::X86_64, Arch::X86_64, RunnerKind::Bwrap));
         assert!(!Policy::Never.should_resolve(Arch::X86_64, Arch::Aarch64, RunnerKind::Qemu));
-        assert!(Policy::Auto.should_resolve(Arch::X86_64, Arch::Aarch64, RunnerKind::Bwrap));
+        assert!(!Policy::Auto.should_resolve(Arch::X86_64, Arch::Aarch64, RunnerKind::Bwrap));
+        assert!(Policy::Auto.should_resolve(Arch::X86_64, Arch::Aarch64, RunnerKind::Qemu));
         assert!(Policy::Auto.should_resolve(Arch::X86_64, Arch::X86_64, RunnerKind::Qemu));
         assert!(!Policy::Auto.should_resolve(Arch::X86_64, Arch::X86_64, RunnerKind::Bwrap));
     }
@@ -424,50 +465,36 @@ mod tests {
     }
 
     #[test]
+    fn a_profile_is_reconstructed_from_a_root_lock() {
+        let lock = appliance().as_root_lock();
+        let profile = super::profile_from_lock(&lock).expect("profile");
+        assert_eq!(profile.releasever, lock.releasever);
+        assert_eq!(profile.archs, lock.archs);
+        assert_eq!(profile.paths.prefix, lock.prefix);
+        assert_eq!(profile.paths.libdir, lock.libdir);
+        assert_eq!(
+            profile.builder.image.as_deref(),
+            lock.builder.as_ref().map(|builder| builder.image.as_str())
+        );
+        assert_eq!(profile.repositories.len(), lock.repositories.len());
+    }
+
+    #[test]
+    fn a_root_lock_without_a_builder_cannot_supply_an_appliance_profile() {
+        let mut lock = appliance().as_root_lock();
+        lock.builder = None;
+        let error = super::profile_from_lock(&lock).expect_err("missing builder");
+        assert_eq!(error.code, "RPMX-ROOT-021");
+    }
+
+    #[test]
     fn a_root_lock_without_an_appliance_still_round_trips() {
         let lock = appliance().as_root_lock();
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("root.lock.yaml");
         write_lock(&path, &lock).expect("write");
         let loaded = load_lock(&path).expect("load");
-        assert!(loaded.qemu_appliance().is_none());
-    }
-
-    #[test]
-    fn a_root_lock_with_an_appliance_round_trips() {
-        let appliance = appliance();
-        let mut lock = appliance.as_root_lock();
-        lock.set_qemu_appliance(Some(appliance));
-        let dir = tempfile::tempdir().expect("tempdir");
-        let path = dir.path().join("root.lock.yaml");
-        write_lock(&path, &lock).expect("write");
-        let loaded = load_lock(&path).expect("load");
-        assert_eq!(
-            loaded.qemu_appliance().expect("appliance").closure_digest,
-            lock.qemu_appliance().expect("appliance").closure_digest
-        );
-    }
-
-    #[test]
-    fn a_tampered_appliance_in_a_root_lock_is_rejected_on_load() {
-        let appliance = appliance();
-        let mut lock = appliance.as_root_lock();
-        lock.set_qemu_appliance(Some(appliance));
-        lock.runner_assets
-            .as_mut()
-            .and_then(|assets| assets.qemu_appliance.as_mut())
-            .expect("appliance")
-            .packages
-            .get_mut("x86_64")
-            .expect("packages")
-            .clear();
-        let dir = tempfile::tempdir().expect("tempdir");
-        let path = dir.path().join("root.lock.yaml");
-        // Write directly: this test needs a document that write_lock would
-        // refuse, so it can exercise the load path.
-        std::fs::write(&path, serde_yaml_ng::to_string(&lock).expect("serialize")).expect("write");
-        let error = load_lock(&path).expect_err("tampered lock");
-        assert_eq!(error.code, "RPMX-ROOT-021");
+        assert_eq!(loaded.closure_digest, lock.closure_digest);
     }
 
     #[test]
@@ -538,57 +565,5 @@ mod tests {
         let error = lock.validate().expect_err("old schema");
         assert_eq!(error.code, "RPMX-ROOT-021");
         assert!(error.message.contains("schema"));
-    }
-
-    #[test]
-    fn an_unknown_appliance_field_is_root_021() {
-        let appliance = appliance();
-        let mut lock = appliance.as_root_lock();
-        lock.set_qemu_appliance(Some(appliance));
-        let text = serde_yaml_ng::to_string(&lock).expect("serialize");
-        let text = text.replace("runner-assets:\n", "runner-assets:\n  bogus: 1\n");
-        let dir = tempfile::tempdir().expect("tempdir");
-        let path = dir.path().join("root.lock.yaml");
-        std::fs::write(&path, text).expect("write");
-        let error = load_lock(&path).expect_err("unknown runner asset field");
-        assert_eq!(error.code, "RPMX-ROOT-021");
-        assert!(error.message.contains("invalid runner assets"));
-    }
-
-    #[test]
-    fn a_cross_architecture_appliance_is_root_021() {
-        let mut cross = appliance();
-        let entries = cross.packages.remove("x86_64").expect("x86_64 packages");
-        cross.archs = vec!["aarch64".to_string()];
-        cross.packages.insert("aarch64".to_string(), entries);
-        cross.closure_digest = closure_digest(
-            &cross.releasever,
-            &cross.archs,
-            &cross.repositories,
-            &cross.packages,
-        );
-
-        let mut lock = appliance().as_root_lock();
-        lock.set_qemu_appliance(Some(cross));
-        let dir = tempfile::tempdir().expect("tempdir");
-        let path = dir.path().join("root.lock.yaml");
-        // write_lock also rejects this, so write the raw document.
-        std::fs::write(&path, serde_yaml_ng::to_string(&lock).expect("serialize")).expect("write");
-        let error = load_lock(&path).expect_err("cross-architecture appliance");
-        assert_eq!(error.code, "RPMX-ROOT-021");
-        assert!(error.message.contains("architecture"));
-    }
-
-    #[test]
-    fn write_lock_rejects_an_invalid_appliance_before_writing() {
-        let mut appliance = appliance();
-        appliance.schema += 1;
-        let mut lock = appliance.as_root_lock();
-        lock.set_qemu_appliance(Some(appliance));
-        let dir = tempfile::tempdir().expect("tempdir");
-        let path = dir.path().join("root.lock.yaml");
-        let error = write_lock(&path, &lock).expect_err("invalid appliance");
-        assert_eq!(error.code, "RPMX-ROOT-021");
-        assert!(!path.exists(), "an invalid lock must not be written");
     }
 }
