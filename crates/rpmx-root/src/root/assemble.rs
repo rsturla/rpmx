@@ -106,6 +106,14 @@ pub fn assemble(lock: &RootLock, options: AssembleOptions<'_>) -> Result<std::pa
     // creates /lib64 as a real directory, which then makes filesystem's
     // usrmerge symlink fail. Seed the layout before the transaction.
     create_usrmerge_layout(options.root)?;
+    // The `filesystem` package makes `/` read-only, so the sysroot mount
+    // point has to exist before the transaction runs.
+    std::fs::create_dir_all(options.root.join("sysroot")).map_err(|error| {
+        Error::new(
+            codes::ROOT_012,
+            format!("cannot create the sysroot mount point: {error}"),
+        )
+    })?;
 
     let mut args = vec![
         "dnf".to_string(),
