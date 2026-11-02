@@ -149,6 +149,19 @@ pub fn execute(request: RebuildRequest<'_>) -> Result<RebuildOutput, Error> {
     } = state;
     let output = request.output.to_path_buf();
     let run_tests = request.run_tests;
+    if !run_tests && !cell.tests.is_empty() {
+        static WARNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        if !WARNED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+            rpmx_core::output::warning(
+                "test",
+                format!(
+                    "the recipe declares {} test(s) but none were run; use \
+                     --run-tests or `rpmx test`",
+                    cell.tests.len()
+                ),
+            );
+        }
+    }
     let sbom_path = request.sbom;
     let quiet = request.quiet;
     let json = rpmx_core::output::json();
@@ -180,8 +193,9 @@ pub fn execute(request: RebuildRequest<'_>) -> Result<RebuildOutput, Error> {
         rpmx_core::output::warning(
             "emulation",
             format!(
-                "executing {arch} steps through qemu-user; a profile with a cross \
-                 block builds them natively (see docs/usage/cross-compilation.md)"
+                "executing {arch} steps through qemu-user, roughly 15x slower; \
+                 a profile with a cross block builds them natively \
+                 (see docs/usage/cross-compilation.md)"
             ),
         );
     }

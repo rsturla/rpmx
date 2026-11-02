@@ -83,9 +83,19 @@ fn resolve_arches(args: &BuildArgs) -> Result<Vec<String>, Error> {
         // A profile that declares exactly one target is explicit about what
         // this recipe builds; a cross profile must not silently fall back to
         // the host architecture.
+        let native = rpmx_core::arch::native_arch();
         match profile_arches(args)? {
             Some(allowed) if allowed.len() == 1 => expanded.extend(allowed),
-            _ => expanded.push(rpmx_core::arch::native_arch().to_string()),
+            Some(allowed) if !allowed.iter().any(|arch| arch == native) => {
+                return Err(Error::new(
+                    codes::CLI_001,
+                    format!(
+                        "this profile builds {}; pass --arch to choose one",
+                        allowed.join(", ")
+                    ),
+                ));
+            }
+            _ => expanded.push(native.to_string()),
         }
     } else {
         for value in &args.arch {
