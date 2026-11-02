@@ -140,13 +140,14 @@ A profile with a `cross` block also exports:
   implemented; use `scriptlets` raw shell.
 - `update:` metadata and `rpmx update` are not implemented; `rpmx bump` handles
   manual version updates.
-- Installed tests for a cross build still use the build root's lock; they run
-  under binfmt against a target root, not the sysroot.
-- A cross rebuild from an existing SRPM needs the cross profile, because the
-  embedded lock does not yet carry the sysroot closure.
-- Cross-compilation is not implemented. Foreign targets use bubblewrap + host
-  binfmt by default; `--runner qemu` selects the full-VM path and needs an
-  assembled transport appliance. The build root is not bootable.
+- A cross build is driven by a cross profile and runs natively; see
+  [`cross-compilation.md`](cross-compilation.md). Emulated foreign targets use
+  bubblewrap + host binfmt by default; `--runner qemu` selects the full-VM path
+  and needs an assembled transport appliance. The build root is not bootable.
+- Installed tests for a cross build are not supported: the test root is
+  assembled from the build root's host-arch lock.
+- Cross rebuild from an existing SRPM is not supported yet, because the
+  embedded lock does not carry the sysroot closure.
 - `stage: package` tests, ABI tests and reproducibility tests are not
   implemented.
 - Rich dependencies are not implemented; weak dependencies are.

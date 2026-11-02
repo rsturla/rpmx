@@ -34,9 +34,11 @@ The three things to remember:
   image-backed rebuilds.
 - `dnf5` in the builder image used for root resolution.
 - `tar`, `findutils`, `binutils` and the usual build tools inside the root.
-- For foreign-architecture builds: `qemu-user-static` with an enabled
+- For emulated foreign-architecture builds: `qemu-user-static` with an enabled
   `F`-flag binfmt handler. The default bubblewrap runner uses it for build
-  steps, root assembly and test-root installation.
+  steps, root assembly and test-root installation. A cross build (a profile
+  with a `cross` block) needs none of this; see
+  [`cross-compilation.md`](cross-compilation.md).
 - For `--runner qemu`: `qemu-system-<arch>`, `ssh`, `ssh-keygen`, `mke2fs`,
   `debugfs` and `tar`. The appliance is resolved from the profile repositories;
   do not add kernel or SSH packages to the profile.

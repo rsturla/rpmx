@@ -79,7 +79,9 @@ pub mod codes {
         BUILD_006 = "RPMX-BUILD-006",
         /// Build-time test setup or execution failed (test root, stage, install, argv, or I/O).
         BUILD_007 = "RPMX-BUILD-007",
+        /// A staged ELF object does not match the package target architecture.
         BUILD_008 = "RPMX-BUILD-008",
+        /// A staged ELF object needs a library the target sysroot lacks.
         BUILD_009 = "RPMX-BUILD-009",
         /// Cache garbage collection was refused without references, or the cache cannot be read.
         CACHE_001 = "RPMX-CACHE-001",

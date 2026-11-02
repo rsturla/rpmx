@@ -146,9 +146,12 @@ build:
     CFLAGS: "-O2 -g"
 ```
 
-All scopes are installed into the same build root today. `tests` is used when
-building the installed-stage test root. `environment` is merged into every
-build step's environment; a step's own `env` wins.
+For a native build every scope is installed into the same root. In a cross
+build (a profile with a `cross` block) `tools` is installed in the host build
+root and `host`/`target` in the target sysroot; see
+[`cross-compilation.md`](cross-compilation.md). `tests` is used when building
+the installed-stage test root. `environment` is merged into every build step's
+environment; a step's own `env` wins.
 
 #### 5.3.1 Automatic dependencies
 

@@ -355,8 +355,9 @@ aarch64 with `qemu-system-aarch64` and TCG; native aarch64 CI uses KVM when
 available. `RPMX_QEMU_SYSTEM` overrides the qemu-system binary path.
 
 Root assembly and test-root installation use podman's `--arch` and the host
-binfmt handler. Build steps use binfmt when the target is foreign and bubblewrap
-or qemu is selected; they do not use podman.
+binfmt handler. Build steps use binfmt when the execution architecture is foreign and
+bubblewrap or qemu is selected; they do not use podman. A cross build executes
+natively, so it never touches binfmt.
 
 The sandbox passes `RPMX_HOST_ARCH`, `RPMX_EXEC_ARCH`, `RPMX_TARGET_ARCH`,
 `RPMX_CROSS` and `RPMX_EMULATED` to steps. A runner that cannot execute the
@@ -390,11 +391,14 @@ explicit escape hatch.
   implemented. File capabilities are.
 - `-debugsource`, build-id debug links and per-subpackage debuginfo are not
   implemented.
-- Cross-compilation is not implemented. Native and foreign builds use
-  bubblewrap; foreign builds require host binfmt and run target binaries
-  through qemu-user. `--runner qemu` is the explicit full-VM path and requires
-  `qemu-system-<arch>` plus an assembled transport appliance. The build root
-  itself is not bootable and does not need kernel or SSH packages.
+- A cross build is driven by a profile with a `cross` block; it uses a
+  host-native toolchain and a target sysroot, and needs no binfmt handler.
+  Emulated foreign builds still use bubblewrap + host binfmt; `--runner qemu`
+  is the explicit full-VM path and requires `qemu-system-<arch>` plus an
+  assembled transport appliance. The build root itself is not bootable and
+  does not need kernel or SSH packages.
+- Cross rebuild from an existing SRPM is not supported yet: the embedded lock
+  does not carry the sysroot closure.
 - Multi-arch `build` rejects `--locked`, `--stage`, `--root`, `--root-lock`,
   `--test-root-lock`, `--junit` and `--sbom` until per-arch lock/evidence
   aggregation lands. `--run-tests` and `--cell` work per architecture.

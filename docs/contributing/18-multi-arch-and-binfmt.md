@@ -29,7 +29,11 @@ SRPMs, reviewable locks and CLI behaviour are not compatibility targets.
 
 ## 2. Non-goals
 
-- Cross-compilation. Both foreign modes execute target binaries.
+- Cross-compilation in *this* plan. Both foreign modes execute target binaries.
+  Cross compilation landed separately on top of the exec/target split: a
+  profile with a `cross` block runs a host-native toolchain against a target
+  sysroot and never consults binfmt. See
+  [`../usage/cross-compilation.md`](../usage/cross-compilation.md).
 - Parallelising matrix *cells* within one architecture. The scheduler is
   generic so this can be added later, but it is out of scope.
 - Multi-arch `rpmx test`, `rpmx source`, `rpmx srpm`, `rpmx plan` and
@@ -314,7 +318,9 @@ the runner abstraction stays "how to create an execution environment", and
 bubblewrap remains the sandbox. This matches melange's model, where Linux
 `--runner bwrap` executes foreign steps through host binfmt.
 
-- `BwrapBackend::supports(host, target)` becomes:
+- `BwrapBackend::supports(host, exec)` becomes (the second argument is the
+  execution architecture; `target` never decides this, so a cross build runs
+  natively with no handler):
   - `host == target`; or
   - `host != target && root.is_some() && emulation_available(target)`.
 - `choose(Bwrap)` becomes:

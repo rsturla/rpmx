@@ -36,6 +36,8 @@ cross:
   toolchain. Steps run here.
 - `cross.sysroot_packages` appends target packages that the build needs but the
   runtime closure does not.
+- `cross.host` names the build-root architecture. It must be the machine rpmx
+  runs on; the default is the current host.
 - `cross.triple` overrides the GNU triple (default: the target's).
 - `cross.cflags`, `cross.cxxflags`, `cross.ldflags` add the distribution's own
   toolchain flags.
@@ -86,8 +88,10 @@ Two checks make a broken cross build fail instead of shipping:
 
 ## Limitations
 
-- Installed tests (`rpmx test`, `tests: stage: installed`) execute target
-  binaries, so they need binfmt or a real target. They do not use the sysroot.
+- `tests: stage: build` runs in the build sandbox and crosses like any step.
+  Installed-stage tests are not supported for a cross build: the test root is
+  assembled from the build root's host-arch lock. A cross rebuild from an
+  existing SRPM is unsupported for the same reason.
 - A cross build needs a profile. An inline `build.root` describes one closure
   and cannot name a second, host-architecture package set.
 - Recipe-specific target code generation, such as a configure script that runs

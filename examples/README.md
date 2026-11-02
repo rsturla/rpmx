@@ -2,8 +2,9 @@
 
 Design artifacts, not tested builds.
 
-The buildable examples name `../fedora-44-build.profile.yaml` in `build.root`, so they
-resolve their own build root without extra flags:
+Most buildable examples name `../fedora-44-build.profile.yaml` in
+`build.root`, so they resolve their own build root without extra flags. The
+cross example names `../fedora-44-cross.profile.yaml` instead:
 
 ```console
 rpmx build examples/jq/package.yaml
@@ -19,6 +20,7 @@ rpmx build examples/jq/package.yaml
 | [`libfoo/`](libfoo/) | Deterministic generated source in the source-assembly stage, included in the SRPM; generator/version recorded in the manifest. |
 | [`python-matrix/`](python-matrix/) | A matrix over Python 3.10–3.12: typed axis, per-cell build dependencies and outputs, one SRPM per cell, templated names. |
 | [`c-hello/`](c-hello/) | **Tested.** A generated C source built with the `make` step (gcc, `make check`, `make install`) and a staged symlink. |
+| [`c-hello-cross/`](c-hello-cross/) | **Tested.** Cross-compiles aarch64 on x86_64 with a native toolchain and a target sysroot; links zlib, and the checks reject a wrong-arch ELF or an unresolved soname. |
 | [`zstd/`](zstd/) | **Tested.** A real upstream package: three binary RPMs, shared-library and CLI symlinks, and a byte-identical rebuild. |
 | [`libgreet/`](libgreet/) | **Tested.** A shared library and devel subpackage with pkgconfig metadata and an installed test that compiles a consumer. |
 | [`zlib/`](zlib/) | **Tested.** Autotools library + devel split; installed test compiles against the packaged headers. |
