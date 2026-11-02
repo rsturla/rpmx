@@ -140,6 +140,10 @@ automatically:
    `root.lock.yaml`.
 5. Reuse the root on the next build.
 
+`--profile FILE` wins over a profile the recipe names in `build.root`, and its
+policy (dist tag) follows the same profile. An inline `build.root` cannot be
+combined with `--profile`; remove one.
+
 `--offline` never resolves or assembles; it fails with the missing digest.
 `--cache DIR` changes the CAS (roots live beside it).
 

@@ -150,7 +150,27 @@ pub fn requirement(
         .parent()
         .unwrap_or_else(|| std::path::Path::new("."));
     let mut profile = match (spec, selected_profile.as_deref()) {
-        (Some(spec), _) if spec.profile.is_some() => {
+        // An explicit --profile is the caller's last word over the recipe's
+        // named profile. Silently preferring the recipe would also mix its
+        // root with the flag's policy, which is worse than either.
+        (Some(spec), Some(path)) => {
+            if spec.profile.is_some() && has_inline_fields(spec) {
+                return Err(Error::new(
+                    codes::ROOT_006,
+                    "build.root must name a profile or describe one inline, not both",
+                )
+                .at("build.root"));
+            }
+            if has_inline_fields(spec) {
+                return Err(Error::new(
+                    codes::ROOT_006,
+                    "an inline build.root cannot be combined with --profile; remove one",
+                )
+                .at("build.root"));
+            }
+            load_profile(path)?
+        }
+        (Some(spec), None) if spec.profile.is_some() => {
             if has_inline_fields(spec) {
                 return Err(Error::new(
                     codes::ROOT_006,
@@ -163,7 +183,7 @@ pub fn requirement(
             reject_recipe_profile_credentials(&profile, &path)?;
             profile
         }
-        (Some(spec), _) => inline_profile(spec, arch)?,
+        (Some(spec), None) => inline_profile(spec, arch)?,
         (None, Some(path)) => load_profile(path)?,
         (None, None) => unreachable!("guarded above"),
     };
