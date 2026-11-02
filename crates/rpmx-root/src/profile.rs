@@ -424,8 +424,10 @@ impl Profile {
                 return Err(Error::new(
                     codes::ROOT_006,
                     format!(
-                        "cross target {host} equals the build-root architecture; \
-                         remove the cross block and build natively"
+                        "profile '{}' cross-builds for {}, so it cannot also build {host}; \
+                         use a native profile for {host}",
+                        self.name("profile"),
+                        self.archs.join(", ")
                     ),
                 ));
             }
@@ -907,7 +909,7 @@ cross:
         let error = profile.build_root_profile().expect_err("same architecture");
         assert_eq!(error.code, codes::ROOT_006);
         assert!(
-            error.message.contains("build natively"),
+            error.message.contains("cannot also build"),
             "{}",
             error.message
         );
