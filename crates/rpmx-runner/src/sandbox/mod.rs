@@ -321,7 +321,11 @@ fn base_env(sandbox: &Sandbox<'_>) -> Vec<(&'static str, String)> {
     environment(&sandbox.config)
 }
 
-fn environment(config: &SandboxConfig<'_>) -> Vec<(&'static str, String)> {
+/// The complete environment a step sees.
+///
+/// Public so a command that builds its own sandbox (`rpmx shell`) exposes the
+/// same variables instead of an approximation.
+pub fn environment(config: &SandboxConfig<'_>) -> Vec<(&'static str, String)> {
     let mut env = vec![
         ("PATH", SANDBOX_PATH.to_string()),
         ("HOME", rpmx_base::guest::BUILD.to_string()),

@@ -16,6 +16,9 @@ struct ShellRoot {
     root: PathBuf,
     sysroot: Option<PathBuf>,
     cross: Option<rpmx_core::guest::CrossToolchain>,
+    prefix: String,
+    libdir: String,
+    debuginfo: bool,
 }
 
 pub fn run(args: ShellArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
@@ -39,12 +42,18 @@ pub fn run(args: ShellArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
             root,
             sysroot: None,
             cross: None,
+            prefix: rpmx_core::guest::PREFIX.to_string(),
+            libdir: rpmx_core::guest::LIBDIR.to_string(),
+            debuginfo: false,
         },
         None => resolve_root(&args, &arch, pipeline_dir)?,
     };
     let root = shell_root.root;
     let sysroot = shell_root.sysroot;
     let cross = shell_root.cross;
+    let prefix = shell_root.prefix;
+    let libdir = shell_root.libdir;
+    let debuginfo = shell_root.debuginfo;
     let workspace = match args.workspace.clone() {
         Some(workspace) => workspace,
         None => std::env::current_dir().map_err(|error| {
@@ -115,38 +124,31 @@ pub fn run(args: ShellArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
     if let Some(path) = &sysroot_path {
         bwrap.args(["--ro-bind", path, rpmx_core::guest::SYSROOT]);
     }
-    let cross_env = match (&cross, &sysroot_path) {
-        (Some(toolchain), Some(_)) => rpmx_core::sandbox::cross_environment(
-            rpmx_core::Arch::current()?,
-            rpmx_core::Arch::parse(&arch)?,
-            rpmx_core::guest::PREFIX,
-            rpmx_core::guest::LIBDIR,
-            toolchain,
-        ),
-        _ => Vec::new(),
+    bwrap.args(["--chdir", rpmx_core::guest::BUILD]);
+    // The same environment a build step gets, not a hand-copied subset.
+    let config = rpmx_core::sandbox::SandboxConfig {
+        runner: rpmx_core::runner::RunnerKind::Auto,
+        host: rpmx_core::Arch::current()?,
+        exec: rpmx_core::Arch::parse(&arch)?,
+        target: rpmx_core::Arch::parse(&arch)?,
+        sysroot: sysroot.as_deref(),
+        cross: cross.as_ref(),
+        workspace: std::path::Path::new(&workspace),
+        stage: std::path::Path::new(&stage),
+        root: Some(std::path::Path::new(&root)),
+        assets: rpmx_core::runner::RunnerAssets::default(),
+        image: None,
+        prefix: &prefix,
+        libdir: &libdir,
+        source_date_epoch: 0,
+        jobs: crate::commands::default_jobs(),
+        timeout: std::num::NonZeroU64::new(3600).expect("timeout"),
+        debuginfo,
     };
-    for (key, value) in &cross_env {
-        bwrap.args(["--setenv", key, value]);
+    for (key, value) in rpmx_core::sandbox::environment(&config) {
+        bwrap.arg("--setenv").arg(key).arg(value);
     }
-    if !cross_env.is_empty() {
-        bwrap.args(["--setenv", "RPMX_CROSS", "1"]);
-        bwrap.args(["--setenv", "RPMX_TARGET_ARCH", &arch]);
-        bwrap.args(["--setenv", "RPMX_EMULATED", "0"]);
-    }
-    bwrap.args([
-        "--chdir",
-        rpmx_core::guest::BUILD,
-        "--setenv",
-        "PATH",
-        "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-        "--setenv",
-        "HOME",
-        rpmx_core::guest::BUILD,
-        "--setenv",
-        "STAGE",
-        rpmx_core::guest::STAGE,
-        "--",
-    ]);
+    bwrap.arg("--");
     match args.command.as_deref() {
         Some(command) => {
             bwrap.args(["sh", "-c", command]);
@@ -202,6 +204,9 @@ fn resolve_root(
         .map(|root| ShellRoot {
             sysroot: root.sysroot.as_ref().map(|sysroot| sysroot.root.clone()),
             cross: root.cross.clone(),
+            prefix: root.document.prefix.clone(),
+            libdir: root.document.libdir.clone(),
+            debuginfo: root.document.debuginfo,
             root: root.root,
         })
         .ok_or_else(|| {
