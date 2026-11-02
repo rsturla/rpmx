@@ -111,12 +111,31 @@ fn discard<R: Read>(payload: &mut R, bytes: usize) -> Result<()> {
 }
 
 fn extract_cpio<R: Read>(payload: &mut R, dest: &Path, total: u64) -> Result<Vec<String>> {
+    std::fs::create_dir_all(dest).map_err(|error| {
+        Error::new(
+            codes::EXTRACT_006,
+            format!("cannot create {}: {error}", dest.display()),
+        )
+    })?;
+    // Canonical once: containment checks compare against it, and a symlinked
+    // destination would otherwise make every check vacuously true.
+    let dest = std::fs::canonicalize(dest).map_err(|error| {
+        Error::new(
+            codes::EXTRACT_006,
+            format!("cannot resolve {}: {error}", dest.display()),
+        )
+    })?;
+
     let mut files = Vec::new();
     let mut chunk = [0u8; 64 * 1024];
     let mut offset = 0u64;
     // First path seen for each cpio inode, so hardlink entries can be linked
     // to it instead of materialising a second copy.
     let mut links: std::collections::BTreeMap<usize, std::path::PathBuf> =
+        std::collections::BTreeMap::new();
+    // Hardlink members whose data-bearing entry has not been seen yet. Real
+    // payloads do not always put it first.
+    let mut pending: std::collections::BTreeMap<usize, Vec<std::path::PathBuf>> =
         std::collections::BTreeMap::new();
 
     loop {
@@ -164,37 +183,43 @@ fn extract_cpio<R: Read>(payload: &mut R, dest: &Path, total: u64) -> Result<Vec
         if padded_end > total {
             return Err(Error::new(codes::EXTRACT_004, "truncated cpio data"));
         }
+        let padding = (4 - (file_size % 4)) % 4;
 
         let relative = name.trim_start_matches("./").trim_start_matches('/');
         if relative.is_empty() {
-            // The archive root itself ("./"): nothing to create.
-            discard(payload, file_size)?;
-            discard(payload, (4 - (file_size % 4)) % 4)?;
+            // The archive root itself ("./").
+            skip_data(payload, file_size as u64)?;
+            discard(payload, padding)?;
             offset = padded_end;
             continue;
         }
-        if relative.split('/').any(|part| part == "..") {
+        if relative
+            .split('/')
+            .any(|part| part.is_empty() || part == "." || part == "..")
+        {
             return Err(Error::new(
                 codes::EXTRACT_005,
                 format!("unsafe path in payload: '{name}'"),
             ));
         }
-        let target = dest.join(relative);
-        if let Some(parent) = target.parent() {
-            std::fs::create_dir_all(parent).map_err(|error| {
-                Error::new(
-                    codes::EXTRACT_006,
-                    format!("cannot create {}: {error}", parent.display()),
-                )
-            })?;
-        }
+        let path = Path::new(relative);
+        let Some(file_name) = path.file_name() else {
+            return Err(Error::new(
+                codes::EXTRACT_005,
+                format!("unsafe path in payload: '{name}'"),
+            ));
+        };
+        // Ancestor components are resolved one at a time. A symlink is only
+        // followed when it resolves inside the destination, so an archive can
+        // create an escaping link but can never write through it.
+        let parent = resolve_parent(&dest, path.parent().unwrap_or_else(|| Path::new("")))?;
+        let target = parent.join(file_name);
 
-        let padding = (4 - (file_size % 4)) % 4;
         match mode & 0o170000 {
             0o040000 => {
-                // Directory entry: no data, just the mode.
-                discard(payload, file_size)?;
+                skip_data(payload, file_size as u64)?;
                 discard(payload, padding)?;
+                remove_existing(&target)?;
                 std::fs::create_dir_all(&target).map_err(|error| {
                     Error::new(
                         codes::EXTRACT_006,
@@ -207,17 +232,14 @@ fn extract_cpio<R: Read>(payload: &mut R, dest: &Path, total: u64) -> Result<Vec
                 set_mode(&target, mode | 0o200)?;
             }
             0o120000 => {
-                // Symlink entry: the data is the link target.
                 let link = read_data(payload, file_size)?;
                 discard(payload, padding)?;
                 let link = String::from_utf8(link)
                     .map_err(|_| Error::new(codes::EXTRACT_005, "symlink target is not UTF-8"))?;
-                if link.is_empty()
-                    || std::path::Path::new(&link).is_absolute() && link.contains("..")
-                {
+                if link.is_empty() {
                     return Err(Error::new(
                         codes::EXTRACT_005,
-                        format!("unsafe symlink target in payload: '{link}'"),
+                        format!("empty symlink target for '{relative}'"),
                     ));
                 }
                 remove_existing(&target)?;
@@ -230,19 +252,22 @@ fn extract_cpio<R: Read>(payload: &mut R, dest: &Path, total: u64) -> Result<Vec
             }
             0o100000 | 0 => {
                 if links_count > 1 && file_size == 0 {
-                    if let Some(first) = links.get(&inode) {
-                        discard(payload, padding)?;
-                        remove_existing(&target)?;
-                        std::fs::hard_link(first, &target).map_err(|error| {
-                            Error::new(
-                                codes::EXTRACT_006,
-                                format!("cannot hardlink {}: {error}", target.display()),
-                            )
-                        })?;
-                        files.push(relative.to_string());
-                        offset = padded_end;
-                        continue;
+                    discard(payload, padding)?;
+                    match links.get(&inode) {
+                        Some(first) => {
+                            remove_existing(&target)?;
+                            std::fs::hard_link(first, &target).map_err(|error| {
+                                Error::new(
+                                    codes::EXTRACT_006,
+                                    format!("cannot hardlink {}: {error}", target.display()),
+                                )
+                            })?;
+                        }
+                        None => pending.entry(inode).or_default().push(target.clone()),
                     }
+                    files.push(relative.to_string());
+                    offset = padded_end;
+                    continue;
                 }
                 let staged = staged_path(&target);
                 if let Err(error) = write_entry(payload, &staged, file_size as u64, &mut chunk) {
@@ -263,12 +288,23 @@ fn extract_cpio<R: Read>(payload: &mut R, dest: &Path, total: u64) -> Result<Vec
                 })?;
                 set_mode(&target, mode)?;
                 if links_count > 1 {
+                    if let Some(waiting) = pending.remove(&inode) {
+                        for path in waiting {
+                            remove_existing(&path)?;
+                            std::fs::hard_link(&target, &path).map_err(|error| {
+                                Error::new(
+                                    codes::EXTRACT_006,
+                                    format!("cannot hardlink {}: {error}", path.display()),
+                                )
+                            })?;
+                        }
+                    }
                     links.insert(inode, target);
                 }
             }
             _ => {
                 // Devices, fifos and sockets carry no data a sysroot can use.
-                discard(payload, file_size)?;
+                skip_data(payload, file_size as u64)?;
                 discard(payload, padding)?;
             }
         }
@@ -276,7 +312,90 @@ fn extract_cpio<R: Read>(payload: &mut R, dest: &Path, total: u64) -> Result<Vec
         offset = padded_end;
     }
 
+    if let Some((_, waiting)) = pending.into_iter().next() {
+        return Err(Error::new(
+            codes::EXTRACT_004,
+            format!("hardlink group has no data entry: {}", waiting[0].display()),
+        ));
+    }
+
     Ok(files)
+}
+
+/// Resolve a relative parent path under `dest`, refusing to leave it.
+///
+/// A symlink component is followed only when it resolves inside `dest`; a
+/// legitimate usrmerge link such as `lib -> usr/lib` keeps working, and an
+/// `escape -> /home/user` link becomes unusable instead of a write primitive.
+fn resolve_parent(dest: &Path, relative: &Path) -> Result<std::path::PathBuf> {
+    let mut current = dest.to_path_buf();
+    for component in relative.components() {
+        let std::path::Component::Normal(name) = component else {
+            return Err(Error::new(
+                codes::EXTRACT_005,
+                format!("unsafe path in payload: '{}'", relative.display()),
+            ));
+        };
+        let next = current.join(name);
+        match std::fs::symlink_metadata(&next) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                let resolved = std::fs::canonicalize(&next).map_err(|error| {
+                    Error::new(
+                        codes::EXTRACT_005,
+                        format!("cannot resolve symlink {}: {error}", next.display()),
+                    )
+                })?;
+                if !resolved.starts_with(dest) {
+                    return Err(Error::new(
+                        codes::EXTRACT_005,
+                        format!(
+                            "payload entry '{}' escapes the destination through a symlink",
+                            relative.display()
+                        ),
+                    ));
+                }
+                current = resolved;
+            }
+            Ok(metadata) if metadata.is_dir() => current = next,
+            Ok(_) => {
+                return Err(Error::new(
+                    codes::EXTRACT_005,
+                    format!("'{next}' is not a directory", next = next.display()),
+                ));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                std::fs::create_dir(&next).map_err(|error| {
+                    Error::new(
+                        codes::EXTRACT_006,
+                        format!("cannot create {}: {error}", next.display()),
+                    )
+                })?;
+                current = next;
+            }
+            Err(error) => {
+                return Err(Error::new(
+                    codes::EXTRACT_006,
+                    format!("cannot inspect {}: {error}", next.display()),
+                ));
+            }
+        }
+    }
+    Ok(current)
+}
+
+fn skip_data<R: Read>(payload: &mut R, mut bytes: u64) -> Result<()> {
+    let mut buffer = [0u8; 8192];
+    while bytes > 0 {
+        let wanted = bytes.min(buffer.len() as u64) as usize;
+        payload.read_exact(&mut buffer[..wanted]).map_err(|error| {
+            Error::new(
+                codes::EXTRACT_004,
+                format!("cannot skip cpio data: {error}"),
+            )
+        })?;
+        bytes -= wanted as u64;
+    }
+    Ok(())
 }
 
 fn read_data<R: Read>(payload: &mut R, size: usize) -> Result<Vec<u8>> {
@@ -530,5 +649,93 @@ mod tests {
         let b_meta = std::fs::metadata(&b).expect("b");
         use std::os::unix::fs::MetadataExt;
         assert_eq!(a_meta.ino(), b_meta.ino(), "must be one inode");
+    }
+
+    #[test]
+    fn a_symlink_cannot_be_used_to_write_outside_the_destination() {
+        let root = tempfile::tempdir().expect("work");
+        let dest = root.path().join("dest");
+        let outside = root.path().join("outside");
+        std::fs::create_dir_all(&outside).expect("outside");
+        let victim = outside.join("victim");
+        std::fs::write(&victim, b"keep").expect("victim");
+
+        let mut cpio = cpio_entry_with(
+            "escape",
+            outside.to_str().expect("utf8").as_bytes(),
+            outside.to_str().expect("utf8").len(),
+            0o120777,
+            1,
+            1,
+        );
+        cpio.extend(cpio_entry_with(
+            "escape/victim",
+            b"pwned",
+            5,
+            0o100644,
+            2,
+            1,
+        ));
+        cpio.extend(cpio_trailer());
+
+        let error = super::extract_decoded(std::io::Cursor::new(cpio), &dest)
+            .expect_err("an escaping symlink must not be followed");
+        assert_eq!(error.code, "RPMX-EXTRACT-005");
+        assert_eq!(std::fs::read(&victim).expect("victim"), b"keep");
+    }
+
+    #[test]
+    fn a_usrmerge_symlink_inside_the_root_is_followed() {
+        let root = tempfile::tempdir().expect("work");
+        let dest = root.path().join("dest");
+        let mut cpio = cpio_entry_with("usr/lib", b"", 0, 0o040755, 1, 2);
+        cpio.extend(cpio_entry_with("lib", b"usr/lib", 7, 0o120777, 2, 1));
+        cpio.extend(cpio_entry_with("lib/example", b"ok", 2, 0o100644, 3, 1));
+        cpio.extend(cpio_trailer());
+
+        super::extract_decoded(std::io::Cursor::new(cpio), &dest).expect("extract");
+        assert_eq!(
+            std::fs::read(dest.join("usr/lib/example")).expect("file"),
+            b"ok"
+        );
+    }
+
+    #[test]
+    fn a_hardlink_group_whose_data_arrives_last_still_shares_it() {
+        let root = tempfile::tempdir().expect("work");
+        let dest = root.path().join("dest");
+        let mut cpio = cpio_entry_with("usr/bin/a", b"", 0, 0o100755, 42, 2);
+        cpio.extend(cpio_entry_with("usr/bin/b", b"same", 4, 0o100755, 42, 2));
+        cpio.extend(cpio_trailer());
+
+        super::extract_decoded(std::io::Cursor::new(cpio), &dest).expect("extract");
+        assert_eq!(std::fs::read(dest.join("usr/bin/a")).expect("a"), b"same");
+        assert_eq!(std::fs::read(dest.join("usr/bin/b")).expect("b"), b"same");
+    }
+
+    #[test]
+    fn an_entry_named_dot_is_rejected() {
+        let root = tempfile::tempdir().expect("work");
+        let dest = root.path().join("dest");
+        std::fs::create_dir_all(&dest).expect("dest");
+        std::fs::write(dest.join("keep"), b"keep").expect("keep");
+        let mut cpio = cpio_entry_with(".", b"x", 1, 0o100644, 1, 1);
+        cpio.extend(cpio_trailer());
+
+        let error = super::extract_decoded(std::io::Cursor::new(cpio), &dest)
+            .expect_err("a '.' entry must be rejected");
+        assert_eq!(error.code, "RPMX-EXTRACT-005");
+        assert_eq!(std::fs::read(dest.join("keep")).expect("keep"), b"keep");
+    }
+
+    #[test]
+    fn a_directory_entry_declaring_data_does_not_panic() {
+        let root = tempfile::tempdir().expect("work");
+        let dest = root.path().join("dest");
+        let padding = [0u8; 8];
+        let mut cpio = cpio_entry_with("d", &padding, 8, 0o040755, 1, 2);
+        cpio.extend(cpio_trailer());
+        super::extract_decoded(std::io::Cursor::new(cpio), &dest).expect("extract");
+        assert!(dest.join("d").is_dir());
     }
 }
