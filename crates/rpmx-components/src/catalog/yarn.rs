@@ -1,10 +1,10 @@
 //! Yarn classic and Berry `yarn.lock` cataloger.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use rpmx_base::error::{codes, Error, Result};
-use serde_yaml_ng::Value;
+use serde_json::Value;
 
 use crate::discover::{read_text, Cataloger, DiscoveryContext};
 use crate::model::{Component, Ecosystem, Scope, Source};
@@ -32,14 +32,39 @@ impl Cataloger for YarnLock {
             };
             let text = read_text(file)?;
             let evidence = context.relative(file);
-            let mut parsed = parse(&text, &evidence, scope, context.auto_outputs())?;
-            if installed(root) {
-                parsed.retain(|component| installed_component(root, component));
+            let mut entries = parse(&text, &evidence)?;
+            if let Some(production) = production_names(root)? {
+                let selected = reachable(&entries, &production);
+                entries = entries
+                    .into_iter()
+                    .zip(selected)
+                    .filter(|(_, selected)| *selected)
+                    .map(|(entry, _)| entry)
+                    .collect();
             }
-            components.extend(parsed);
+            for entry in entries {
+                let component = Component::new(
+                    Ecosystem::Npm,
+                    entry.name,
+                    Some(entry.version),
+                    Source::Auto,
+                    scope,
+                    context.auto_outputs().iter().cloned(),
+                )
+                .with_evidence("node/yarn-lock", &evidence);
+                if !installed(root) || installed_component(root, &component) {
+                    components.push(component);
+                }
+            }
         }
         Ok(components)
     }
+}
+
+struct Entry {
+    name: String,
+    version: String,
+    dependencies: BTreeSet<String>,
 }
 
 fn installed(root: &Path) -> bool {
@@ -47,6 +72,66 @@ fn installed(root: &Path) -> bool {
         || root.join(".yarn/cache").is_dir()
         || root.join(".pnp.cjs").is_file()
         || root.join(".pnp.js").is_file()
+}
+
+fn production_names(root: &Path) -> Result<Option<BTreeSet<String>>> {
+    let manifest = root.join("package.json");
+    if !manifest.is_file() {
+        return Ok(None);
+    }
+    let text = read_text(&manifest)?;
+    let value: Value = serde_json::from_str(&text).map_err(|error| {
+        Error::new(
+            codes::BUNDLED_001,
+            format!("invalid {}: {error}", manifest.display()),
+        )
+    })?;
+    let mut names = BTreeSet::new();
+    for key in ["dependencies", "optionalDependencies"] {
+        let Some(dependencies) = value.get(key).and_then(Value::as_object) else {
+            continue;
+        };
+        for (name, spec) in dependencies {
+            names.insert(name.clone());
+            if let Some(target) = spec.as_str().and_then(npm_alias_target) {
+                names.insert(target.to_string());
+            }
+        }
+    }
+    Ok(Some(names))
+}
+
+fn npm_alias_target(spec: &str) -> Option<&str> {
+    let target = spec.strip_prefix("npm:")?;
+    let start = usize::from(target.starts_with('@'));
+    let at = target[start..].find('@')? + start;
+    Some(&target[..at])
+}
+
+fn reachable(entries: &[Entry], production: &BTreeSet<String>) -> Vec<bool> {
+    let mut by_name: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
+    for (index, entry) in entries.iter().enumerate() {
+        by_name.entry(entry.name.as_str()).or_default().push(index);
+    }
+    let mut selected = vec![false; entries.len()];
+    let mut pending = production.iter().cloned().collect::<BTreeSet<_>>();
+    let mut seen = BTreeSet::new();
+    while let Some(name) = pending.pop_first() {
+        if !seen.insert(name.clone()) {
+            continue;
+        }
+        let Some(indexes) = by_name.get(name.as_str()) else {
+            continue;
+        };
+        for index in indexes {
+            if selected[*index] {
+                continue;
+            }
+            selected[*index] = true;
+            pending.extend(entries[*index].dependencies.iter().cloned());
+        }
+    }
+    selected
 }
 
 fn installed_component(root: &Path, component: &Component) -> bool {
@@ -91,11 +176,11 @@ fn manifest_matches(path: &Path, component: &Component) -> bool {
     let Ok(text) = read_text(path) else {
         return false;
     };
-    let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else {
+    let Ok(value) = serde_json::from_str::<Value>(&text) else {
         return false;
     };
-    value.get("name").and_then(serde_json::Value::as_str) == Some(component.name.as_str())
-        && value.get("version").and_then(serde_json::Value::as_str) == component.version.as_deref()
+    value.get("name").and_then(Value::as_str) == Some(component.name.as_str())
+        && value.get("version").and_then(Value::as_str) == component.version.as_deref()
 }
 
 fn nested_manifest_matches(directory: &Path, component: &Component, depth: u8) -> bool {
@@ -122,33 +207,29 @@ fn nested_manifest_matches(directory: &Path, component: &Component, depth: u8) -
     false
 }
 
-fn parse(
-    text: &str,
-    evidence: &str,
-    scope: Scope,
-    outputs: &BTreeSet<String>,
-) -> Result<Vec<Component>> {
+fn parse(text: &str, evidence: &str) -> Result<Vec<Entry>> {
     if text.lines().any(|line| line.trim() == "__metadata:") {
-        parse_berry(text, evidence, scope, outputs)
+        parse_berry(text, evidence)
     } else {
-        parse_classic(text, evidence, scope, outputs)
+        Ok(parse_classic(text))
     }
 }
 
-fn parse_classic(
-    text: &str,
-    evidence: &str,
-    scope: Scope,
-    outputs: &BTreeSet<String>,
-) -> Result<Vec<Component>> {
-    let mut components = Vec::new();
+fn parse_classic(text: &str) -> Vec<Entry> {
+    let mut entries = Vec::new();
     let mut selector: Option<String> = None;
+    let mut version: Option<String> = None;
+    let mut dependencies = BTreeSet::new();
+    let mut in_dependencies = false;
+
     for line in text.lines() {
         let trimmed = line.trim();
         if trimmed.is_empty() || trimmed.starts_with('#') {
             continue;
         }
         if !line.starts_with(char::is_whitespace) && trimmed.ends_with(':') {
+            finish_classic(&mut entries, &mut selector, &mut version, &mut dependencies);
+            in_dependencies = false;
             let current = trimmed.trim_end_matches(':');
             selector = if current.contains("@file:")
                 || current.contains("@link:")
@@ -164,36 +245,54 @@ fn parse_classic(
         let Some(current) = &selector else {
             continue;
         };
-        let Some(version) = trimmed.strip_prefix("version ") else {
+        if let Some(value) = trimmed.strip_prefix("version ") {
+            version = Some(value.trim().trim_matches('"').to_string());
+            in_dependencies = false;
             continue;
-        };
-        let Some(name) = classic_name(current) else {
+        }
+        if trimmed == "dependencies:" || trimmed == "optionalDependencies:" {
+            in_dependencies = true;
             continue;
-        };
-        let version = version.trim().trim_matches('"').to_string();
-        components.push(
-            Component::new(
-                Ecosystem::Npm,
-                name,
-                Some(version),
-                Source::Auto,
-                scope,
-                outputs.iter().cloned(),
-            )
-            .with_evidence("node/yarn-lock", evidence),
-        );
-        selector = None;
+        }
+        if in_dependencies {
+            if let Some((name, _)) = trimmed.split_once(' ') {
+                dependencies.insert(name.trim().trim_matches('"').to_string());
+            }
+        }
+        let _ = current;
     }
-    Ok(components)
+    finish_classic(&mut entries, &mut selector, &mut version, &mut dependencies);
+    entries
 }
 
-fn parse_berry(
-    text: &str,
-    evidence: &str,
-    scope: Scope,
-    outputs: &BTreeSet<String>,
-) -> Result<Vec<Component>> {
-    let value: Value = serde_yaml_ng::from_str(text).map_err(|error| {
+fn finish_classic(
+    entries: &mut Vec<Entry>,
+    selector: &mut Option<String>,
+    version: &mut Option<String>,
+    dependencies: &mut BTreeSet<String>,
+) {
+    let Some(selector) = selector.take() else {
+        version.take();
+        dependencies.clear();
+        return;
+    };
+    let Some(version) = version.take() else {
+        dependencies.clear();
+        return;
+    };
+    if let Some(name) = classic_name(&selector) {
+        entries.push(Entry {
+            name,
+            version,
+            dependencies: std::mem::take(dependencies),
+        });
+    } else {
+        dependencies.clear();
+    }
+}
+
+fn parse_berry(text: &str, evidence: &str) -> Result<Vec<Entry>> {
+    let value: serde_yaml_ng::Value = serde_yaml_ng::from_str(text).map_err(|error| {
         Error::new(
             codes::BUNDLED_001,
             format!("invalid yarn.lock {evidence}: {error}"),
@@ -205,7 +304,7 @@ fn parse_berry(
             format!("yarn.lock {evidence} is not a mapping"),
         ));
     };
-    let mut components = Vec::new();
+    let mut result = Vec::new();
     for (selector, entry) in entries {
         let Some(selector) = selector.as_str() else {
             continue;
@@ -216,16 +315,18 @@ fn parse_berry(
         let Some(entry) = entry.as_mapping() else {
             continue;
         };
-        let version = entry.get(Value::String("version".to_string()));
-        let Some(version) = version.and_then(Value::as_str) else {
+        let version = entry
+            .get(serde_yaml_ng::Value::String("version".to_string()))
+            .and_then(serde_yaml_ng::Value::as_str);
+        let Some(version) = version else {
             continue;
         };
         let link_type = entry
-            .get(Value::String("linkType".to_string()))
-            .and_then(Value::as_str);
+            .get(serde_yaml_ng::Value::String("linkType".to_string()))
+            .and_then(serde_yaml_ng::Value::as_str);
         let resolution = entry
-            .get(Value::String("resolution".to_string()))
-            .and_then(Value::as_str)
+            .get(serde_yaml_ng::Value::String("resolution".to_string()))
+            .and_then(serde_yaml_ng::Value::as_str)
             .unwrap_or_default();
         if link_type == Some("soft")
             || resolution.contains("@workspace:")
@@ -236,19 +337,31 @@ fn parse_berry(
         let Some(name) = resolution_name(resolution).or_else(|| selector_name(selector)) else {
             continue;
         };
-        components.push(
-            Component::new(
-                Ecosystem::Npm,
-                name,
-                Some(version.to_string()),
-                Source::Auto,
-                scope,
-                outputs.iter().cloned(),
-            )
-            .with_evidence("node/yarn-lock", evidence),
-        );
+        result.push(Entry {
+            name,
+            version: version.to_string(),
+            dependencies: berry_dependencies(entry),
+        });
     }
-    Ok(components)
+    Ok(result)
+}
+
+fn berry_dependencies(entry: &serde_yaml_ng::Mapping) -> BTreeSet<String> {
+    let mut names = BTreeSet::new();
+    for key in ["dependencies", "optionalDependencies"] {
+        let Some(dependencies) = entry
+            .get(serde_yaml_ng::Value::String(key.to_string()))
+            .and_then(serde_yaml_ng::Value::as_mapping)
+        else {
+            continue;
+        };
+        for (name, _) in dependencies {
+            if let Some(name) = name.as_str() {
+                names.insert(name.to_string());
+            }
+        }
+    }
+    names
 }
 
 fn classic_name(selector: &str) -> Option<String> {
@@ -284,7 +397,7 @@ fn selector_name(selector: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::selector_name;
+    use super::{classic_name, resolution_name, selector_name};
 
     #[test]
     fn selector_names_handle_scopes_and_protocols() {
@@ -301,11 +414,11 @@ mod tests {
             Some("foo")
         );
         assert_eq!(
-            super::resolution_name("left-pad@npm:1.3.0").as_deref(),
+            resolution_name("left-pad@npm:1.3.0").as_deref(),
             Some("left-pad")
         );
         assert_eq!(
-            super::classic_name("left-pad-alias@npm:left-pad@^1.3.0").as_deref(),
+            classic_name("left-pad-alias@npm:left-pad@^1.3.0").as_deref(),
             Some("left-pad")
         );
     }

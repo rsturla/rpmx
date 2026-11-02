@@ -136,6 +136,24 @@ fn split_prerelease(version: &str) -> Option<(&str, Option<String>)> {
     None
 }
 
+pub fn node_version(version: &str) -> String {
+    let version = version.trim().trim_start_matches('v');
+    if !version.is_ascii()
+        || version.chars().any(|ch| {
+            ch.is_control()
+                || ch.is_whitespace()
+                || matches!(ch, '=' | '(' | ')' | '/' | ':' | '[' | ']')
+        })
+    {
+        return String::new();
+    }
+    let version = version.split('+').next().unwrap_or(version);
+    match version.split_once('-') {
+        Some((core, pre)) => format!("{core}~{}", pre.replace('-', "_")),
+        None => version.to_string(),
+    }
+}
+
 pub fn ruby_version(version: &str) -> String {
     let version = version.trim();
     // Gem::Platform is appended after the version in lockfile entries, e.g.
@@ -189,7 +207,7 @@ pub fn cargo_version(version: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{cargo_version, go_version, python_version, ruby_version};
+    use super::{cargo_version, go_version, node_version, python_version, ruby_version};
 
     #[test]
     fn go_versions_follow_the_fedora_generator() {
@@ -225,6 +243,15 @@ mod tests {
         assert_eq!(python_version("1.0-alpha1"), "1~a1");
         assert_eq!(python_version("1.0-1"), "1^post1");
         assert_eq!(python_version("1.0 (beta)"), "");
+    }
+
+    #[test]
+    fn node_prereleases_use_a_tilde() {
+        assert_eq!(node_version("1.3.0"), "1.3.0");
+        assert_eq!(node_version("v1.3.0"), "1.3.0");
+        assert_eq!(node_version("1.3.0-beta.1"), "1.3.0~beta.1");
+        assert_eq!(node_version("1.3.0-beta.1+build"), "1.3.0~beta.1");
+        assert_eq!(node_version("dev-master"), "dev~master");
     }
 
     #[test]

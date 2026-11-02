@@ -104,6 +104,11 @@ source = "git+https://github.com/Smithay/smithay.git#20d2dacd"
     );
     write(
         root,
+        "node_modules/dev-only/package.json",
+        r#"{"name":"dev-only","version":"9.9.9"}"#,
+    );
+    write(
+        root,
         ".rpmx/bundled/app/zlib.list",
         "zlib=1.3.1\n# comment\n",
     );
@@ -325,6 +330,16 @@ fn discovers_yarn_classic_and_berry() {
     );
     write(
         root,
+        "node_modules/dev-only/package.json",
+        r#"{"name":"dev-only","version":"9.9.9"}"#,
+    );
+    write(
+        root,
+        "package.json",
+        r#"{"dependencies":{"left-pad":"^1.0.0"},"devDependencies":{"dev-only":"^1.0.0"}}"#,
+    );
+    write(
+        root,
         "yarn.lock",
         "# yarn lockfile v1\n\nleft-pad@^1.0.0:\n  version \"1.3.0\"\n  resolved \"https://example.org/left-pad.tgz\"\n\n\"local@file:bar\":\n  version \"0.0.0\"\n\n\"dev-only@^1.0.0\":\n  version \"9.9.9\"\n",
     );
@@ -345,6 +360,11 @@ fn discovers_yarn_classic_and_berry() {
     let plan = recipe(root);
     let cells = plan.cells.iter().collect::<Vec<_>>();
     write(root, ".yarn/cache/.keep", "");
+    write(
+        root,
+        "package.json",
+        r#"{"dependencies":{"@scope/name":"^1.0.0","left-pad-alias":"npm:left-pad@^1.3.0"}}"#,
+    );
     write(root, ".yarn/cache/@scope-name-npm-1.2.3-abcdef.zip", "");
     write(root, ".yarn/cache/left-pad-npm-1.3.0-abcdef.zip", "");
     write(
@@ -565,6 +585,7 @@ fn yarn_classic_finds_nested_installed_versions() {
         "node_modules/parent/node_modules/ms/package.json",
         r#"{"name":"ms","version":"0.7.3"}"#,
     );
+    write(root, "package.json", r#"{"dependencies":{"ms":"^2.0.0"}}"#);
     write(
         root,
         "yarn.lock",

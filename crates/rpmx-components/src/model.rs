@@ -6,7 +6,8 @@ use rpmx_language::plan::{Plan, PlannedCell, PlannedOutput};
 use serde::{Deserialize, Serialize};
 
 use crate::naming::{
-    cargo_version, go_version, plain_version, purl, python_version, ruby_version, valid_plain_name,
+    cargo_version, go_version, node_version, plain_version, purl, python_version, ruby_version,
+    valid_plain_name,
 };
 use crate::{INVENTORY_FILE, SCHEMA};
 
@@ -147,7 +148,8 @@ impl Component {
                 Ecosystem::Cargo => cargo_version(version),
                 Ecosystem::Python => python_version(version),
                 Ecosystem::Ruby => ruby_version(version),
-                Ecosystem::Npm | Ecosystem::Php | Ecosystem::Generic => plain_version(version),
+                Ecosystem::Npm => node_version(version),
+                Ecosystem::Php | Ecosystem::Generic => plain_version(version),
             })
             .filter(|version| !version.is_empty());
         Some(match version {

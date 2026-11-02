@@ -70,7 +70,7 @@ Version formatting is policy, not cataloger logic:
 |---|---|
 | Go | Strip a leading `v`. Replace remaining `-` with `_`. For a pseudo-version, use the 7-character commit hash. |
 | Rust | Convert semver prerelease `-` to `~` (`0.2.0-rc.0` becomes `0.2.0~rc.0`). Git snapshots become `<version>+git<ref>`. |
-| Node.js | Use the version from the lockfile/`package.json` after validating it as an RPM version. |
+| Node.js | Strip a leading `v`. Convert a semver prerelease `-` to `~` (`1.3.0-beta.1` becomes `1.3.0~beta.1`). |
 | Python | Normalize the name to PEP 503. Drop local versions and trailing `.0` components. Pre-release becomes `~rc1`/`~a1`/`~b1`, development becomes `~~devN`, post-release becomes `^postN`. |
 | Ruby | Strip a gem platform suffix such as `-x86_64-linux`. A prerelease segment becomes `~rc1` (`1.14.0.rc1` becomes `1.14.0~rc1`). |
 | PHP | Use the Composer version after validating it as an RPM version. |

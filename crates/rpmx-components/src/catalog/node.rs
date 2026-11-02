@@ -55,6 +55,9 @@ impl Cataloger for NodeInstalled {
                 .file_name()
                 .is_some_and(|name| name == "node_modules")
         }) {
+            if governed_by_lock(directory, context.root()) {
+                continue;
+            }
             components.extend(parse_installed(
                 directory,
                 &context.relative(directory),
@@ -63,6 +66,26 @@ impl Cataloger for NodeInstalled {
         }
         Ok(components)
     }
+}
+
+/// A lockfile is the production set. Once one is present, the lock-specific
+/// cataloger owns provides; scanning the installed tree would also advertise
+/// development dependencies.
+fn governed_by_lock(node_modules: &Path, root: &Path) -> bool {
+    let mut current = node_modules.parent();
+    while let Some(directory) = current {
+        if directory.join("package-lock.json").is_file()
+            || directory.join("yarn.lock").is_file()
+            || directory.join("pnpm-lock.yaml").is_file()
+        {
+            return true;
+        }
+        if directory == root {
+            break;
+        }
+        current = directory.parent();
+    }
+    false
 }
 
 fn parse_lock(
