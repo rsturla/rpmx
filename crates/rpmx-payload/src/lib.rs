@@ -166,7 +166,14 @@ fn extract_cpio<R: Read>(payload: &mut R, dest: &Path, total: u64) -> Result<Vec
         }
 
         let relative = name.trim_start_matches("./").trim_start_matches('/');
-        if relative.is_empty() || relative.split('/').any(|part| part == "..") {
+        if relative.is_empty() {
+            // The archive root itself ("./"): nothing to create.
+            discard(payload, file_size)?;
+            discard(payload, (4 - (file_size % 4)) % 4)?;
+            offset = padded_end;
+            continue;
+        }
+        if relative.split('/').any(|part| part == "..") {
             return Err(Error::new(
                 codes::EXTRACT_005,
                 format!("unsafe path in payload: '{name}'"),
@@ -194,7 +201,10 @@ fn extract_cpio<R: Read>(payload: &mut R, dest: &Path, total: u64) -> Result<Vec
                         format!("cannot create {}: {error}", target.display()),
                     )
                 })?;
-                set_mode(&target, mode)?;
+                // Keep the owner-write bit: a real filesystem package ships
+                // usr/bin as 0555, and the next package still has to populate
+                // it. A sysroot is mounted read-only anyway.
+                set_mode(&target, mode | 0o200)?;
             }
             0o120000 => {
                 // Symlink entry: the data is the link target.
