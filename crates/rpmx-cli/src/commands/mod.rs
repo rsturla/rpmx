@@ -35,6 +35,14 @@ pub use loader::{load_plan, step_root};
 use std::num::NonZeroU32;
 use std::path::PathBuf;
 
+/// The architecture recorded in an RPM or SRPM header.
+///
+/// `rpmx rebuild` uses it so a cross SRPM rebuilds for its target without an
+/// `--arch` flag.
+pub fn srpm_arch(path: &std::path::Path) -> Result<String, rpmx_core::Error> {
+    rpmx_rpm::package_arch(path)
+}
+
 /// Parallelism used when `--jobs` is not given.
 pub fn default_jobs() -> NonZeroU32 {
     let detected = std::thread::available_parallelism()

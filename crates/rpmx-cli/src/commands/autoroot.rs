@@ -438,10 +438,7 @@ fn ensure_root(
     })
 }
 
-/// Assemble a root described by an SRPM-embedded lock, reusing the cache.
-///
-/// This is what makes `rpmx rebuild foo.src.rpm` self-sufficient without
-/// extracting `root.lock.json` by hand.
+/// Assemble a host build root described by an SRPM-embedded lock.
 pub fn ensure_from_lock(
     lock: &RootLock,
     cache: Option<&Path>,
@@ -450,6 +447,52 @@ pub fn ensure_from_lock(
     needs_appliance: bool,
     override_root: Option<&Path>,
     allow_resolve: bool,
+) -> Result<AssembledRoots, Error> {
+    ensure_with(
+        lock,
+        cache,
+        offline,
+        arch,
+        needs_appliance,
+        override_root,
+        allow_resolve,
+        Assembly::Install,
+    )
+}
+
+/// Unpack a target sysroot described by an SRPM-embedded lock.
+///
+/// The sysroot is a link-time artefact: payloads only, no scriptlets and no
+/// emulation, which is what lets a cross rebuild run on any host.
+pub fn ensure_sysroot_from_lock(
+    lock: &RootLock,
+    cache: Option<&Path>,
+    offline: bool,
+    arch: &str,
+) -> Result<PathBuf, Error> {
+    Ok(ensure_with(
+        lock,
+        cache,
+        offline,
+        arch,
+        false,
+        None,
+        false,
+        Assembly::Extract,
+    )?
+    .root)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn ensure_with(
+    lock: &RootLock,
+    cache: Option<&Path>,
+    offline: bool,
+    arch: &str,
+    needs_appliance: bool,
+    override_root: Option<&Path>,
+    allow_resolve: bool,
+    assembly: Assembly,
 ) -> Result<AssembledRoots, Error> {
     let cas = match cache {
         Some(path) => path.to_path_buf(),
@@ -548,14 +591,24 @@ pub fn ensure_from_lock(
                 ),
             )
         })?;
-    let assembled = assemble(
-        lock,
-        AssembleOptions {
-            cache: &cas,
-            work: work.path(),
-            root: &root_path,
-        },
-    )?;
+    let assembled = match assembly {
+        Assembly::Install => assemble(
+            lock,
+            AssembleOptions {
+                cache: &cas,
+                work: work.path(),
+                root: &root_path,
+            },
+        )?,
+        Assembly::Extract => rpmx_core::root::assemble_sysroot(
+            lock,
+            AssembleOptions {
+                cache: &cas,
+                work: work.path(),
+                root: &root_path,
+            },
+        )?,
+    };
     let actual = digest_root(&assembled)?;
     if actual != digest {
         return Err(Error::new(

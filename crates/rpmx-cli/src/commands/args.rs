@@ -127,9 +127,10 @@ pub struct RebuildArgs {
     /// Output directory (default: ./packages/<arch>).
     #[arg(long, visible_alias = "out-dir")]
     pub output: Option<PathBuf>,
-    /// Architecture for outputs that do not declare one.
-    #[arg(long, default_value = rpmx_core::arch::native_arch())]
-    pub arch: String,
+    /// Architecture for outputs that do not declare one. Defaults to the
+    /// architecture recorded in the SRPM.
+    #[arg(long)]
+    pub arch: Option<String>,
     /// Runner: auto, bwrap, podman or qemu.
     #[arg(long, default_value = "auto", value_parser = ["auto", "bwrap", "podman", "qemu"])]
     pub runner: String,

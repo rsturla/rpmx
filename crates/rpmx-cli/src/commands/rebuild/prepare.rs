@@ -26,6 +26,16 @@ pub(super) struct RebuildState {
     pub(super) assembled_root: Option<PathBuf>,
     pub(super) assembled_appliance: Option<PathBuf>,
     pub(super) signature_timestamp: Option<u32>,
+    /// Where the steps run: the host for a cross SRPM.
+    pub(super) exec: rpmx_core::Arch,
+    /// Assembled target sysroot for a cross SRPM.
+    pub(super) sysroot: Option<PathBuf>,
+    /// Toolchain recorded in the SRPM's cross block.
+    pub(super) cross: Option<rpmx_core::guest::CrossToolchain>,
+    /// The sysroot lock, for the dependency check and installed tests.
+    pub(super) sysroot_lock: Option<rpmx_core::root::RootLock>,
+    /// Architecture the package is for: the sysroot's for a cross SRPM.
+    pub(super) target: String,
 }
 
 pub(super) fn prepare(
@@ -37,6 +47,38 @@ pub(super) fn prepare(
     // Read the authoritative lock before unpacking the snapshot. The snapshot
     // is user-controlled recipe data and must not be able to replace it.
     let package_lock = load_lock_file(&work.path().join("package.lock.json"))?;
+    // A cross SRPM names its target sysroot; load it before planning so the
+    // plan is expanded for the architecture the package is for.
+    let embedded_cross = package_lock.cross.clone();
+    let cross_lock_and_arch = match &embedded_cross {
+        Some(recorded) => {
+            let path = work.path().join(&recorded.sysroot.path);
+            let bytes = std::fs::read(&path).map_err(|error| {
+                Error::new(
+                    codes::SRPM_006,
+                    format!("cannot read the embedded sysroot lock: {error}"),
+                )
+            })?;
+            let digest = rpmx_core::srpm::sha512_hex(&bytes);
+            if digest != recorded.sysroot.digest {
+                return Err(Error::new(
+                    codes::SRPM_006,
+                    "the embedded sysroot lock does not match the digest recorded in the package lock",
+                ));
+            }
+            let lock = load_lock(&path)?;
+            let arch = lock.archs.first().ok_or_else(|| {
+                Error::new(codes::ROOT_015, "the sysroot lock declares no architecture")
+            })?;
+            let arch = rpmx_core::profile::normalize_arch(arch)?.to_string();
+            Some((lock, arch))
+        }
+        None => None,
+    };
+    let target_arch = cross_lock_and_arch
+        .as_ref()
+        .map(|(_, arch)| arch.clone())
+        .unwrap_or_else(|| request.arch.to_string());
     let signature_timestamp = crate::commands::signature_timestamp(
         request.signing.signing_timestamp,
         extracted.source_date_epoch,
@@ -88,7 +130,7 @@ pub(super) fn prepare(
     let recipe_path = work.path().join("package.yaml");
     let (bundle, plan) = load_plan(
         &recipe_path,
-        request.arch,
+        &target_arch,
         Some(pipelines.as_path()),
         true,
         policy,
@@ -174,6 +216,13 @@ pub(super) fn prepare(
     if let Some(lock) = &active_lock {
         crate::commands::autoroot::report_root(lock, &lock.profile, "from lock");
     }
+    // A cross SRPM records its toolchain and sysroot, so rebuild runs the
+    // compiler on this host instead of executing the target's.
+    let exec = if embedded_cross.is_some() {
+        rpmx_core::Arch::current()?
+    } else {
+        request.exec
+    };
 
     let mut assembled_appliance: Option<PathBuf> = None;
     let assembled_root: Option<PathBuf> = if let Some(lock) = &active_lock {
@@ -192,18 +241,18 @@ pub(super) fn prepare(
         let runner_kind = request.runner.parse::<rpmx_core::runner::RunnerKind>()?;
         // The root is where steps run: a cross build resolves and verifies a
         // host-architecture build root, not the target root.
-        let exec = request.exec.as_str();
+        let exec_name = exec.as_str();
         let needs_appliance = rpmx_core::appliance::Policy::Auto.should_resolve(
             rpmx_core::Arch::current()?,
-            request.exec,
+            exec,
             runner_kind,
         );
         let path = match request.root {
             Some(root_path) if request.verify_root => {
-                RootSelection::verify(lock, root_path, exec)?.path
+                RootSelection::verify(lock, root_path, exec_name)?.path
             }
             Some(root_path) => {
-                lock.require_target(exec)?;
+                lock.require_target(exec_name)?;
                 lock.require_digest()?;
                 std::fs::canonicalize(root_path).map_err(|error| {
                     Error::new(
@@ -217,7 +266,7 @@ pub(super) fn prepare(
                     lock,
                     request.cache,
                     request.offline,
-                    exec,
+                    exec_name,
                     needs_appliance,
                     request.runner_asset_root,
                     allow_appliance_resolve,
@@ -255,6 +304,23 @@ pub(super) fn prepare(
         None
     };
 
+    let (sysroot, cross, sysroot_lock) = match (&embedded_cross, cross_lock_and_arch) {
+        (Some(recorded), Some((lock, arch))) => {
+            let root = crate::commands::autoroot::ensure_sysroot_from_lock(
+                &lock,
+                request.cache,
+                request.offline,
+                &arch,
+            )?;
+            let mut toolchain = rpmx_core::guest::CrossToolchain::new(&recorded.triple);
+            toolchain.cflags = recorded.cflags.clone();
+            toolchain.cxxflags = recorded.cxxflags.clone();
+            toolchain.ldflags = recorded.ldflags.clone();
+            (Some(root), Some(toolchain), Some(lock))
+        }
+        _ => (None, None, None),
+    };
+
     Ok(RebuildState {
         work,
         extracted,
@@ -269,5 +335,10 @@ pub(super) fn prepare(
         assembled_root,
         assembled_appliance,
         signature_timestamp,
+        exec,
+        sysroot,
+        cross,
+        sysroot_lock,
+        target: target_arch,
     })
 }

@@ -8,6 +8,17 @@ use rpm::{BuildConfig, CompressionType, FileMode, FileOptions, PackageBuilder, S
 use rpmx_core::package_spec::{BinaryPackageSpec, SourcePackageSpec};
 use rpmx_core::{error::codes, Error};
 
+/// The architecture recorded in an RPM or SRPM header.
+pub fn package_arch(path: &Path) -> Result<String, Error> {
+    let package = rpm::Package::open(path).map_err(|error| {
+        Error::new(
+            codes::EXTRACT_001,
+            format!("cannot read {}: {error}", path.display()),
+        )
+    })?;
+    Ok(package.metadata.get_arch().unwrap_or("noarch").to_string())
+}
+
 pub fn write_srpm(spec: &SourcePackageSpec, out: &Path) -> Result<(), Error> {
     let mut builder = PackageBuilder::new(
         &spec.name,

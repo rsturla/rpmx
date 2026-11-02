@@ -71,15 +71,21 @@ pub fn run(args: RebuildArgs) -> Result<Vec<PathBuf>, Error> {
         dist_tag: args.policy.dist_tag.as_deref(),
         build_release: args.policy.build_release,
     })?;
+    // A cross SRPM records its target in the header; rebuild it for that
+    // architecture without asking the caller to repeat it.
+    let arch = match &args.arch {
+        Some(arch) => arch.clone(),
+        None => crate::commands::srpm_arch(&args.file)?,
+    };
     let output = args
         .output
         .clone()
-        .unwrap_or_else(|| crate::commands::default_output(&args.arch));
+        .unwrap_or_else(|| crate::commands::default_output(&arch));
     execute(RebuildRequest {
         file: &args.file,
         output: &output,
-        arch: &args.arch,
-        exec: rpmx_core::arch::Arch::parse(&args.arch)?,
+        arch: &arch,
+        exec: rpmx_core::arch::Arch::parse(&arch)?,
         sysroot: None,
         cross: None,
         sysroot_packages: None,
@@ -129,6 +135,11 @@ pub fn execute(request: RebuildRequest<'_>) -> Result<RebuildOutput, Error> {
         assembled_root,
         assembled_appliance,
         signature_timestamp,
+        exec,
+        sysroot,
+        cross,
+        sysroot_lock,
+        target,
     } = state;
     let output = request.output.to_path_buf();
     let run_tests = request.run_tests;
@@ -138,7 +149,7 @@ pub fn execute(request: RebuildRequest<'_>) -> Result<RebuildOutput, Error> {
     let jobs = request.jobs;
     let step_timeout = request.step_timeout;
     let runner = request.runner;
-    let arch = request.arch;
+    let arch = target.as_str();
 
     let host_arch = rpmx_core::arch::Arch::current()?;
     let target_arch = rpmx_core::arch::Arch::parse(arch)?;
@@ -153,13 +164,17 @@ pub fn execute(request: RebuildRequest<'_>) -> Result<RebuildOutput, Error> {
         .as_ref()
         .map(|lock| lock.libdir.as_str())
         .unwrap_or(rpmx_core::guest::LIBDIR);
+    // An explicit flag wins over the SRPM; otherwise the embedded cross block
+    // supplies the sysroot and toolchain.
+    let effective_sysroot: Option<&std::path::Path> = request.sysroot.or(sysroot.as_deref());
+    let effective_cross = request.cross.or(cross.as_ref());
     let sandbox = Sandbox::new(SandboxConfig {
         runner: runner_kind,
         host: host_arch,
-        exec: request.exec,
+        exec,
         target: target_arch,
-        sysroot: request.sysroot,
-        cross: request.cross,
+        sysroot: effective_sysroot,
+        cross: effective_cross,
         workspace: &build,
         stage: &stage,
         root: assembled_root.as_deref(),
@@ -178,8 +193,18 @@ pub fn execute(request: RebuildRequest<'_>) -> Result<RebuildOutput, Error> {
         // A host dependency is satisfied by either root: the build root holds
         // native packages, the sysroot holds target ones.
         let mut available = locked_packages.clone();
-        if let Some(sysroot) = request.sysroot_packages {
-            available.extend(sysroot.iter().cloned());
+        if effective_sysroot.is_some() {
+            if let Some(packages) = request.sysroot_packages {
+                available.extend(packages.iter().cloned());
+            }
+            if let Some(lock) = &sysroot_lock {
+                available.extend(
+                    lock.packages
+                        .values()
+                        .flatten()
+                        .map(|package| package.name.clone()),
+                );
+            }
             // The sysroot lock records resolved package names, not virtual
             // provides, so a name such as `zlib-devel` may resolve to
             // `zlib-ng-compat-devel`. Resolution already proved the declared
@@ -187,13 +212,20 @@ pub fn execute(request: RebuildRequest<'_>) -> Result<RebuildOutput, Error> {
             // does, which is the stronger claim.
             available.extend(cell.host.iter().chain(cell.target.iter()).cloned());
         }
+        // A cross build installs test dependencies into a target test root
+        // when the tests run, not into the build root or the sysroot.
+        let test_tools: &[String] = if effective_sysroot.is_some() {
+            &[]
+        } else {
+            &cell.test_tools
+        };
         check_build_tools(
             &sandbox,
             &build,
             &cell.tools,
             &cell.host,
             &cell.target,
-            &cell.test_tools,
+            test_tools,
             &available,
         )?;
         rpmx_core::output::phase("build", format!("{arch} · {} steps", cell.pipeline.len()));
@@ -232,7 +264,7 @@ pub fn execute(request: RebuildRequest<'_>) -> Result<RebuildOutput, Error> {
         sandbox.sync()?;
     }
 
-    if let Some(sysroot) = request.sysroot {
+    if let Some(sysroot) = effective_sysroot {
         let missing = rpmx_core::elf::unresolved_needed(&stage, sysroot).map_err(|error| {
             Error::new(
                 codes::BUILD_009,
@@ -358,6 +390,7 @@ pub fn execute(request: RebuildRequest<'_>) -> Result<RebuildOutput, Error> {
             build: &build,
             stage: &stage,
             active_lock: active_lock.as_ref(),
+            sysroot_lock: sysroot_lock.as_ref(),
             builder_image: builder_image.as_deref(),
             pinned_lock: request.test_root_lock,
             arch,

@@ -21,6 +21,8 @@ pub(super) struct TestRunOptions<'a> {
     pub(super) build: &'a Path,
     pub(super) stage: &'a Path,
     pub(super) active_lock: Option<&'a RootLock>,
+    /// Target sysroot lock for a cross build; installed tests run there.
+    pub(super) sysroot_lock: Option<&'a RootLock>,
     pub(super) builder_image: Option<&'a str>,
     pub(super) pinned_lock: Option<&'a Path>,
     pub(super) arch: &'a str,
@@ -49,12 +51,16 @@ pub(super) fn run(options: TestRunOptions<'_>) -> Result<Option<PathBuf>, Error>
     }
     let cache = crate::commands::fetch::default_cache()?;
     let prepared = if tests.iter().any(|test| test.stage == "installed") {
-        let lock = options.active_lock.ok_or_else(|| {
-            Error::new(
-                codes::TEST_005,
-                "installed-stage tests need an embedded or explicit root lock",
-            )
-        })?;
+        // A cross build's target root is the sysroot, not the host build root.
+        let lock = options
+            .sysroot_lock
+            .or(options.active_lock)
+            .ok_or_else(|| {
+                Error::new(
+                    codes::TEST_005,
+                    "installed-stage tests need an embedded or explicit root lock",
+                )
+            })?;
         Some(prepare_test_root(TestRootOptions {
             lock,
             pinned: options.pinned_lock,
