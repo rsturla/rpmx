@@ -34,10 +34,12 @@ The three things to remember:
   image-backed rebuilds.
 - `dnf5` in the builder image used for root resolution.
 - `tar`, `findutils`, `binutils` and the usual build tools inside the root.
-- For foreign-architecture builds: `qemu-system-<arch>`, `qemu-user-static` with
-  binfmt, `ssh`, `ssh-keygen`, `mke2fs`, `debugfs` and `tar`. The QEMU appliance
-  is resolved from the profile repositories; do not add kernel or SSH packages
-  to the profile.
+- For foreign-architecture builds: `qemu-user-static` with an enabled
+  `F`-flag binfmt handler. The default bubblewrap runner uses it for build
+  steps, root assembly and test-root installation.
+- For `--runner qemu`: `qemu-system-<arch>`, `ssh`, `ssh-keygen`, `mke2fs`,
+  `debugfs` and `tar`. The appliance is resolved from the profile repositories;
+  do not add kernel or SSH packages to the profile.
 
 Check the host:
 

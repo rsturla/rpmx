@@ -5,6 +5,17 @@ does not promise a stable schema or CLI yet.
 
 ## Unreleased
 
+- Foreign builds default to bubblewrap + host binfmt. `auto` and `--runner
+  bwrap` run native steps directly and foreign steps through an enabled
+  `F`-flag qemu-user handler; `--runner qemu` remains the explicit full-VM
+  path. A missing handler fails before any step with `RPMX-RUNNER-002`.
+- The build-root requirement is runner-independent. A QEMU appliance is a
+  sidecar `appliance.lock.yaml` beside the cached root, not a `runner-assets`
+  section in `root.lock.yaml`; `--locked` and `--runner qemu` share the same
+  root and cannot drift because of the runner.
+- Profiles may list several target architectures as an allowed set;
+  `Profile::for_target` derives one root per target. `rpmx root resolve` gains
+  `--arch`.
 - Human progress output is now a leveled `INFO`/`WARN`/`ERRO` log on stderr,
   with a plan header, a resolved root block (builder and repositories), numbered
   steps, per-phase durations, relative artifact paths and a final artifact
@@ -18,15 +29,13 @@ does not promise a stable schema or CLI yet.
   cache, and attached as a second disk. Build steps run on a chrooted build
   channel while an unchrooted control channel mounts the disk and moves the
   workspace and stage. Profiles no longer list kernel, dracut, networkd or SSH
-  packages; the build root keeps its own closure. `rpmx root resolve` and
-  `rpmx root assemble` grow appliance flags, `root.lock.yaml` carries the
-  appliance closure, and installed test roots no longer install the boot set.
-  Runner assets are now a generic lock section and cache concept; the QEMU
-  appliance is its first kind. `rpmx runner resolve|assemble|inspect` handles
-  assets independently (`rpmx appliance` remains an alias), and
-  `--runner-asset-root` lets `build`, `source`, `test` and `rebuild` use a
-  pre-assembled asset. `rpmx doctor` reports all runner tools and cached
-  assets through the runner registry.
+  packages; the build root keeps its own closure. The appliance lock is a
+  sidecar beside the cached root and installed test roots no longer install the
+  boot set. `rpmx runner resolve|assemble|inspect` handles appliances
+  independently (`rpmx appliance` remains an alias), and `--runner-asset-root`
+  lets `build`, `source`, `test` and `rebuild` use a pre-assembled asset.
+  `rpmx doctor` reports all runner tools and cached assets through the runner
+  registry.
 - Steps no longer hardcode guest paths. Built-in steps use `$STAGE`, `$PREFIX`,
   `$LIBDIR` and `$JOBS` (or the `${...}` placeholders); the planner keeps those
   placeholders in the plan, lock and SRPM, and the loader rejects a literal

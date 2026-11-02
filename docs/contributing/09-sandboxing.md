@@ -294,17 +294,18 @@ pub trait Session {
 
 `source_date_epoch` and `debuginfo` are policy fields: the sandbox applies them
 to the environment and never passes them to a backend. `Sandbox::new` resolves
-`RunnerKind` (`auto`, `bwrap` or `qemu`) into a runner and rejects contradictory
-selections eagerly (bubblewrap with a foreign target and an assembled root, or
-qemu without a root). The `supports` check itself is deferred to the first
+`RunnerKind` (`auto`, `bwrap`, `podman` or `qemu`) into a runner and rejects
+contradictory selections eagerly (a foreign bubblewrap target without an
+assembled root or a usable binfmt handler, or qemu without a root). The `supports` check itself is deferred to the first
 session start, so `Sandbox::with_runner` cannot fail on the runner and
 constructing a sandbox that never runs a step cannot fail that check. The
 concrete implementations (`BwrapBackend`, `PodmanBackend`, `QemuBackend`) live
 under `runner/backend/`; `sandbox` holds policy only.
 
-`bubblewrap` and `podman` support native execution only. `qemu-system` starts
-a full VM for a foreign target with a separate, runner-owned transport
-appliance. The appliance is a kernel, initramfs, systemd-networkd,
+`bubblewrap` runs native targets directly and foreign targets through the
+host's qemu-user binfmt handler. `podman` supports native execution only.
+`qemu-system` starts a full VM for a foreign target with a separate,
+runner-owned transport appliance. The appliance is a kernel, initramfs, systemd-networkd,
 `openssh-server` and `tar`; the build root is attached as a second disk and is
 never booted. Nothing is shared with the host: the workspace and stage are
 copied in over SSH, and outputs are tarred back over the same connection. The
@@ -312,8 +313,9 @@ guest has one host-only NIC (`restrict=on`) used only for the two SSH port
 forwards; it cannot reach the host network or the internet. The sandbox checks
 `supports` before starting anything, so an unsupported combination is
 `RPMX-RUNNER-002`, not a mysterious target binary failure. Root assembly and
-test-root preparation use podman's `--arch` and the host binfmt handler; build
-steps do not.
+test-root preparation use podman's `--arch` and the host binfmt handler. Build
+steps use binfmt when bubblewrap is selected for a foreign target; qemu steps
+run inside the VM.
 
 Runner-owned artifacts are separate from the build root: `SandboxConfig`
 carries `RunnerAssets`, and each backend declares its asset kinds in the
@@ -382,7 +384,7 @@ The source-assembly sandbox is not optional. It is the boundary between “we fe
 
 ## 7. Cross-compilation and special cases
 
-- Cross builds use a target sysroot in the build root and `qemu-user`/binfmt only if needed.
+- Cross builds execute target binaries through host `qemu-user`/binfmt by default, or in a qemu-system VM with `--runner qemu`.
 - Native builders are preferred for performance and to avoid emulation bugs.
 - Kernel modules, bootloaders, setuid binaries and FUSE may need a **privileged profile**:
   - separate VM or dedicated builder;

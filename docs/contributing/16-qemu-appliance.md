@@ -5,6 +5,15 @@ Status: implemented, 2026-11-01. The lock, resolution, assembly, cache,
 two-disk boot and two-channel session are in place. A QEMU build and an offline
 SRPM rebuild have been exercised end to end on x86_64.
 
+**Update 2026-11-02:** the appliance is a sidecar, not a section in
+`root.lock.yaml`. The root lock describes only the build root; the appliance
+lock lives at `appliance.lock.yaml` beside the cached root and is resolved on
+demand for `--runner qemu`. The `runner-assets` section, `--appliance` on
+`rpmx root resolve`, and `--appliance-root`/`--no-appliance` on
+`rpmx root assemble` have been removed. `rpmx runner resolve|assemble|inspect`
+is the explicit appliance interface. The historical sections below that
+describe embedding are superseded by this note.
+
 Related documents:
 
 - [`09-sandboxing.md`](09-sandboxing.md) — the sandbox contract and the current
@@ -47,8 +56,8 @@ practical.
 |---|---|
 | **D1** | The appliance is a separate root, not a package set inside the build root. |
 | **D2** | Its package list is owned by rpmx and resolved from the profile's repositories, releasever and builder image. Profiles do not mention it. |
-| **D3** | Its lock is an optional `runner-assets:` section in `root.lock.yaml`, outside the build `closure_digest`; the SRPM already embeds the whole root lock. |
-| **D4** | Explicit `root resolve` includes it by default; automatic roots include it when the runner is QEMU or the target is foreign. |
+| **D3** | Its lock is a sidecar `appliance.lock.yaml` beside the cached build root, outside the build `closure_digest` and outside `root.lock.yaml`. |
+| **D4** | Only an explicit `--runner qemu` needs it. `root resolve` and automatic roots describe the build root only; they never embed an appliance. |
 | **D5** | It is identified by a closure digest, schema and builder digest, not by a tree digest. Its initramfs is not a build input. |
 | **D6** | QEMU boots the appliance from `/dev/vda` and the build root from `/dev/vdb`; sshd and tar live in the appliance; steps run on a chrooted build channel. |
 | **D7** | The VM remains the security boundary. chroot provides dependency isolation, not a security boundary. |
@@ -511,34 +520,18 @@ Add an appliance policy to the requirement:
 pub enum AppliancePolicy { Auto, Always, Never }
 ```
 
-- Explicit `rpmx root resolve` defaults to `Always`: an explicit lock should be
-  portable to any host.
-- Automatic roots (`rpmx build`, `test`, `source`, `shell`) use `Auto`:
-  resolve the appliance when the selected runner is `qemu` or `target != host`.
-  A native build does not pay for an appliance it cannot use.
-- `--appliance never` is the escape hatch for profiles whose repositories do
-  not carry a kernel or SSH server (for example, a local-package-only profile).
-  Such a profile can still build natively; a later QEMU build needs
-  `--appliance always` or an explicit `--appliance-lock`.
+- Only an explicit `--runner qemu` needs an appliance. `auto` and `--runner
+  bwrap` use host binfmt for foreign targets and never resolve one.
+- `--runner-asset-root DIR` uses a preassembled appliance instead of the cache.
 - If an appliance is requested and its packages cannot be resolved, the error
   comes from the resolver and names the missing package. The user must add a
   target-distribution repository that carries `kernel-core` and
   `openssh-server`; rpmx does not silently fall back to the host or a
   different distribution.
 
-The requirement digest includes the resolved boolean, not the policy:
-
-```
-sha512(serialized profile || "appliance:" + bool || "appliance-schema:" + N)
-```
-
-That keeps native and QEMU cache entries distinct without forking the build
-root. The existing `find_published_root` lookup by `root_digest` (currently
-used by `ensure_from_lock`) can be extended to automatic roots so the two
-requirement keys share one assembled build root on disk.
-
-`RootLock.appliance` is written when the boolean is true. A cached lock for a
-true requirement without an appliance is treated as a miss, not as success.
+The build-root requirement digest is runner-independent: it covers the
+profile and target only. The appliance has its own identity and cache, so the
+same build root serves `bwrap`, `binfmt` and `qemu`.
 
 ### 6.3 CLI surface
 
@@ -546,18 +539,14 @@ New and changed flags:
 
 | Command | Flag | Meaning |
 |---|---|---|
-| `rpmx root resolve` | `--appliance auto\|always\|never` | Default `always`. |
-| `rpmx root assemble` | `--appliance-root PATH` | Where to assemble the appliance (default: a cache path printed in the summary). |
-| `rpmx root assemble` | `--no-appliance` | Assemble the build root only. |
 | `rpmx build`, `test`, `source`, `rebuild` | `--runner-asset-root PATH` | Use a pre-assembled appliance instead of the cache. |
 | `rpmx runner` | `resolve\|assemble\|inspect` | Build, cache or inspect the appliance independently, analogous to `melange initramfs`. |
 | `rpmx doctor` | — | Report cached appliance entries alongside qemu-system, binfmt-adjacent tools and the cache. |
 
-A standalone `--appliance-lock` override remains future work; the appliance
-closure is carried inside `root.lock.yaml` today.
+An appliance lock is a standalone YAML file managed by `rpmx runner`.
 
-`--offline` never resolves. If a VM is needed and the active lock has no
-appliance, fail with `RPMX-ROOT-020` and say which command would produce one.
+`--offline` never resolves. If a VM is needed and no appliance sidecar or
+`--runner-asset-root` is available, fail with `RPMX-ROOT-020`.
 
 ### 6.4 Runner interface
 

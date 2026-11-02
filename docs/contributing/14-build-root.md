@@ -310,9 +310,10 @@ consume arbitrary third-party manifests.
 3. Module streams: profiles reject non-empty `modules` until the lock has a
    place for the module and stream.
 4. SELinux labels and xattrs: not covered by `root_digest`.
-5. Cross-arch: build steps use a full qemu-system VM with a separate appliance;
-   root assembly and test-root installation use podman `--arch` through host
-   binfmt. The appliance lock is described in
+5. Cross-arch: build steps use bubblewrap + host binfmt by default, or a full
+   qemu-system VM with `--runner qemu`. Root assembly and test-root
+   installation use podman `--arch` through host binfmt. The appliance is a
+   separate runner asset described in
    [`16-qemu-appliance.md`](16-qemu-appliance.md).
 6. Repository keys: resolve uses `gpgcheck=1` when a `gpgkey` is declared.
    Local-payload assembly relies on CAS checksums, not OpenPGP.

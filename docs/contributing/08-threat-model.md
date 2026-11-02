@@ -307,6 +307,14 @@ If the proxy can serve both the source and the lock that contains its hash, the 
 
 **Residual risk:** Kernel and runtime exploits are always possible. Defense in depth and host isolation matter.
 
+**Foreign execution boundary.** The default foreign path is bubblewrap plus
+host `binfmt_misc`/qemu-user. It shares the host kernel and adds qemu-user to
+the trusted path; it is the same isolation class as a native bubblewrap build,
+not a VM. `--runner qemu` selects a full VM for kernel-facing, high-assurance or
+target-kernel builds. Root assembly and test-root preparation already execute
+package scriptlets through podman `--arch` and host binfmt, outside the VM; that
+is a pre-existing exposure, not a binfmt-build regression.
+
 ### T14. Secret leakage
 
 **Threat:** Credentials in source URLs, proxy auth, recipe files or build logs are exposed.

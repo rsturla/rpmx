@@ -16,3 +16,7 @@
 *.tmp
 *.swp
 .DS_Store
+
+# Crash dumps and local package output
+*.core
+/packages/

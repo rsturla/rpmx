@@ -41,9 +41,10 @@ prototype, not production software.
 ## Status
 
 Early prototype. The build, test, signing and repository paths are exercised
-end to end on x86_64, and aarch64 builds run through qemu-user binfmt. Cross
-compilation is not implemented. The supported RPM feature set is intentionally
-small; see [Known limitations](#known-limitations).
+end to end on x86_64. Foreign targets run through bubblewrap + qemu-user binfmt
+by default; `--runner qemu` selects the full-VM path instead. Cross compilation
+is not implemented. The supported RPM feature set is intentionally small; see
+[Known limitations](#known-limitations).
 
 ## Requirements
 
@@ -53,8 +54,9 @@ small; see [Known limitations](#known-limitations).
   container-backed builds
 - `dnf5` in the builder image used for root resolution
 - `glibc` targets for now
-- `qemu-system-<arch>` on PATH (or `RPMX_QEMU_SYSTEM`) for foreign-architecture builds
-- `qemu-user-static` with binfmt for root assembly and test-root installation
+- `qemu-user-static` with an enabled `F`-flag binfmt handler for foreign
+  targets (build steps, root assembly and test-root installation)
+- `qemu-system-<arch>` on PATH (or `RPMX_QEMU_SYSTEM`) only for `--runner qemu`
 - `ssh`, `ssh-keygen`, `mke2fs`, `debugfs` and `tar` for the QEMU workspace transport
 
 You do **not** need `rpmbuild`, `rpm-sign`, or a spec file.
@@ -321,33 +323,36 @@ pub trait Session {
 
 Three backends are implemented:
 
-- **bubblewrap** — native `host == target`, no daemon, namespaces, no network.
+- **bubblewrap** — native `host == target` runs directly. A foreign target
+  runs the assembled target root through the host's qemu-user binfmt handler.
+  The sandbox is still bubblewrap: namespaces, a read-only guest root and no
+  network.
 - **podman** — native `host == target`, a long-lived container with
   `--network=none`, a read-only root, dropped capabilities and no new
   privileges.
-- **qemu-system** — a full VM for foreign targets. It boots a separate
-  runner-owned appliance (kernel, initramfs, systemd, SSH and tar), attaches a
-  disposable copy of the build root as a second disk, and runs steps on a
-  chrooted build channel. A separate control channel mounts the disk and moves
-  the workspace and stage. There is no 9p or virtiofs share. The guest has one
-  host-only NIC (`restrict=on`) whose only purpose is the two SSH port
-  forwards; it cannot reach the host network or the internet.
+- **qemu-system** — a full VM, selected explicitly with `--runner qemu`. It
+  boots a separate runner-owned appliance (kernel, initramfs, systemd, SSH and
+  tar), attaches a disposable copy of the build root as a second disk, and runs
+  steps on a chrooted build channel. A separate control channel mounts the disk
+  and moves the workspace and stage. There is no 9p or virtiofs share. The
+  guest has one host-only NIC (`restrict=on`) whose only purpose is the two SSH
+  port forwards; it cannot reach the host network or the internet.
 
-A foreign target uses qemu-system automatically. The appliance is resolved from
-the same profile repositories, releasever and builder image, with a package
-list owned by rpmx. The profile does not list kernel or SSH packages. Explicit
-`rpmx root resolve` includes the appliance by default; automatic native builds
-skip it. Runner-owned assets are a generic lock/cache concept; the QEMU
-appliance is the first kind. `rpmx runner resolve|assemble|inspect` handles
-assets independently (the old appliance subcommand remains an alias), and
-`rpmx root assemble` caches the appliance with the build root. Pass
-`--runner-asset-root DIR` to `build`, `source`, `test` or `rebuild` to use a
-pre-assembled asset. Local x86_64 hosts can build aarch64
-with `qemu-system-aarch64` and TCG; native aarch64 CI uses KVM when available.
-`RPMX_QEMU_SYSTEM` overrides the qemu-system binary path.
+`auto` uses bubblewrap for both native and foreign targets; foreign execution
+goes through binfmt. It never starts a VM. A missing or non-`F` binfmt handler
+fails before any step with `RPMX-RUNNER-002`.
 
-Root assembly and test-root installation still use podman's `--arch` and the
-host binfmt handler; build steps do not.
+The QEMU appliance is a runner asset, resolved from the same profile
+repositories, releasever and builder image with a package list owned by rpmx.
+It is cached separately from the build root. `rpmx runner resolve|assemble|inspect`
+handles it independently; pass `--runner-asset-root DIR` to `build`, `source`,
+`test` or `rebuild` to use a pre-assembled one. Local x86_64 hosts can build
+aarch64 with `qemu-system-aarch64` and TCG; native aarch64 CI uses KVM when
+available. `RPMX_QEMU_SYSTEM` overrides the qemu-system binary path.
+
+Root assembly and test-root installation use podman's `--arch` and the host
+binfmt handler. Build steps use binfmt when the target is foreign and bubblewrap
+or qemu is selected; they do not use podman.
 
 The sandbox passes `RPMX_HOST_ARCH`, `RPMX_TARGET_ARCH` and `RPMX_CROSS` to
 steps. A runner that cannot execute the target fails with `RPMX-RUNNER-002`
@@ -375,10 +380,11 @@ explicit escape hatch.
   implemented. File capabilities are.
 - `-debugsource`, build-id debug links and per-subpackage debuginfo are not
   implemented.
-- Cross-compilation is not implemented. Native builds use bubblewrap; foreign
-  builds use a full qemu-system VM and require `qemu-system-<arch>` and a
-  locked, assembled transport appliance. The build root itself is not
-  bootable and does not need kernel or SSH packages.
+- Cross-compilation is not implemented. Native and foreign builds use
+  bubblewrap; foreign builds require host binfmt and run target binaries
+  through qemu-user. `--runner qemu` is the explicit full-VM path and requires
+  `qemu-system-<arch>` plus an assembled transport appliance. The build root
+  itself is not bootable and does not need kernel or SSH packages.
 - Repository snapshots, module streams and seccomp/cgroup enforcement are not
   implemented.
 - CPE is emitted in SBOMs, not in the RPM header.

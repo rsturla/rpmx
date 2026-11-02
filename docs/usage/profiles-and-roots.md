@@ -167,20 +167,15 @@ and `tar`. The appliance is resolved from the profile's repositories, but its
 package list is owned by rpmx; do not add those packages to
 `packages.install`.
 
-`rpmx root resolve` includes the appliance by default. Use `--appliance never`
-for a profile whose repositories cannot provide one, or `--appliance always`
-to force it for a lock that will later be rebuilt on another architecture.
+The appliance is a runner asset, not part of the root lock. A QEMU build
+resolves and assembles it on demand and caches it under
+`$XDG_CACHE_HOME/rpmx/appliances/<identity>/root`. Use
+`rpmx runner resolve|assemble|inspect` to manage it explicitly, or pass
+`--runner-asset-root DIR` to `build`, `source`, `test` or `rebuild` to use a
+preassembled one.
 
-```console
-rpmx root resolve profiles/fedora-44.yaml --appliance always --output root.lock.yaml
-rpmx root assemble root.lock.yaml --root ./root --appliance-root ./appliance
-rpmx build package.yaml --root-lock root.lock.yaml --root ./root
-```
-
-`root assemble` writes an appliance it can reuse to
-`$XDG_CACHE_HOME/rpmx/appliances/<identity>/root` unless `--appliance-root`
-names a directory. `--offline` never resolves; a QEMU build whose lock has no
-appliance fails with `RPMX-ROOT-020`.
+`--offline` never resolves an appliance; an uncached one is
+`RPMX-ROOT-020`.
 
 The appliance can also be handled on its own:
 
