@@ -62,6 +62,8 @@ build:
     tools: [make]
     # A target library: it belongs in the sysroot, not the build root.
     host: [zlib-devel]
+    # The installed test needs the runtime library in its target test root.
+    tests: [zlib]
   pipeline:
     - uses: make/build
     - uses: make/install
@@ -80,4 +82,9 @@ tests:
     pipeline:
       - runs: |
           aarch64-linux-gnu-readelf -h c-hello-cross | grep -q 'AArch64'
+  # The installed test runs the target binary in a target test root, which
+  # proves the packaged dynamic links resolve on the real architecture.
+  - name: installed
+    stage: installed
+    argv: ["c-hello-cross"]
 
