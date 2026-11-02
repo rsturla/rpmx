@@ -71,7 +71,11 @@ pub fn run(args: TestArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
         }
         None => None,
     };
-    let automatic = if args.root_lock.is_none() && args.root.is_none() {
+    // Prebuilt RPMs plus a pinned test root are self-contained: a machine that
+    // is not the build host (for example the target itself) must not need the
+    // build root or the cross profile just to run the tests.
+    let standalone = args.install_dir.is_some() && args.test_root_lock.is_some();
+    let automatic = if !standalone && args.root_lock.is_none() && args.root.is_none() {
         crate::commands::autoroot::ensure(
             &bundle.recipe,
             &plan,
@@ -93,7 +97,9 @@ pub fn run(args: TestArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
         .root
         .clone()
         .or_else(|| automatic.as_ref().map(|root| root.root.clone()));
-    if root_lock.is_none() || (args.install_dir.is_none() && root.is_none()) {
+    if (root_lock.is_none() && args.test_root_lock.is_none())
+        || (args.install_dir.is_none() && root.is_none())
+    {
         return Err(Error::new(
             codes::ROOT_016,
             "tests need a build root; set build.root, pass --profile, or pass --root-lock and --root",
@@ -144,10 +150,22 @@ pub fn run(args: TestArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
                 .collect()
         });
     if let Some((rpms, tests, tools)) = installed {
+        // A cross package is tested in a target root, which is the sysroot
+        // lock, not the host build root. An explicit --test-root-lock wins.
+        let test_lock = args
+            .test_root_lock
+            .clone()
+            .or_else(|| {
+                automatic
+                    .as_ref()
+                    .and_then(|root| root.sysroot.as_ref())
+                    .map(|sysroot| sysroot.lock.clone())
+            })
+            .or_else(|| root_lock.clone());
         return run_installed(
             &args,
             &arch,
-            root_lock.as_deref().expect("checked above"),
+            test_lock.as_deref().expect("checked above"),
             &rpms,
             &tests,
             &tools,
@@ -279,7 +297,7 @@ fn run_installed(
     let tools: Vec<String> = tools.iter().cloned().collect();
     let prepared = prepare_test_root(TestRootOptions {
         lock: &lock,
-        pinned: None,
+        pinned: args.test_root_lock.as_deref(),
         tools: &tools,
         rpms,
         image: lock.builder.as_ref().map(|builder| builder.image.as_str()),

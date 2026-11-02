@@ -104,9 +104,32 @@ sysroot's architecture. Without `--arch`, the output goes to
 
 - `tests: stage: build` runs in the build sandbox and crosses like any step.
 - `tests: stage: installed` runs the packaged target binary in a target test
-  root assembled from the sysroot lock. The test root is a target-architecture
-  root, so executing it needs binfmt or a real target machine; `tests:` lists
-  the packages that root needs.
+  root assembled from the sysroot lock, so it needs the target architecture to
+  be executable: binfmt on the build host, or a machine of that architecture.
+
+### Building and testing separately
+
+`rpmx build` runs no tests unless `--run-tests` is passed, so a fast host can
+produce packages and a capable machine can test them:
+
+```console
+# build host: no installed tests, no binfmt
+rpmx build package.yaml
+
+# test host of the target architecture: no binfmt, no build root
+rpmx test package.yaml --install-dir packages/aarch64 --profile native-aarch64.profile.yaml
+```
+
+The test host uses a *native* profile for its own architecture; the `cross`
+block describes the build host and is not used there. To avoid resolving the
+test root again, ship the `*.test-root.lock.json` the build writes and pin it:
+
+```console
+rpmx test package.yaml --install-dir DIR --test-root-lock DIR/pkg.test-root.lock.json --offline
+```
+
+The pinned form still needs the test root's packages in the local cache and the
+builder image available, because it assembles the root from the lock.
 
 ## Limitations
 

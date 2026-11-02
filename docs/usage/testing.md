@@ -29,7 +29,11 @@ rpmx test --install-dir packages/x86_64 --json --junit report.xml
 - Runs installed-stage tests only. With no `--test`, build-stage tests are
   skipped; naming one is an error.
 - Needs a root lock, not an assembled `--root`; the test root is prepared from
-  the lock and the supplied RPMs.
+  the lock and the supplied RPMs. For a cross package the target sysroot lock
+  is used, so the test root is the target architecture.
+- `--test-root-lock FILE` pins the test root instead of resolving one. With
+  `--install-dir` the pair is self-contained: no build root, no profile and no
+  resolution, so tests can run where the package's architecture is native.
 - JSON: `{schema, ok, command: "test", tests: [{name, stage, ok, duration_ms,
   message}]}`.
 - Exit 6 on failure.

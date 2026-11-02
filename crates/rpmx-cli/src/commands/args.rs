@@ -317,6 +317,9 @@ pub struct TestArgs {
     /// Root lock for the test environment.
     #[arg(long)]
     pub root_lock: Option<PathBuf>,
+    /// Pin the test environment to this lock instead of resolving one.
+    #[arg(long, value_name = "FILE")]
+    pub test_root_lock: Option<PathBuf>,
     /// Assembled root for the test environment.
     #[arg(long, requires = "root_lock")]
     pub root: Option<PathBuf>,

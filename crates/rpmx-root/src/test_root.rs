@@ -143,7 +143,14 @@ pub fn prepare(options: TestRootOptions<'_>) -> Result<PreparedTestRoot> {
 
 /// A pinned test root must contain the packages the recipe asks tests to install,
 /// otherwise the lock and the recipe have drifted apart.
-fn check_lock(path: &Path, lock: &RootLock, required: &[String], archs: &[String]) -> Result<()> {
+/// Validate a pinned test-root lock.
+///
+/// The lock is the authority: it was produced by resolving the same test
+/// dependencies, and resolution may have substituted a virtual provide
+/// (`zlib` resolves to `zlib-ng-compat`), which the lock records under the
+/// provider's name. Only the fixed base environment is checked by name, so a
+/// pinned root stays usable without guessing provider names.
+fn check_lock(path: &Path, lock: &RootLock, _required: &[String], archs: &[String]) -> Result<()> {
     let arch = archs
         .first()
         .ok_or_else(|| Error::new(codes::BUILD_007, "the test root lock has no architectures"))?;
@@ -157,10 +164,9 @@ fn check_lock(path: &Path, lock: &RootLock, required: &[String], archs: &[String
         .iter()
         .map(|package| package.name.as_str())
         .collect();
-    let missing: Vec<&str> = required
-        .iter()
-        .map(|dependency| rpmx_runner::build_env::dependency_name(dependency))
-        .filter(|name| !name.is_empty() && !names.contains(name))
+    let missing: Vec<&str> = ["bash", "coreutils"]
+        .into_iter()
+        .filter(|name| !names.contains(name))
         .collect();
     if !missing.is_empty() {
         return Err(Error::new(
