@@ -58,15 +58,13 @@ impl Cataloger for NodeInstalled {
             if governed_by_lock(directory, context.root()) {
                 continue;
             }
-            let mut installed = parse_installed(
+            let production = production_names_for_install(directory, context.root())?;
+            components.extend(parse_installed(
                 directory,
                 &context.relative(directory),
                 context.auto_outputs(),
-            )?;
-            if let Some(production) = production_names_for_install(directory, context.root())? {
-                installed.retain(|component| production.contains(&component.name));
-            }
-            components.extend(installed);
+                production.as_ref(),
+            )?);
         }
         Ok(components)
     }
@@ -76,10 +74,9 @@ fn production_names_for_install(
     node_modules: &Path,
     root: &Path,
 ) -> Result<Option<std::collections::BTreeSet<String>>> {
-    let manifest = root.join("package.json");
-    if !manifest.is_file() {
+    let Some(manifest) = governing_manifest(node_modules, root) else {
         return Ok(None);
-    }
+    };
     let text = read_text(&manifest)?;
     let value: Value = match serde_json::from_str(&text) {
         Ok(value) => value,
@@ -90,12 +87,7 @@ fn production_names_for_install(
         let Some(dependencies) = value.get(key).and_then(Value::as_object) else {
             continue;
         };
-        for (name, spec) in dependencies {
-            pending.insert(name.clone());
-            if let Some(target) = spec.as_str().and_then(npm_alias_target) {
-                pending.insert(target.to_string());
-            }
-        }
+        pending.extend(dependencies.keys().cloned());
     }
 
     let installed = installed_dependencies(node_modules)?;
@@ -109,6 +101,21 @@ fn production_names_for_install(
         }
     }
     Ok(Some(allowed))
+}
+
+fn governing_manifest(node_modules: &Path, root: &Path) -> Option<std::path::PathBuf> {
+    let mut current = node_modules.parent();
+    while let Some(directory) = current {
+        let manifest = directory.join("package.json");
+        if manifest.is_file() {
+            return Some(manifest);
+        }
+        if directory == root {
+            break;
+        }
+        current = directory.parent();
+    }
+    None
 }
 
 fn installed_dependencies(
@@ -156,24 +163,12 @@ fn read_dependencies(
         let Some(values) = value.get(key).and_then(Value::as_object) else {
             continue;
         };
-        for (dependency, spec) in values {
+        for (dependency, _) in values {
             dependencies.insert(dependency.clone());
-            if let Some(target) = spec.as_str().and_then(npm_alias_target) {
-                dependencies.insert(target.to_string());
-            }
         }
     }
     result.insert(name.to_string(), dependencies);
     Ok(())
-}
-
-fn npm_alias_target(spec: &str) -> Option<&str> {
-    let target = spec.strip_prefix("npm:")?;
-    let start = usize::from(target.starts_with('@'));
-    match target[start..].find('@') {
-        Some(at) => Some(&target[..start + at]),
-        None => Some(target),
-    }
 }
 
 /// A lockfile is the production set. Once one is present, the lock-specific
@@ -292,6 +287,7 @@ fn parse_installed(
     node_modules: &Path,
     evidence: &str,
     outputs: &BTreeSet<String>,
+    allowed: Option<&BTreeSet<String>>,
 ) -> Result<Vec<Component>> {
     let mut components = Vec::new();
     for entry in rpmx_base::io::sorted_entries(node_modules, codes::BUNDLED_003)? {
@@ -303,11 +299,19 @@ fn parse_installed(
         }
         if name.starts_with('@') {
             for scoped in rpmx_base::io::sorted_entries(&path, codes::BUNDLED_003)? {
-                if scoped.file_type().is_ok_and(|kind| kind.is_dir()) {
-                    read_package(&scoped.path(), evidence, outputs, &mut components)?;
+                if !scoped.file_type().is_ok_and(|kind| kind.is_dir()) {
+                    continue;
                 }
+                let scoped_name = format!("{}/{}", name, scoped.file_name().to_string_lossy());
+                if allowed.is_some_and(|allowed| !allowed.contains(&scoped_name)) {
+                    continue;
+                }
+                read_package(&scoped.path(), evidence, outputs, &mut components)?;
             }
         } else {
+            if allowed.is_some_and(|allowed| !allowed.contains(name.as_ref())) {
+                continue;
+            }
             read_package(&path, evidence, outputs, &mut components)?;
         }
     }

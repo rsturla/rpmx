@@ -900,3 +900,110 @@ fn installed_node_modules_without_a_lockfile_still_filters_dev_dependencies() {
         "{provides:?}"
     );
 }
+
+#[test]
+fn yarn_berry_splits_grouped_descriptors() {
+    let directory = tempdir().expect("tempdir");
+    let root = directory.path();
+    let plan = recipe(root);
+    let cells = plan.cells.iter().collect::<Vec<_>>();
+    write(root, "package.json", r#"{"dependencies":{"foo":"^1.1.0"}}"#);
+    write(root, ".yarn/cache/foo-npm-1.2.0-abcdef.zip", "");
+    write(
+        root,
+        "yarn.lock",
+        r#"__metadata:
+  version: 8
+  cacheKey: 10c0
+
+"foo@npm:^1.0.0, foo@npm:^1.1.0":
+  version: 1.2.0
+  resolution: "foo@npm:1.2.0"
+"#,
+    );
+    let inventory = discover(root, &cells).expect("berry");
+    assert!(inventory
+        .provides_for(&plan.cells[0].outputs[0])
+        .contains(&"bundled(nodejs-foo) = 1.2.0".to_string()));
+}
+
+#[test]
+fn lockless_install_uses_its_own_package_manifest() {
+    let directory = tempdir().expect("tempdir");
+    let root = directory.path();
+    let plan = recipe(root);
+    let cells = plan.cells.iter().collect::<Vec<_>>();
+    write(
+        root,
+        "web/package.json",
+        r#"{"dependencies":{"left-pad":"^1.0.0"},"devDependencies":{"dev-only":"^1.0.0"}}"#,
+    );
+    write(
+        root,
+        "web/node_modules/left-pad/package.json",
+        r#"{"name":"left-pad","version":"1.3.0"}"#,
+    );
+    write(
+        root,
+        "web/node_modules/dev-only/package.json",
+        r#"{"name":"dev-only","version":"9.9.9"}"#,
+    );
+    let inventory = discover(root, &cells).expect("installed");
+    let provides = inventory.provides_for(&plan.cells[0].outputs[0]);
+    assert!(
+        provides.contains(&"bundled(nodejs-left-pad) = 1.3.0".to_string()),
+        "{provides:?}"
+    );
+    assert!(
+        !provides.iter().any(|provide| provide.contains("dev-only")),
+        "{provides:?}"
+    );
+}
+
+#[test]
+fn pnpm_does_not_select_a_dev_version_of_a_production_name() {
+    let directory = tempdir().expect("tempdir");
+    let root = directory.path();
+    let plan = recipe(root);
+    let cells = plan.cells.iter().collect::<Vec<_>>();
+    write(
+        root,
+        "node_modules/.pnpm/foo@2.0.0/node_modules/foo/package.json",
+        r#"{"name":"foo","version":"2.0.0"}"#,
+    );
+    write(
+        root,
+        "pnpm-lock.yaml",
+        r#"lockfileVersion: '9.0'
+
+importers:
+  .:
+    dependencies:
+      foo:
+        specifier: ^1.0.0
+        version: 1.0.0
+    devDependencies:
+      foo:
+        specifier: ^2.0.0
+        version: 2.0.0
+
+packages:
+  foo@1.0.0:
+    resolution: {integrity: sha512-example}
+  foo@2.0.0:
+    resolution: {integrity: sha512-example}
+
+snapshots:
+  foo@1.0.0: {}
+  foo@2.0.0: {}
+"#,
+    );
+    let inventory = discover(root, &cells).expect("pnpm");
+    let provides = inventory.provides_for(&plan.cells[0].outputs[0]);
+    assert!(
+        !provides
+            .iter()
+            .any(|provide| provide.contains("nodejs-foo")),
+        "{provides:?}"
+    );
+}

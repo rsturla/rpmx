@@ -184,6 +184,7 @@ fn valid_name(name: &str) -> bool {
 
 fn valid_version(version: &str) -> bool {
     !version.is_empty()
+        && version.is_ascii()
         && !version.chars().any(|ch| {
             ch.is_whitespace()
                 || ch.is_control()

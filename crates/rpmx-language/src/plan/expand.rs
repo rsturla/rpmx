@@ -214,6 +214,7 @@ fn validate_bundled(output: &Output) -> Result<()> {
         }
         if let Some(version) = &declaration.version {
             if version.is_empty()
+                || !version.is_ascii()
                 || version.chars().any(|ch| {
                     ch.is_whitespace()
                         || ch.is_control()

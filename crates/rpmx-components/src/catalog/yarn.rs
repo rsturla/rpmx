@@ -87,9 +87,28 @@ fn production_descriptors(root: &Path) -> Result<Option<BTreeSet<String>>> {
         Err(_) => return Ok(None),
     };
     let mut manifests = vec![(root_manifest, root_value.clone())];
-    if root_value.get("workspaces").is_some() {
+    let workspace_patterns = workspace_patterns(&root_value);
+    if !workspace_patterns.is_empty() {
+        let mut builder = globset::GlobSetBuilder::new();
+        for pattern in workspace_patterns {
+            let pattern = pattern.trim_end_matches('/');
+            let pattern = format!("{pattern}/package.json");
+            let glob = globset::Glob::new(&pattern).map_err(|error| {
+                Error::new(
+                    codes::BUNDLED_001,
+                    format!("invalid workspace pattern '{pattern}': {error}"),
+                )
+            })?;
+            builder.add(glob);
+        }
+        let globs = builder.build().map_err(|error| {
+            Error::new(
+                codes::BUNDLED_001,
+                format!("cannot build workspace matcher: {error}"),
+            )
+        })?;
         let mut paths = Vec::new();
-        collect_workspace_manifests(root, root, 0, &mut paths)?;
+        collect_workspace_manifests(root, &globs, root, 0, &mut paths)?;
         for path in paths {
             if let Ok(text) = read_text(&path) {
                 if let Ok(value) = serde_json::from_str(&text) {
@@ -114,8 +133,29 @@ fn production_descriptors(root: &Path) -> Result<Option<BTreeSet<String>>> {
     Ok(Some(descriptors))
 }
 
+fn workspace_patterns(value: &Value) -> Vec<String> {
+    let workspaces = value.get("workspaces");
+    let entries = workspaces
+        .and_then(|workspaces| {
+            workspaces.as_array().cloned().or_else(|| {
+                workspaces
+                    .get("packages")
+                    .and_then(Value::as_array)
+                    .cloned()
+            })
+        })
+        .unwrap_or_default();
+    entries
+        .iter()
+        .filter_map(Value::as_str)
+        .filter(|pattern| !pattern.starts_with('!'))
+        .map(str::to_string)
+        .collect()
+}
+
 fn collect_workspace_manifests(
     root: &Path,
+    globs: &globset::GlobSet,
     directory: &Path,
     depth: u8,
     manifests: &mut Vec<PathBuf>,
@@ -143,9 +183,12 @@ fn collect_workspace_manifests(
         }
         let manifest = path.join("package.json");
         if depth > 0 && manifest.is_file() {
-            manifests.push(manifest);
+            let relative = manifest.strip_prefix(root).unwrap_or(&manifest);
+            if globs.is_match(relative) {
+                manifests.push(manifest);
+            }
         }
-        collect_workspace_manifests(root, &path, depth + 1, manifests)?;
+        collect_workspace_manifests(root, globs, &path, depth + 1, manifests)?;
     }
     Ok(())
 }
@@ -423,10 +466,14 @@ fn parse_berry(text: &str, evidence: &str) -> Result<Vec<Entry>> {
         let Some(name) = resolution_name(resolution).or_else(|| selector_name(selector)) else {
             continue;
         };
-        let mut descriptors = BTreeSet::from([selector.to_string()]);
-        if let Some((name, range)) = selector.split_once("@npm:") {
-            if !range.is_empty() && !name.is_empty() {
-                descriptors.insert(format!("{name}@{range}"));
+        let mut descriptors = BTreeSet::new();
+        for part in selector.split(',') {
+            let part = part.trim().trim_matches('"');
+            descriptors.insert(part.to_string());
+            if let Some((name, range)) = part.split_once("@npm:") {
+                if !range.is_empty() && !name.is_empty() {
+                    descriptors.insert(format!("{name}@{range}"));
+                }
             }
         }
         result.push(Entry {

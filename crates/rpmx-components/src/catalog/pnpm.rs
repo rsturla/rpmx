@@ -124,7 +124,7 @@ fn parse(
         });
     }
 
-    let production = production_names(&mapping);
+    let production = production_seeds(&mapping);
     let selected = match production {
         Some(production) => reachable(&parsed, &production),
         None => parsed.iter().map(|_| true).collect::<Vec<_>>(),
@@ -154,7 +154,7 @@ struct ParsedEntry {
     name: String,
     version: String,
     dev: bool,
-    dependencies: BTreeSet<String>,
+    dependencies: BTreeMap<String, Option<String>>,
 }
 
 fn is_true(entry: &Value, key: &str) -> bool {
@@ -165,28 +165,35 @@ fn is_true(entry: &Value, key: &str) -> bool {
         .unwrap_or(false)
 }
 
-fn dependency_names(entry: &Value) -> BTreeSet<String> {
-    let mut names = BTreeSet::new();
+fn dependency_names(entry: &Value) -> BTreeMap<String, Option<String>> {
+    let mut dependencies = BTreeMap::new();
     let Some(entry) = entry.as_mapping() else {
-        return names;
+        return dependencies;
     };
     for key in ["dependencies", "optionalDependencies"] {
-        let Some(dependencies) = entry
+        let Some(values) = entry
             .get(Value::String(key.to_string()))
             .and_then(Value::as_mapping)
         else {
             continue;
         };
-        for (name, _) in dependencies {
-            if let Some(name) = name.as_str() {
-                names.insert(name.to_string());
-            }
+        for (name, value) in values {
+            let Some(name) = name.as_str() else {
+                continue;
+            };
+            let version = value
+                .as_mapping()
+                .and_then(|value| value.get(Value::String("version".to_string())))
+                .and_then(Value::as_str)
+                .or_else(|| value.as_str())
+                .and_then(clean_version);
+            dependencies.insert(name.to_string(), version);
         }
     }
-    names
+    dependencies
 }
 
-fn production_names(mapping: &serde_yaml_ng::Mapping) -> Option<BTreeSet<String>> {
+fn production_seeds(mapping: &serde_yaml_ng::Mapping) -> Option<Vec<(String, Option<String>)>> {
     let importers = mapping
         .get(Value::String("importers".to_string()))
         .and_then(Value::as_mapping);
@@ -202,9 +209,9 @@ fn production_names(mapping: &serde_yaml_ng::Mapping) -> Option<BTreeSet<String>
         }
     };
     if roots.is_empty() {
-        return Some(BTreeSet::new());
+        return Some(Vec::new());
     }
-    let mut names = BTreeSet::new();
+    let mut seeds = BTreeSet::new();
     for root in roots {
         for key in ["dependencies", "optionalDependencies"] {
             let Some(dependencies) = root
@@ -213,29 +220,77 @@ fn production_names(mapping: &serde_yaml_ng::Mapping) -> Option<BTreeSet<String>
             else {
                 continue;
             };
-            for (name, _) in dependencies {
-                if let Some(name) = name.as_str() {
-                    names.insert(name.to_string());
-                }
+            for (name, value) in dependencies {
+                let Some(name) = name.as_str() else {
+                    continue;
+                };
+                let specifier = value
+                    .as_mapping()
+                    .and_then(|value| value.get(Value::String("specifier".to_string())))
+                    .and_then(Value::as_str);
+                let version = value
+                    .as_mapping()
+                    .and_then(|value| value.get(Value::String("version".to_string())))
+                    .and_then(Value::as_str)
+                    .or_else(|| value.as_str());
+                let (name, version) = if let Some(target) = specifier.and_then(npm_alias_target) {
+                    (target.to_string(), version.and_then(clean_version))
+                } else {
+                    (name.to_string(), version.and_then(clean_version))
+                };
+                seeds.insert((name, version));
             }
         }
     }
-    Some(names)
+    Some(seeds.into_iter().collect())
 }
 
-fn reachable(entries: &[ParsedEntry], production: &BTreeSet<String>) -> Vec<bool> {
+fn npm_alias_target(spec: &str) -> Option<&str> {
+    let target = spec.strip_prefix("npm:")?;
+    let start = usize::from(target.starts_with('@'));
+    match target[start..].find('@') {
+        Some(at) => Some(&target[..start + at]),
+        None => Some(target),
+    }
+}
+
+fn reachable(entries: &[ParsedEntry], production: &[(String, Option<String>)]) -> Vec<bool> {
     let mut by_name: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
+    let mut by_key: BTreeMap<(&str, &str), Vec<usize>> = BTreeMap::new();
     for (index, entry) in entries.iter().enumerate() {
         by_name.entry(entry.name.as_str()).or_default().push(index);
+        by_key
+            .entry((entry.name.as_str(), entry.version.as_str()))
+            .or_default()
+            .push(index);
     }
     let mut selected = vec![false; entries.len()];
     let mut pending = production.iter().cloned().collect::<BTreeSet<_>>();
     let mut seen = BTreeSet::new();
-    while let Some(name) = pending.pop_first() {
-        if !seen.insert(name.clone()) {
+    while let Some((name, version)) = pending.pop_first() {
+        if !seen.insert((name.clone(), version.clone())) {
             continue;
         }
-        let Some(indexes) = by_name.get(name.as_str()) else {
+        let indexes = match version.as_deref() {
+            Some(version) => by_key.get(&(name.as_str(), version)),
+            None => by_name.get(name.as_str()),
+        };
+        let Some(indexes) = indexes else {
+            // Fall back to name-level when the lock does not expose the
+            // importer's exact resolved version.
+            if version.is_some() {
+                if let Some(indexes) = by_name.get(name.as_str()) {
+                    for index in indexes {
+                        selected[*index] = true;
+                        pending.extend(
+                            entries[*index]
+                                .dependencies
+                                .iter()
+                                .map(|(name, version)| (name.clone(), version.clone())),
+                        );
+                    }
+                }
+            }
             continue;
         };
         for index in indexes {
@@ -243,7 +298,12 @@ fn reachable(entries: &[ParsedEntry], production: &BTreeSet<String>) -> Vec<bool
                 continue;
             }
             selected[*index] = true;
-            pending.extend(entries[*index].dependencies.iter().cloned());
+            pending.extend(
+                entries[*index]
+                    .dependencies
+                    .iter()
+                    .map(|(name, version)| (name.clone(), version.clone())),
+            );
         }
     }
     selected
