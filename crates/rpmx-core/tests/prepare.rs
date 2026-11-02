@@ -4,7 +4,29 @@ use rpmx_core::binary_package::{prepare_binary_packages, BinaryPackageOptions};
 use rpmx_core::source_package::{prepare_source_packages, SourcePackageOptions};
 mod common;
 
+use rpmx_core::guest::CrossToolchain;
 use rpmx_core::{parse_recipe, plan};
+
+fn root_lock(arch: &str) -> rpmx_core::root::RootLock {
+    rpmx_core::root::RootLock {
+        document: rpmx_core::root::DOCUMENT.to_string(),
+        version: rpmx_core::root::VERSION,
+        profile: "test".to_string(),
+        archs: vec![arch.to_string()],
+        releasever: "44".to_string(),
+        dist_tag: None,
+        options: Default::default(),
+        prefix: "/usr".to_string(),
+        libdir: "/usr/lib64".to_string(),
+        debuginfo: false,
+        sbom: true,
+        repositories: Vec::new(),
+        packages: std::collections::BTreeMap::new(),
+        closure_digest: "sha512:00".to_string(),
+        root_digest: Some("sha512:00".to_string()),
+        builder: None,
+    }
+}
 
 const RECIPE: &str = r#"
 schema: 1
@@ -549,4 +571,85 @@ outputs:
         "excluded require is still present: {:?}",
         dependencies.requires
     );
+}
+
+#[test]
+fn a_cross_source_package_embeds_the_sysroot_and_toolchain() {
+    let (recipe, plan) = common::load(RECIPE);
+    let sources = tempfile::tempdir().expect("tempdir");
+    fs::write(sources.path().join("demo-1.0.tar.gz"), b"source").expect("source");
+    let build_root = root_lock("x86_64");
+    let sysroot = root_lock("aarch64");
+    let mut toolchain = CrossToolchain::new("aarch64-linux-gnu");
+    toolchain.cflags = vec!["-mcpu=x".to_string()];
+    toolchain.ldflags = vec!["-Wl,-z,now".to_string()];
+
+    let packages = prepare_source_packages(SourcePackageOptions {
+        recipe: &recipe,
+        plan: &plan,
+        recipe_bytes: RECIPE.as_bytes(),
+        recipe_digest: None,
+        recipe_includes: &[],
+        step_root: None,
+        sources: sources.path(),
+        source_date_epoch: 1_700_000_000,
+        root_lock: Some(&build_root),
+        sysroot_lock: Some(&sysroot),
+        cross: Some(&toolchain),
+        debuginfo: false,
+        sbom: true,
+    })
+    .expect("prepare cross SRPM");
+
+    let file = |path: &str| {
+        packages[0]
+            .files
+            .iter()
+            .find(|file| file.path == path)
+            .unwrap_or_else(|| panic!("{path} is missing from the SRPM"))
+    };
+    let sysroot_text = file("sysroot.lock.json");
+    let lock: serde_json::Value =
+        serde_json::from_slice(&file("package.lock.json").data).expect("package lock json");
+    let cross = lock.get("cross").expect("cross block");
+    assert_eq!(cross["triple"], "aarch64-linux-gnu");
+    assert_eq!(cross["sysroot"]["path"], "sysroot.lock.json");
+    assert_eq!(cross["cflags"][0], "-mcpu=x");
+    assert_eq!(cross["ldflags"][0], "-Wl,-z,now");
+    // The recorded digest covers the embedded file byte for byte.
+    assert_eq!(
+        cross["sysroot"]["digest"],
+        rpmx_core::srpm::sha512_hex(&sysroot_text.data)
+    );
+    // A native SRPM has no cross block.
+    let native = prepare_source_packages(SourcePackageOptions {
+        recipe: &recipe,
+        plan: &plan,
+        recipe_bytes: RECIPE.as_bytes(),
+        recipe_digest: None,
+        recipe_includes: &[],
+        step_root: None,
+        sources: sources.path(),
+        source_date_epoch: 1_700_000_000,
+        root_lock: Some(&build_root),
+        sysroot_lock: None,
+        cross: None,
+        debuginfo: false,
+        sbom: true,
+    })
+    .expect("prepare native SRPM");
+    let lock: serde_json::Value = serde_json::from_slice(
+        &native[0]
+            .files
+            .iter()
+            .find(|f| f.path == "package.lock.json")
+            .unwrap()
+            .data,
+    )
+    .expect("json");
+    assert!(lock.get("cross").is_none());
+    assert!(native[0]
+        .files
+        .iter()
+        .all(|file| file.path != "sysroot.lock.json"));
 }
