@@ -292,6 +292,11 @@ pub mod codes {
         /// Repository credentials are missing, unreadable, rejected by the
         /// server, or contain an invalid value.
         ROOT_019 = "RPMX-ROOT-019",
+        /// A VM build needs a QEMU appliance and the active lock has none.
+        ROOT_020 = "RPMX-ROOT-020",
+        /// A QEMU appliance lock is malformed, has an unsupported schema, or
+        /// its closure digest does not match.
+        ROOT_021 = "RPMX-ROOT-021",
         /// A file, symlink, or directory cannot be added to an RPM or SRPM.
         RPM_001 = "RPMX-RPM-001",
         /// The RPM library failed to build an SRPM.
@@ -312,6 +317,9 @@ pub mod codes {
         RUNNER_002 = "RPMX-RUNNER-002",
         /// The qemu runner backend failed (ssh, kernel, disk image, copy, or process setup).
         RUNNER_003 = "RPMX-RUNNER-003",
+        /// The QEMU appliance is missing, failed to boot, failed to mount the
+        /// build root, or failed to enter the chroot.
+        RUNNER_004 = "RPMX-RUNNER-004",
         /// A sandbox or process cannot be started.
         SANDBOX_001 = "RPMX-SANDBOX-001",
         /// A sandboxed step exited unsuccessfully.
@@ -368,6 +376,12 @@ pub mod codes {
         SOURCE_031 = "RPMX-SOURCE-031",
         /// The source snapshot tarball cannot be created or written.
         SOURCE_032 = "RPMX-SOURCE-032",
+        /// The recipe context directory is missing, escapes the recipe directory, or is not a directory.
+        SOURCE_033 = "RPMX-SOURCE-033",
+        /// A context file collides with an upstream source or another context entry.
+        SOURCE_034 = "RPMX-SOURCE-034",
+        /// The recipe context directory cannot be copied into the workspace.
+        SOURCE_035 = "RPMX-SOURCE-035",
         /// The SRPM input file cannot be read.
         SRPM_001 = "RPMX-SRPM-001",
         /// The SRPM output file cannot be created.

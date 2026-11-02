@@ -141,6 +141,8 @@ fn resolve_root(args: &ShellArgs, pipeline_dir: Option<&Path>) -> Result<PathBuf
         args.offline,
         false,
         &args.arch,
+        rpmx_core::runner::RunnerKind::Bwrap,
+        None,
     )?;
     automatic.map(|root| root.root).ok_or_else(|| {
         Error::new(

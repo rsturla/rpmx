@@ -24,6 +24,7 @@ pub(super) struct RebuildState {
     pub(super) builder_image: Option<String>,
     pub(super) locked_packages: BTreeSet<String>,
     pub(super) assembled_root: Option<PathBuf>,
+    pub(super) assembled_appliance: Option<PathBuf>,
     pub(super) signature_timestamp: Option<u32>,
 }
 
@@ -32,6 +33,7 @@ pub(super) fn prepare(
     signing: Option<&rpmx_rpm::sign::SigningKey>,
 ) -> Result<RebuildState, Error> {
     let work = crate::commands::WorkDir::new("rebuild")?;
+    rpmx_core::output::phase("prepare", format!("reading {}", request.file.display()));
     let extracted = extract_srpm(request.file, work.path())?;
     // Read the authoritative lock before unpacking the snapshot. The snapshot
     // is user-controlled recipe data and must not be able to replace it.
@@ -124,6 +126,17 @@ pub(super) fn prepare(
     }
 
     let selected_cell = cells[0].clone();
+    rpmx_core::output::phase(
+        "prepare",
+        format!(
+            "{}-{}-{} {} ({} build steps)",
+            selected_cell.package,
+            selected_cell.version,
+            selected_cell.release,
+            request.arch,
+            selected_cell.pipeline.len()
+        ),
+    );
 
     let stage = work.path().join("stage");
     std::fs::create_dir_all(&stage).map_err(|error| {
@@ -160,7 +173,11 @@ pub(super) fn prepare(
         }
     }
     let active_lock = requested_lock.or(embedded_lock);
+    if let Some(lock) = &active_lock {
+        crate::commands::autoroot::report_root(lock, &lock.profile, "locked");
+    }
 
+    let mut assembled_appliance: Option<PathBuf> = None;
     let assembled_root: Option<PathBuf> = if let Some(lock) = &active_lock {
         if request.root_image.is_some() {
             return Err(Error::new(
@@ -174,6 +191,12 @@ pub(super) fn prepare(
                 locked_packages.insert(package.name.clone());
             }
         }
+        let runner_kind = request.runner.parse::<rpmx_core::runner::RunnerKind>()?;
+        let needs_appliance = rpmx_core::appliance::Policy::Auto.should_resolve(
+            rpmx_core::Arch::current()?,
+            rpmx_core::Arch::parse(request.arch)?,
+            runner_kind,
+        );
         let path = match request.root {
             Some(root_path) if request.verify_root => {
                 RootSelection::verify(lock, root_path, request.arch)?.path
@@ -188,13 +211,29 @@ pub(super) fn prepare(
                     )
                 })?
             }
-            None => crate::commands::autoroot::ensure_from_lock(
+            None => {
+                let roots = crate::commands::autoroot::ensure_from_lock(
+                    lock,
+                    request.cache,
+                    request.offline,
+                    request.arch,
+                    needs_appliance,
+                    request.runner_asset_root,
+                )?;
+                assembled_appliance = roots.appliance;
+                roots.root
+            }
+        };
+        if request.root.is_some() {
+            assembled_appliance = crate::commands::autoroot::appliance_for(
                 lock,
                 request.cache,
                 request.offline,
+                runner_kind,
                 request.arch,
-            )?,
-        };
+                request.runner_asset_root,
+            )?;
+        }
         Some(path)
     } else {
         if request.root.is_some() {
@@ -225,6 +264,7 @@ pub(super) fn prepare(
         builder_image,
         locked_packages,
         assembled_root,
+        assembled_appliance,
         signature_timestamp,
     })
 }

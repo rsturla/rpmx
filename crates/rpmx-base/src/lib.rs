@@ -3,6 +3,7 @@ pub mod error;
 pub mod guest;
 pub mod hash;
 pub mod io;
+pub mod output;
 pub mod yaml;
 
 pub use arch::Arch;

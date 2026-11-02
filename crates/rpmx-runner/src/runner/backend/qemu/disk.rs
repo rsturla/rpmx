@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 
+use super::guest::{BUILD_PORT, CONTROL_PORT};
 use crate::runner::RunnerConfig;
 use rpmx_base::arch::Arch;
 use rpmx_base::error::{codes, Error, Result};
@@ -221,12 +222,12 @@ pub(super) fn find_initrd(root: &Path) -> Result<PathBuf> {
     ))
 }
 
-pub(super) fn make_disk(root: &Path, disk: &Path) -> Result<()> {
+pub(super) fn make_disk(root: &Path, disk: &Path, label: &str) -> Result<()> {
     let size = directory_size_kb(root)?
         .saturating_mul(2)
         .max(2 * 1024 * 1024);
     let output = Command::new("unshare")
-        .args(["-Ur", "mke2fs", "-q", "-t", "ext4", "-d"])
+        .args(["-Ur", "mke2fs", "-q", "-t", "ext4", "-L", label, "-d"])
         .arg(root)
         .arg("-F")
         .arg(disk)
@@ -289,8 +290,10 @@ pub(super) fn start_vm(
     config: &RunnerConfig<'_>,
     kernel: &Path,
     initrd: &Path,
-    disk: &Path,
-    port: u16,
+    appliance_disk: &Path,
+    build_disk: &Path,
+    control_port: u16,
+    build_port: u16,
     log: &Path,
 ) -> Result<std::process::Child> {
     let mut args = vec![
@@ -311,11 +314,15 @@ pub(super) fn start_vm(
         "-initrd".to_string(),
         initrd.display().to_string(),
         "-append".to_string(),
-        "console=ttyS0 root=/dev/vda rw".to_string(),
+        "console=ttyS0 root=LABEL=rpmx-appliance rw".to_string(),
         "-drive".to_string(),
-        format!("file={},format=raw,if=virtio", disk.display()),
+        format!("file={},format=raw,if=virtio", appliance_disk.display()),
+        "-drive".to_string(),
+        format!("file={},format=raw,if=virtio", build_disk.display()),
         "-netdev".to_string(),
-        format!("user,id=net0,restrict=on,hostfwd=tcp:127.0.0.1:{port}-:22"),
+        format!(
+            "user,id=net0,restrict=on,hostfwd=tcp:127.0.0.1:{control_port}-:{CONTROL_PORT},hostfwd=tcp:127.0.0.1:{build_port}-:{BUILD_PORT}"
+        ),
         "-device".to_string(),
         "virtio-net-pci,netdev=net0,romfile=".to_string(),
     ];

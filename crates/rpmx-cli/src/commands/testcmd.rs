@@ -71,6 +71,8 @@ pub fn run(args: TestArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
             args.offline,
             false,
             &args.arch,
+            args.runner.parse::<rpmx_core::runner::RunnerKind>()?,
+            args.runner_asset_root.as_deref(),
         )?
     } else {
         None
@@ -122,6 +124,7 @@ pub fn run(args: TestArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
         offline: args.offline,
         root_lock: root_lock.as_deref(),
         root: root.as_deref(),
+        runner_asset_root: args.runner_asset_root.as_deref(),
         unsafe_host_root: false,
         source_date_epoch: None,
         jobs: args.runtime.jobs,
@@ -232,8 +235,15 @@ fn run_installed(
         image: lock.builder.as_ref().map(|builder| builder.image.as_str()),
         cache: &cache,
         work: work.path(),
-        runner,
     })?;
+    let appliance = crate::commands::autoroot::appliance_for(
+        &lock,
+        Some(&cache),
+        args.offline,
+        runner,
+        &args.arch,
+        args.runner_asset_root.as_deref(),
+    )?;
     let source_date_epoch = 0;
     let timeout = NonZeroU64::new(3600).expect("timeout");
     let sandbox = Sandbox::new(SandboxConfig {
@@ -243,6 +253,7 @@ fn run_installed(
         workspace: &workspace,
         stage: &stage,
         root: Some(&prepared.path),
+        assets: rpmx_core::runner::RunnerAssets::new(appliance.as_deref(), &[]),
         image: None,
         prefix: &lock.prefix,
         libdir: &lock.libdir,
@@ -257,6 +268,7 @@ fn run_installed(
         host_arch: host,
         target_arch: target,
         runner,
+        assets: rpmx_core::runner::RunnerAssets::new(appliance.as_deref(), &[]),
         source_date_epoch,
         jobs: args.runtime.jobs,
         timeout,

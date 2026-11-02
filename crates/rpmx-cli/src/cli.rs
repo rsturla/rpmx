@@ -14,6 +14,17 @@ pub struct Cli {
     /// Echo step commands before they run.
     #[arg(long, global = true)]
     pub debug: bool,
+    /// List resolved detail such as every build-root package.
+    #[arg(long, global = true)]
+    pub verbose: bool,
+    /// Color progress lines: auto, always or never.
+    #[arg(
+        long,
+        global = true,
+        default_value = "auto",
+        value_parser = ["auto", "always", "never"]
+    )]
+    pub color: String,
     /// Emit machine-readable output where the command supports it.
     #[arg(long, global = true)]
     pub json: bool,
@@ -35,6 +46,7 @@ impl Cli {
             Command::Lock(_) => "lock",
             Command::Plan(_) => "plan",
             Command::Root { .. } => "root",
+            Command::Runner { .. } => "runner",
             Command::Fetch(_) => "fetch",
             Command::Source(_) => "source",
             Command::Srpm(_) => "srpm",
@@ -61,6 +73,16 @@ pub enum RootCommand {
     Export(crate::commands::RootExportArgs),
     /// Import a libpkgmanifest rpm-package-manifest as a root lock.
     Import(crate::commands::RootImportArgs),
+}
+
+#[derive(Debug, Subcommand)]
+pub enum RunnerCommand {
+    /// Resolve the locked runner asset (the QEMU appliance today).
+    Resolve(crate::commands::ApplianceResolveArgs),
+    /// Assemble a runner asset lock into the cache or an explicit directory.
+    Assemble(crate::commands::ApplianceAssembleArgs),
+    /// Print the runner asset closure and identity.
+    Inspect(crate::commands::ApplianceInspectArgs),
 }
 
 #[derive(Debug, Subcommand)]
@@ -119,6 +141,12 @@ pub enum Command {
     Root {
         #[command(subcommand)]
         command: RootCommand,
+    },
+    /// Resolve, assemble and inspect runner-owned locked assets.
+    #[command(alias = "appliance")]
+    Runner {
+        #[command(subcommand)]
+        command: RunnerCommand,
     },
     /// Populate the content-addressed cache from the recipe's locators.
     Fetch(crate::commands::FetchArgs),

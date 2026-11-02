@@ -3,7 +3,7 @@ use std::process::Command;
 
 use crate::profile::normalize_arch;
 use crate::root::container::{image_digest_for_arch, podman_run_assembly};
-use crate::root::lock::{PackageKey, RootLock};
+use crate::root::lock::{safe_staging_component, PackageKey, RootLock};
 use rpmx_base::error::{codes, Error, Result};
 use rpmx_store::cas;
 
@@ -62,6 +62,15 @@ pub fn assemble(lock: &RootLock, options: AssembleOptions<'_>) -> Result<std::pa
     let mut files = Vec::new();
     for (package_arch, entries) in &lock.packages {
         for package in entries {
+            if !safe_staging_component(package_arch)
+                || !safe_staging_component(&package.name)
+                || !safe_staging_component(&package.evr)
+            {
+                return Err(Error::new(
+                    codes::ROOT_012,
+                    "the lock contains a package name, EVR, or architecture that cannot be staged safely",
+                ));
+            }
             let filename = format!(
                 "{}-{}.{package_arch}.rpm",
                 package.name,
@@ -74,6 +83,10 @@ pub fn assemble(lock: &RootLock, options: AssembleOptions<'_>) -> Result<std::pa
                     format!("cannot stage {}: {error}", filename),
                 )
             })?;
+            rpmx_base::output::installing(format!(
+                "{}-{}.{package_arch}",
+                package.name, package.evr
+            ));
             files.push(format!("/work/rpms/{filename}"));
         }
     }

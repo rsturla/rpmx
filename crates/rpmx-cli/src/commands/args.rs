@@ -58,8 +58,8 @@ pub struct BuildArgs {
     /// Architecture for outputs that do not declare one.
     #[arg(long, default_value = rpmx_core::arch::native_arch())]
     pub arch: String,
-    /// Runner: auto, bwrap or qemu.
-    #[arg(long, default_value = "auto", value_parser = ["auto", "bwrap", "qemu"])]
+    /// Runner: auto, bwrap, podman or qemu.
+    #[arg(long, default_value = "auto", value_parser = ["auto", "bwrap", "podman", "qemu"])]
     pub runner: String,
     /// Reproducible timestamp in Unix seconds (default: package.source-date-epoch).
     #[arg(long)]
@@ -84,6 +84,9 @@ pub struct BuildArgs {
     /// Assembled root for source assembly and rebuild.
     #[arg(long)]
     pub root: Option<PathBuf>,
+    /// Use this assembled QEMU appliance instead of the cache.
+    #[arg(long, visible_alias = "appliance-root", value_name = "DIR")]
+    pub runner_asset_root: Option<PathBuf>,
     /// Use the host root for source assembly (unsafe).
     #[arg(long)]
     pub unsafe_host_root: bool,
@@ -124,8 +127,8 @@ pub struct RebuildArgs {
     /// Architecture for outputs that do not declare one.
     #[arg(long, default_value = rpmx_core::arch::native_arch())]
     pub arch: String,
-    /// Runner: auto, bwrap or qemu.
-    #[arg(long, default_value = "auto", value_parser = ["auto", "bwrap", "qemu"])]
+    /// Runner: auto, bwrap, podman or qemu.
+    #[arg(long, default_value = "auto", value_parser = ["auto", "bwrap", "podman", "qemu"])]
     pub runner: String,
     /// Build one matrix cell (required when the plan has several).
     #[arg(long)]
@@ -141,6 +144,9 @@ pub struct RebuildArgs {
     /// Assembled root directory.
     #[arg(long)]
     pub root: Option<PathBuf>,
+    /// Use this assembled QEMU appliance instead of the cache.
+    #[arg(long, visible_alias = "appliance-root", value_name = "DIR")]
+    pub runner_asset_root: Option<PathBuf>,
     /// Do not use the network; fail if the root is not cached.
     #[arg(long)]
     pub offline: bool,
@@ -290,8 +296,8 @@ pub struct TestArgs {
     /// Target architecture used for templates.
     #[arg(long, default_value = rpmx_core::arch::native_arch())]
     pub arch: String,
-    /// Runner: auto, bwrap or qemu.
-    #[arg(long, default_value = "auto", value_parser = ["auto", "bwrap", "qemu"])]
+    /// Runner: auto, bwrap, podman or qemu.
+    #[arg(long, default_value = "auto", value_parser = ["auto", "bwrap", "podman", "qemu"])]
     pub runner: String,
     /// Run only the named test; repeat for several.
     #[arg(long = "test", value_name = "NAME")]
@@ -308,6 +314,9 @@ pub struct TestArgs {
     /// Assembled root for the test environment.
     #[arg(long, requires = "root_lock")]
     pub root: Option<PathBuf>,
+    /// Use this assembled QEMU appliance instead of the cache.
+    #[arg(long, visible_alias = "appliance-root", value_name = "DIR")]
+    pub runner_asset_root: Option<PathBuf>,
     #[command(flatten)]
     pub runtime: RuntimeArgs,
     /// Do not use the network; fail on a cache miss.
@@ -371,8 +380,8 @@ pub struct SourceArgs {
     /// Target architecture used for templates.
     #[arg(long, default_value = rpmx_core::arch::native_arch())]
     pub arch: String,
-    /// Runner: auto, bwrap or qemu.
-    #[arg(long, default_value = "auto", value_parser = ["auto", "bwrap", "qemu"])]
+    /// Runner: auto, bwrap, podman or qemu.
+    #[arg(long, default_value = "auto", value_parser = ["auto", "bwrap", "podman", "qemu"])]
     pub runner: String,
     #[command(flatten)]
     pub policy: crate::cli::PolicyArgs,
@@ -393,6 +402,9 @@ pub struct SourceArgs {
     /// Assembled root for source assembly.
     #[arg(long)]
     pub root: Option<PathBuf>,
+    /// Use this assembled QEMU appliance instead of the cache.
+    #[arg(long, visible_alias = "appliance-root", value_name = "DIR")]
+    pub runner_asset_root: Option<PathBuf>,
     /// Use the host root for source assembly (unsafe).
     #[arg(long)]
     pub unsafe_host_root: bool,
@@ -423,8 +435,8 @@ pub struct SrpmArgs {
     /// Build architecture recorded in the source header.
     #[arg(long, default_value = rpmx_core::arch::native_arch())]
     pub arch: String,
-    /// Runner: auto, bwrap or qemu.
-    #[arg(long, default_value = "auto", value_parser = ["auto", "bwrap", "qemu"])]
+    /// Runner: auto, bwrap, podman or qemu.
+    #[arg(long, default_value = "auto", value_parser = ["auto", "bwrap", "podman", "qemu"])]
     pub runner: String,
     /// Reproducible timestamp in Unix seconds (default: package.source-date-epoch).
     #[arg(long)]
@@ -469,6 +481,14 @@ pub struct RootResolveArgs {
     /// Keep the resolver scratch directory.
     #[arg(long)]
     pub keep: bool,
+    /// Resolve the QEMU transport appliance with the root.
+    #[arg(
+        long,
+        value_name = "POLICY",
+        default_value = "always",
+        value_parser = parse_appliance_policy
+    )]
+    pub appliance: rpmx_core::appliance::Policy,
     #[command(flatten)]
     pub cache: CacheArgs,
 }
@@ -491,6 +511,59 @@ pub struct RootAssembleArgs {
     /// Keep the assembly scratch directory.
     #[arg(long)]
     pub keep: bool,
+    /// Assemble the QEMU appliance here (default: its content-addressed cache).
+    #[arg(long, visible_alias = "appliance-root", value_name = "DIR")]
+    pub runner_asset_root: Option<PathBuf>,
+    /// Assemble only the build root, not the QEMU appliance.
+    #[arg(long)]
+    pub no_appliance: bool,
+}
+
+fn parse_appliance_policy(value: &str) -> Result<rpmx_core::appliance::Policy, String> {
+    value
+        .parse::<rpmx_core::appliance::Policy>()
+        .map_err(|error| error.message)
+}
+
+#[derive(Debug, clap::Args)]
+pub struct ApplianceResolveArgs {
+    /// Profile supplying repositories, releasever and the builder image.
+    pub profile: PathBuf,
+    /// Write the standalone appliance lock here (default: standard output).
+    #[arg(long, short)]
+    pub output: Option<PathBuf>,
+    /// Resolver scratch directory (default: a temporary directory).
+    #[arg(long)]
+    pub work: Option<PathBuf>,
+    /// Keep the resolver scratch directory.
+    #[arg(long)]
+    pub keep: bool,
+    #[command(flatten)]
+    pub cache: CacheArgs,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct ApplianceAssembleArgs {
+    /// Standalone appliance lock written by `rpmx appliance resolve`.
+    pub lock: PathBuf,
+    /// Assemble here instead of the content-addressed cache.
+    #[arg(long)]
+    pub root: Option<PathBuf>,
+    /// Do not use the network; fail if the appliance is not cached.
+    #[arg(long)]
+    pub offline: bool,
+    #[command(flatten)]
+    pub cache: CacheArgs,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct ApplianceInspectArgs {
+    /// Inspect the runner asset embedded in a root lock.
+    #[arg(long, conflicts_with = "asset_lock")]
+    pub root_lock: Option<PathBuf>,
+    /// Inspect a standalone runner asset lock.
+    #[arg(long, alias = "appliance-lock", conflicts_with = "root_lock")]
+    pub asset_lock: Option<PathBuf>,
 }
 
 #[derive(Debug, clap::Args)]

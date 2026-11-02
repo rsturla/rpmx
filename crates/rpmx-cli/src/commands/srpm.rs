@@ -57,6 +57,7 @@ pub fn run(args: SrpmArgs, pipeline_dir: Option<&Path>) -> Result<Vec<PathBuf>, 
                 locked: false,
                 root_lock: args.root_lock.as_deref(),
                 root: args.root.as_deref(),
+                runner_asset_root: None,
                 unsafe_host_root: args.unsafe_host_root,
                 verify_root: true,
                 output: &output,
@@ -164,12 +165,19 @@ pub fn execute(request: SrpmRequest<'_>) -> Result<Vec<PathBuf>, Error> {
 
     let mut written = Vec::new();
     for package in packages {
-        written.push(emit::source(
+        let identity = format!(
+            "{}-{}-{}.src.rpm",
+            package.name, package.version, package.release
+        );
+        rpmx_core::output::phase("srpm", &identity);
+        let path = emit::source(
             &package,
             request.output,
             signing.as_ref(),
             signature_timestamp,
-        )?);
+        )?;
+        rpmx_core::output::wrote(&path);
+        written.push(path);
     }
 
     if !request.quiet {
@@ -182,6 +190,14 @@ pub fn execute(request: SrpmRequest<'_>) -> Result<Vec<PathBuf>, Error> {
             }],
             signing.as_ref().map(|key| key.fingerprint()),
         )?;
+        rpmx_core::output::phase(
+            "done",
+            format!(
+                "{} in {}",
+                rpmx_core::output::count(written.len(), "artifact", "artifacts"),
+                request.output.display()
+            ),
+        );
     }
     Ok(written)
 }

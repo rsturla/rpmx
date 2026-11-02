@@ -126,6 +126,7 @@ pub fn resolve_profile(
             image,
             image_digest,
         }),
+        runner_assets: None,
     })
 }
 

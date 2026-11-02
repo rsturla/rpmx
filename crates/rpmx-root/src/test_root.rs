@@ -5,7 +5,7 @@ use crate::profile::{Packages, Profile};
 use crate::root::{self, RootLock};
 use rpmx_base::arch::Arch;
 use rpmx_base::error::{codes, Error, Result};
-use rpmx_runner::runner::{emulation_available, RunnerKind};
+use rpmx_runner::runner::emulation_available;
 
 pub struct TestRootOptions<'a> {
     pub lock: &'a RootLock,
@@ -15,7 +15,6 @@ pub struct TestRootOptions<'a> {
     pub image: Option<&'a str>,
     pub cache: &'a Path,
     pub work: &'a Path,
-    pub runner: RunnerKind,
 }
 
 pub struct PreparedTestRoot {
@@ -32,7 +31,6 @@ pub fn prepare(options: TestRootOptions<'_>) -> Result<PreparedTestRoot> {
             .ok_or_else(|| Error::new(codes::BUILD_007, "the test root has no architecture"))?,
     )?;
     let host = Arch::current()?;
-    let foreign = host != target || options.runner == RunnerKind::Qemu;
     if host != target && !emulation_available(target) {
         return Err(Error::new(
             codes::RUNNER_002,
@@ -53,26 +51,6 @@ pub fn prepare(options: TestRootOptions<'_>) -> Result<PreparedTestRoot> {
         })?;
 
     let mut install = vec!["bash".to_string(), "coreutils".to_string()];
-    if foreign {
-        // A QEMU-backed test root must boot itself, so it needs a kernel,
-        // initramfs, network, SSH and tar for the workspace transport.
-        install.extend(
-            [
-                "kernel-core",
-                "kernel-modules-core",
-                "kernel-modules",
-                "dracut",
-                "kmod",
-                "util-linux",
-                "systemd",
-                "systemd-networkd",
-                "openssh-server",
-                "tar",
-            ]
-            .iter()
-            .map(|package| package.to_string()),
-        );
-    }
     for tool in options.tools {
         let name = rpmx_runner::build_env::dependency_name(tool);
         if !name.is_empty() && !install.iter().any(|package| package == name) {

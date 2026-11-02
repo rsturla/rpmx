@@ -25,6 +25,7 @@ pub(super) struct TestRunOptions<'a> {
     pub(super) pinned_lock: Option<&'a Path>,
     pub(super) arch: &'a str,
     pub(super) runner: RunnerKind,
+    pub(super) appliance: Option<&'a Path>,
     pub(super) source_date_epoch: u32,
     pub(super) jobs: NonZeroU32,
     pub(super) timeout: NonZeroU64,
@@ -62,7 +63,6 @@ pub(super) fn run(options: TestRunOptions<'_>) -> Result<Option<PathBuf>, Error>
             image: options.builder_image,
             cache: &cache,
             work: options.work,
-            runner: options.runner,
         })?)
     } else {
         None
@@ -82,6 +82,7 @@ pub(super) fn run(options: TestRunOptions<'_>) -> Result<Option<PathBuf>, Error>
         host_arch: rpmx_core::arch::Arch::current()?,
         target_arch: rpmx_core::arch::Arch::parse(options.arch)?,
         runner: options.runner,
+        assets: rpmx_core::runner::RunnerAssets::new(options.appliance, &[]),
         source_date_epoch: options.source_date_epoch,
         jobs: options.jobs,
         timeout: options.timeout,

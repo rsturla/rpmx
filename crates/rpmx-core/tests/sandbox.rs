@@ -4,7 +4,7 @@ use std::process::Command;
 
 use rpmx_core::arch::Arch;
 use rpmx_core::plan::PlannedStep;
-use rpmx_core::runner::{Runner, RunnerConfig, RunnerKind, RunnerRequest, Session};
+use rpmx_core::runner::{Runner, RunnerAssets, RunnerConfig, RunnerKind, RunnerRequest, Session};
 use rpmx_core::sandbox::{Sandbox, SandboxConfig};
 
 fn config<'a>(workspace: &'a std::path::Path, stage: &'a std::path::Path) -> SandboxConfig<'a> {
@@ -16,6 +16,7 @@ fn config<'a>(workspace: &'a std::path::Path, stage: &'a std::path::Path) -> San
         workspace,
         stage,
         root: None,
+        assets: RunnerAssets::default(),
         image: None,
         prefix: "/usr",
         libdir: "/usr/lib64",

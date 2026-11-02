@@ -1,9 +1,10 @@
+use std::io::Write;
 use std::num::NonZeroU64;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-use crate::runner::{Runner, RunnerConfig, RunnerRequest, Session};
+use crate::runner::{Runner, RunnerAssetKind, RunnerConfig, RunnerRequest, Session};
 use rpmx_base::arch::Arch;
 use rpmx_base::error::{codes, Error, Result};
 
@@ -15,7 +16,10 @@ use disk::{
     command_exists, find_initrd, find_kernel, free_port, make_disk, qemu_binary, start_vm,
     unpack_kernel,
 };
-use guest::{generate_ssh_key, inject_network, inject_ssh};
+use guest::{
+    generate_ssh_key, inject_build_mount, inject_network, inject_ssh, known_hosts, APPLIANCE_LABEL,
+    BUILD_LABEL, BUILD_ROOT_MOUNT,
+};
 use ssh::{shell_quote, step_script, stream_command_output, stream_tar_in, stream_tar_out};
 
 pub struct QemuBackend<'a> {
@@ -44,13 +48,25 @@ struct QemuSession {
     temp: tempfile::TempDir,
     child: std::process::Child,
     ssh_key: PathBuf,
-    port: u16,
+    host_key: PathBuf,
+    known_hosts: PathBuf,
+    control_port: u16,
+    build_port: u16,
     log: PathBuf,
     timeout: NonZeroU64,
 }
 
 impl QemuSession {
     fn prepare(root: &Path, config: &RunnerConfig<'_>) -> Result<Box<dyn Session>> {
+        let appliance = config
+            .assets
+            .get(RunnerAssetKind::QemuAppliance)
+            .ok_or_else(|| {
+                Error::new(
+                    codes::RUNNER_004,
+                    "the qemu runner needs an assembled transport appliance; resolve and assemble one first",
+                )
+            })?;
         let qemu = qemu_binary(config.target)?;
         if !command_exists(&qemu) {
             return Err(Error::new(
@@ -64,73 +80,92 @@ impl QemuSession {
                 format!("cannot create qemu scratch directory: {error}"),
             )
         })?;
-        let kernel = unpack_kernel(&find_kernel(root)?, temp.path())?;
-        let initrd = find_initrd(root)?;
-        let disk = temp.path().join("root.img");
-        make_disk(root, &disk)?;
+        let kernel = unpack_kernel(&find_kernel(appliance)?, temp.path())?;
+        let initrd = find_initrd(appliance)?;
+        let appliance_disk = temp.path().join("appliance.img");
+        make_disk(appliance, &appliance_disk, APPLIANCE_LABEL)?;
+        let build_disk = temp.path().join("root.img");
+        make_disk(root, &build_disk, BUILD_LABEL)?;
 
         let ssh_key = temp.path().join("id_ed25519");
         generate_ssh_key(&ssh_key)?;
-        inject_ssh(root, &disk, &ssh_key.with_extension("pub"), temp.path())?;
-        inject_network(root, &disk, temp.path())?;
+        let host_key = temp.path().join("ssh_host_ed25519_key");
+        generate_ssh_key(&host_key)?;
+        inject_ssh(
+            appliance,
+            &appliance_disk,
+            &ssh_key.with_extension("pub"),
+            &host_key,
+            temp.path(),
+        )?;
+        inject_network(appliance, &appliance_disk, temp.path())?;
+        inject_build_mount(&appliance_disk, temp.path())?;
 
-        let port = free_port()?;
+        let control_port = free_port()?;
+        let build_port = free_port()?;
+        let known_hosts = known_hosts(
+            temp.path(),
+            &host_key.with_extension("pub"),
+            control_port,
+            build_port,
+        )?;
         let log = temp.path().join("qemu.log");
-        let child = start_vm(&qemu, config, &kernel, &initrd, &disk, port, &log)?;
+        let child = start_vm(
+            &qemu,
+            config,
+            &kernel,
+            &initrd,
+            &appliance_disk,
+            &build_disk,
+            control_port,
+            build_port,
+            &log,
+        )?;
         let mut session = Self {
             workspace: config.workspace.to_path_buf(),
             stage: config.stage.to_path_buf(),
             temp,
             child,
             ssh_key,
-            port,
+            host_key,
+            known_hosts,
+            control_port,
+            build_port,
             log,
             timeout: config.timeout,
         };
         session.wait_for_ssh()?;
-        session.copy_in(config.workspace, rpmx_base::guest::BUILD, "workspace")?;
-        session.copy_in(config.stage, rpmx_base::guest::STAGE, "stage")?;
+        session.copy_in(config.workspace, &Self::guest_build_path(), "workspace")?;
+        session.copy_in(config.stage, &Self::guest_stage_path(), "stage")?;
         Ok(Box::new(session))
     }
 
-    fn ssh_args(&self) -> Vec<String> {
-        vec![
-            "-T".to_string(),
-            "-o".to_string(),
-            "BatchMode=yes".to_string(),
-            "-o".to_string(),
-            "StrictHostKeyChecking=no".to_string(),
-            "-o".to_string(),
-            "UserKnownHostsFile=/dev/null".to_string(),
-            "-o".to_string(),
-            "LogLevel=ERROR".to_string(),
-            "-o".to_string(),
-            "ConnectTimeout=5".to_string(),
-            "-i".to_string(),
-            self.ssh_key.display().to_string(),
-            "-p".to_string(),
-            self.port.to_string(),
-            "root@127.0.0.1".to_string(),
-        ]
+    fn ssh_args(&self, port: u16) -> Vec<String> {
+        ssh_args_for(&self.known_hosts, &self.ssh_key, port)
     }
 
-    fn ssh_command_with_timeout(&self, command: &[&str], timeout: NonZeroU64) -> Command {
+    fn ssh_command_with_timeout(
+        &self,
+        port: u16,
+        command: &[&str],
+        timeout: NonZeroU64,
+    ) -> Command {
         let mut process = Command::new("timeout");
         process
             .arg("--signal=TERM")
             .arg("--kill-after=5")
             .arg(timeout.get().to_string())
             .arg("ssh");
-        process.args(self.ssh_args()).args(command);
+        process.args(self.ssh_args(port)).args(command);
         process
     }
 
-    fn ssh_command(&self, command: &[&str]) -> Command {
-        self.ssh_command_with_timeout(command, self.timeout)
+    fn ssh_command(&self, port: u16, command: &[&str]) -> Command {
+        self.ssh_command_with_timeout(port, command, self.timeout)
     }
 
-    fn ssh_child(&self, command: &[&str]) -> Result<Child> {
-        let mut process = self.ssh_command(command);
+    fn ssh_child(&self, port: u16, command: &[&str]) -> Result<Child> {
+        let mut process = self.ssh_command(port, command);
         process
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -140,23 +175,23 @@ impl QemuSession {
             .map_err(|error| Error::new(codes::RUNNER_003, format!("cannot run ssh: {error}")))
     }
 
-    /// Run a command over ssh, streaming stdout and stderr to the host while
-    /// retaining a bounded stderr tail for the step's error message.
     fn ssh_run(
         &self,
+        port: u16,
         command: &[&str],
         stdin: Option<&[u8]>,
     ) -> Result<(std::process::ExitStatus, Vec<u8>)> {
-        self.ssh_run_with_timeout(command, stdin, self.timeout)
+        self.ssh_run_with_timeout(port, command, stdin, self.timeout)
     }
 
     fn ssh_run_with_timeout(
         &self,
+        port: u16,
         command: &[&str],
         stdin: Option<&[u8]>,
         timeout: NonZeroU64,
     ) -> Result<(std::process::ExitStatus, Vec<u8>)> {
-        let mut process = self.ssh_command_with_timeout(command, timeout);
+        let mut process = self.ssh_command_with_timeout(port, command, timeout);
         process.stdin(if stdin.is_some() {
             Stdio::piped()
         } else {
@@ -176,42 +211,32 @@ impl QemuSession {
             if let Some(status) = self.child.try_wait().map_err(|error| {
                 Error::new(codes::RUNNER_003, format!("cannot poll qemu: {error}"))
             })? {
-                let log = std::fs::read_to_string(&self.log).unwrap_or_default();
                 return Err(Error::new(
-                    codes::RUNNER_003,
+                    codes::RUNNER_004,
                     format!(
-                        "qemu exited before ssh was ready ({status}):\n{}",
-                        log.lines()
-                            .rev()
-                            .take(12)
-                            .collect::<Vec<_>>()
-                            .into_iter()
-                            .rev()
-                            .collect::<Vec<_>>()
-                            .join("\n")
+                        "qemu exited before the appliance was ready ({status}):\n{}",
+                        log_tail(&self.log)
                     ),
                 ));
             }
             let probe_timeout = NonZeroU64::new(15).expect("non-zero probe timeout");
-            if let Ok((status, _)) = self.ssh_run_with_timeout(&["true"], None, probe_timeout) {
-                if status.success() {
+            if let Ok((status, _)) =
+                self.ssh_run_with_timeout(self.control_port, &["true"], None, probe_timeout)
+            {
+                if status.success()
+                    && self
+                        .ssh_run_with_timeout(self.build_port, &["true"], None, probe_timeout)
+                        .is_ok_and(|(status, _)| status.success())
+                {
                     return Ok(());
                 }
             }
             if Instant::now() >= deadline {
-                let log = std::fs::read_to_string(&self.log).unwrap_or_default();
                 return Err(Error::new(
-                    codes::RUNNER_003,
+                    codes::RUNNER_004,
                     format!(
-                        "qemu ssh did not become ready within 180s:\n{}",
-                        log.lines()
-                            .rev()
-                            .take(12)
-                            .collect::<Vec<_>>()
-                            .into_iter()
-                            .rev()
-                            .collect::<Vec<_>>()
-                            .join("\n")
+                        "qemu appliance did not become ready within 180s:\n{}",
+                        log_tail(&self.log)
                     ),
                 ));
             }
@@ -219,10 +244,25 @@ impl QemuSession {
         }
     }
 
+    fn guest_build_path() -> String {
+        format!("{BUILD_ROOT_MOUNT}{}", rpmx_base::guest::BUILD)
+    }
+
+    fn guest_stage_path() -> String {
+        format!("{BUILD_ROOT_MOUNT}{}", rpmx_base::guest::STAGE)
+    }
+
     fn copy_in(&self, source: &Path, destination: &str, label: &str) -> Result<()> {
         let destination = shell_quote(destination);
-        let command = format!("mkdir -p {destination} && tar -C {destination} -xf -");
-        stream_tar_in(self.ssh_child(&[command.as_str()])?, source, label)
+        let command = format!(
+            "for p in /run/rpmx/root/tmp /run/rpmx/root/tmp/build /run/rpmx/root/tmp/stage; do \
+             [ -L \"$p\" ] && exit 1; done; mkdir -p {destination} && tar -C {destination} -xf -"
+        );
+        stream_tar_in(
+            self.ssh_child(self.control_port, &[command.as_str()])?,
+            source,
+            label,
+        )
     }
 
     fn sync_path(&self, remote: &str, host: &Path) -> Result<()> {
@@ -246,14 +286,20 @@ impl QemuSession {
         // partial tree behind. This trades memory for disk, not RAM.
         let quoted = shell_quote(remote);
         let command = format!("tar -C {quoted} -cf - .");
-        stream_tar_out(self.ssh_child(&[command.as_str()])?, remote, host, archive)
+        stream_tar_out(
+            self.ssh_child(self.control_port, &[command.as_str()])?,
+            remote,
+            host,
+            archive,
+        )
     }
 }
 
 impl Session for QemuSession {
     fn run(&mut self, request: &RunnerRequest<'_>) -> Result<()> {
         let script = step_script(request);
-        let (status, stderr) = self.ssh_run(&["sh", "-s"], Some(script.as_bytes()))?;
+        let (status, stderr) =
+            self.ssh_run(self.build_port, &["sh", "-s"], Some(script.as_bytes()))?;
         if !status.success() {
             return Err(Error::new(
                 codes::SANDBOX_002,
@@ -272,8 +318,8 @@ impl Session for QemuSession {
     }
 
     fn sync_out(&mut self) -> Result<()> {
-        self.sync_path(rpmx_base::guest::BUILD, &self.workspace)?;
-        self.sync_path(rpmx_base::guest::STAGE, &self.stage)
+        self.sync_path(&Self::guest_build_path(), &self.workspace)?;
+        self.sync_path(&Self::guest_stage_path(), &self.stage)
     }
 
     fn stop(&mut self) -> Result<()> {
@@ -285,14 +331,141 @@ impl Drop for QemuSession {
     fn drop(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
+        secure_delete(&self.ssh_key);
+        secure_delete(&self.host_key);
+        let _ = std::fs::remove_file(&self.known_hosts);
         let _ = std::fs::remove_dir_all(self.temp.path());
     }
+}
+
+/// Return the last lines of the serial log with terminal control sequences
+/// stripped. The log is guest output like any other stream.
+fn log_tail(path: &Path) -> String {
+    let bytes = std::fs::read(path).unwrap_or_default();
+    let mut clean = Vec::new();
+    let mut sanitizer = crate::terminal::Sanitizer::default();
+    sanitizer.push(&bytes, &mut clean);
+    String::from_utf8_lossy(&clean)
+        .lines()
+        .rev()
+        .take(12)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn ssh_args_for(known_hosts: &Path, ssh_key: &Path, port: u16) -> Vec<String> {
+    vec![
+        "-T".to_string(),
+        "-o".to_string(),
+        "BatchMode=yes".to_string(),
+        "-o".to_string(),
+        "StrictHostKeyChecking=yes".to_string(),
+        "-o".to_string(),
+        format!("UserKnownHostsFile={}", known_hosts.display()),
+        "-o".to_string(),
+        "CheckHostIP=no".to_string(),
+        "-o".to_string(),
+        "LogLevel=ERROR".to_string(),
+        "-o".to_string(),
+        "ConnectTimeout=5".to_string(),
+        "-o".to_string(),
+        "ServerAliveInterval=30".to_string(),
+        "-o".to_string(),
+        "ServerAliveCountMax=3".to_string(),
+        "-i".to_string(),
+        ssh_key.display().to_string(),
+        "-p".to_string(),
+        port.to_string(),
+        "root@127.0.0.1".to_string(),
+    ]
+}
+
+/// Overwrite and remove a private key file before the scratch directory is
+/// deleted. The best effort matters because the temp directory can outlive the
+/// process on a crash.
+fn secure_delete(path: &Path) {
+    let Ok(metadata) = std::fs::metadata(path) else {
+        return;
+    };
+    if let Ok(mut file) = std::fs::OpenOptions::new().write(true).open(path) {
+        let zeros = [0u8; 4096];
+        let mut remaining = metadata.len();
+        while remaining > 0 {
+            let take = remaining.min(zeros.len() as u64) as usize;
+            if file.write_all(&zeros[..take]).is_err() {
+                break;
+            }
+            remaining -= take as u64;
+        }
+        let _ = file.sync_all();
+    }
+    let _ = std::fs::remove_file(path);
+    let _ = std::fs::remove_file(path.with_extension("pub"));
 }
 
 #[cfg(test)]
 mod tests {
     use super::ssh::{shell_quote, stream_tar_in, stream_tar_out};
+    use super::{secure_delete, ssh_args_for, QemuSession, RunnerConfig};
+    use crate::runner::RunnerAssets;
+    use rpmx_base::arch::Arch;
+    use std::num::{NonZeroU32, NonZeroU64};
     use std::process::{Command, Stdio};
+
+    #[test]
+    fn ssh_uses_the_allocated_host_port() {
+        let args = ssh_args_for(
+            std::path::Path::new("/scratch/known_hosts"),
+            std::path::Path::new("/scratch/id_ed25519"),
+            41234,
+        );
+        let port = args
+            .iter()
+            .position(|argument| argument == "-p")
+            .expect("port flag");
+        assert_eq!(args[port + 1], "41234");
+        assert!(args.contains(&"StrictHostKeyChecking=yes".to_string()));
+        assert!(args.contains(&"UserKnownHostsFile=/scratch/known_hosts".to_string()));
+    }
+
+    #[test]
+    fn a_missing_appliance_is_a_runner_error() {
+        let config = RunnerConfig {
+            host: Arch::X86_64,
+            target: Arch::X86_64,
+            workspace: std::path::Path::new("/tmp"),
+            stage: std::path::Path::new("/tmp"),
+            assets: RunnerAssets::default(),
+            jobs: NonZeroU32::new(1).expect("jobs"),
+            timeout: NonZeroU64::new(1).expect("timeout"),
+        };
+        let error = match QemuSession::prepare(std::path::Path::new("/nonexistent"), &config) {
+            Ok(_) => panic!("a missing appliance must fail"),
+            Err(error) => error,
+        };
+        assert_eq!(error.code, "RPMX-RUNNER-004");
+        assert!(error.message.contains("appliance"));
+    }
+
+    #[test]
+    fn secure_delete_removes_a_private_key() {
+        use std::io::{Read, Seek, SeekFrom};
+
+        let directory = tempfile::tempdir().expect("tempdir");
+        let key = directory.path().join("id_ed25519");
+        std::fs::write(&key, b"private-key-material").expect("key");
+        let mut handle = std::fs::File::open(&key).expect("open");
+        secure_delete(&key);
+        assert!(!key.exists());
+        handle.seek(SeekFrom::Start(0)).expect("seek");
+        let mut contents = Vec::new();
+        handle.read_to_end(&mut contents).expect("read");
+        assert_eq!(contents.len(), b"private-key-material".len());
+        assert!(contents.iter().all(|byte| *byte == 0));
+    }
 
     fn piped(command: &str) -> std::process::Child {
         Command::new("sh")
@@ -366,6 +539,7 @@ mod tests {
         let error = stream_tar_out(child, "remote", &host, archive).expect_err("remote failure");
         assert!(error.message.contains("boom"), "{}", error.message);
     }
+
     #[test]
     fn streamed_copy_in_drains_remote_stdout() {
         let root = tempfile::tempdir().expect("work");
@@ -374,9 +548,6 @@ mod tests {
         std::fs::create_dir_all(&source).expect("source dir");
         std::fs::write(source.join("payload.bin"), vec![0x5a; 512 * 1024]).expect("payload");
 
-        // tee echoes the tar stream to stdout while tar extracts it. A buffered
-        // copy-in would fill the stdout pipe and deadlock; timeout bounds the
-        // test if that regression returns.
         let child = piped(&format!(
             "timeout 20 sh -c 'mkdir -p {}; p={}/pipe; mkfifo \"$p\"; tar -C {} -xf \"$p\" & tee \"$p\"; wait'",
             destination.display(),
@@ -475,6 +646,7 @@ mod tests {
             b"old"
         );
     }
+
     #[cfg(target_os = "linux")]
     #[test]
     fn local_write_error_is_reported_with_remote_failure() {

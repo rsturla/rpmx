@@ -10,8 +10,8 @@ use serde::{Deserialize, Serialize};
 
 use rpmx_core::error::codes;
 use rpmx_core::plan::Plan;
-use rpmx_core::RecipeBundle;
 use rpmx_core::Error;
+use rpmx_core::RecipeBundle;
 
 use crate::commands::{
     autoroot, load_plan, resolve_policy, source_date_epoch, LockArgs, PlanPolicy, PolicyInput,
@@ -26,6 +26,8 @@ pub struct PackageLock {
     pub recipe_digest: String,
     #[serde(default)]
     pub recipe_files: Vec<LockedRecipeFile>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context: Option<LockedContext>,
     pub source_date_epoch: u32,
     pub policy: LockedPolicy,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -36,6 +38,12 @@ pub struct PackageLock {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LockedRecipeFile {
+    pub path: String,
+    pub digest: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LockedContext {
     pub path: String,
     pub digest: String,
 }
@@ -214,7 +222,15 @@ pub fn build(
     explicit_source_date_epoch: Option<u32>,
     active_root: Option<&rpmx_core::root::RootLock>,
 ) -> Result<PackageLock, Error> {
-    let root = match autoroot::requirement(&bundle.recipe, plan, &bundle.root, profile, arch)? {
+    let needs_appliance = rpmx_core::Arch::parse(arch)? != rpmx_core::Arch::current()?;
+    let root = match autoroot::requirement(
+        &bundle.recipe,
+        plan,
+        &bundle.root,
+        profile,
+        arch,
+        needs_appliance,
+    )? {
         Some(root) => {
             let resolved = active_root
                 .cloned()
@@ -289,13 +305,15 @@ pub fn build(
                 digest: file.digest.clone(),
             })
             .collect(),
+        context: locked_context(bundle)?,
         source_date_epoch: source_date_epoch(&bundle.recipe, explicit_source_date_epoch),
         policy: LockedPolicy {
             dist_tag: policy.dist_tag.map(str::to_string),
             build_release: policy.build_release,
         },
         root,
-        sources: bundle.recipe
+        sources: bundle
+            .recipe
             .sources
             .iter()
             .map(|source| LockedSource {
@@ -309,6 +327,19 @@ pub fn build(
 
 fn default_path(recipe: &Path) -> PathBuf {
     recipe.parent().unwrap_or_else(|| Path::new(".")).join(FILE)
+}
+
+fn locked_context(bundle: &RecipeBundle) -> Result<Option<LockedContext>, Error> {
+    let Some(path) = &bundle.recipe.context else {
+        return Ok(None);
+    };
+    let recipe_dir = bundle.root.parent().unwrap_or_else(|| Path::new("."));
+    let root = rpmx_core::source::context_root(recipe_dir, path)?;
+    let digest = rpmx_core::tree::context_digest(&root)?;
+    Ok(Some(LockedContext {
+        path: path.clone(),
+        digest,
+    }))
 }
 
 fn read(path: &Path) -> Result<PackageLock, Error> {
@@ -363,6 +394,9 @@ fn differences(old: &PackageLock, new: &PackageLock) -> String {
     if old.recipe_files != new.recipe_files {
         fields.push("recipe-files");
     }
+    if old.context != new.context {
+        fields.push("context");
+    }
     if old.source_date_epoch != new.source_date_epoch {
         fields.push("source-date-epoch");
     }
@@ -393,6 +427,7 @@ fn encode(error: serde_json::Error) -> Error {
 mod tests {
     use super::{build, PackageLock, SCHEMA};
     use crate::commands::PlanPolicy;
+    use std::fs;
 
     const RECIPE: &str = r#"
 schema: 1
@@ -503,5 +538,51 @@ outputs:
         )
         .expect("lock");
         assert_eq!(first, second);
+    }
+
+    #[test]
+    fn a_lock_records_the_context_tree_digest() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let context = directory.path().join("files");
+        fs::create_dir_all(&context).expect("context");
+        fs::write(context.join("os-release"), b"ID=probe\n").expect("context file");
+
+        let path = directory.path().join("package.yaml");
+        let recipe = RECIPE.replace("build:", "context: files\nbuild:");
+        fs::write(&path, recipe).expect("recipe");
+
+        let lock = plan_and_build(&path);
+        let first = lock.context.clone().expect("context lock");
+        assert_eq!(first.path, "files");
+        assert!(first.digest.starts_with("sha512:"));
+
+        fs::write(context.join("os-release"), b"ID=changed\n").expect("context file");
+        let second = plan_and_build(&path).context.expect("context lock");
+        assert_ne!(first.digest, second.digest);
+    }
+
+    fn plan_and_build(path: &std::path::Path) -> PackageLock {
+        let bundle = rpmx_core::load_recipe_bundle(path).expect("bundle");
+        let plan = rpmx_core::plan_with_options(
+            &bundle.recipe,
+            rpmx_core::PlanOptions {
+                arch: "x86_64",
+                step_root: None,
+                allow_builtin_override: false,
+                dist_tag: None,
+                build_release: None,
+            },
+        )
+        .expect("plan");
+        build(
+            &bundle,
+            &plan,
+            PlanPolicy::default(),
+            None,
+            "x86_64",
+            None,
+            None,
+        )
+        .expect("lock")
     }
 }

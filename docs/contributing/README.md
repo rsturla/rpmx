@@ -25,6 +25,8 @@ in [`../usage/`](../usage/). The short contribution checklist is
 | [`13-pipelines.md`](13-pipelines.md) | Steps, bundles and the pipeline contract. |
 | [`14-build-root.md`](14-build-root.md) | Root resolution and assembly. |
 | [`15-ux-audit.md`](15-ux-audit.md) | UX audit against Melange and the implementation status. |
+| [`16-qemu-appliance.md`](16-qemu-appliance.md) | Separating the QEMU transport appliance from the build root: design and plan. |
+| [`17-ssh-runner.md`](17-ssh-runner.md) | Running locked-root builds on any SSH-reachable host, with podman, bubblewrap, chroot or explicit host execution as the adapter: design, decisions and tickets. |
 
 ## Working on the code
 

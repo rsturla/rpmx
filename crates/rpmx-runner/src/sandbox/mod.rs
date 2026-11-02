@@ -2,7 +2,9 @@ use std::collections::BTreeMap;
 use std::num::{NonZeroU32, NonZeroU64};
 use std::path::Path;
 
-use crate::runner::{unsupported, Runner, RunnerConfig, RunnerKind, RunnerRequest, Session};
+use crate::runner::{
+    unsupported, Runner, RunnerAssets, RunnerConfig, RunnerKind, RunnerRequest, Session,
+};
 use rpmx_base::arch::Arch;
 use rpmx_base::error::{codes, Error, Result};
 use rpmx_language::plan::PlannedStep;
@@ -33,6 +35,8 @@ pub struct SandboxConfig<'a> {
     pub workspace: &'a Path,
     pub stage: &'a Path,
     pub root: Option<&'a Path>,
+    /// Runner-owned locked artifacts, such as the QEMU appliance.
+    pub assets: RunnerAssets<'a>,
     pub image: Option<&'a str>,
     /// Install prefix. The profile supplies it; the runner only exports it.
     pub prefix: &'a str,
@@ -51,6 +55,7 @@ impl<'a> SandboxConfig<'a> {
             target: self.target,
             workspace: self.workspace,
             stage: self.stage,
+            assets: self.assets,
             jobs: self.jobs,
             timeout: self.timeout,
         }
@@ -72,6 +77,12 @@ impl<'a> Sandbox<'a> {
                 "a sandbox cannot combine an assembled root with a builder image",
             ));
         }
+        if !config.assets.is_empty() && config.root.is_none() {
+            return Err(Error::new(
+                codes::ROOT_016,
+                "runner assets require an assembled root",
+            ));
+        }
         let runner =
             config
                 .runner
@@ -91,6 +102,15 @@ impl<'a> Sandbox<'a> {
     }
 
     pub fn run(&self, step: &PlannedStep) -> Result<()> {
+        self.run_at(step, None)
+    }
+
+    /// Run one step and report its position in a phase, such as `[2/3] make`.
+    pub fn run_numbered(&self, step: &PlannedStep, index: usize, total: usize) -> Result<()> {
+        self.run_at(step, Some((index, total)))
+    }
+
+    fn run_at(&self, step: &PlannedStep, position: Option<(usize, usize)>) -> Result<()> {
         for key in step.env.keys() {
             if RESERVED_ENV.contains(&key.as_str()) {
                 return Err(Error::new(
@@ -118,7 +138,7 @@ impl<'a> Sandbox<'a> {
             .map(|arg| expand(arg, self))
             .collect::<Vec<_>>();
         let mut args = args;
-        if crate::output::debug()
+        if rpmx_base::output::debug()
             && command == "sh"
             && args.first().map(String::as_str) == Some("-c")
             && args.len() > 1
@@ -167,10 +187,10 @@ impl<'a> Sandbox<'a> {
         }
         // Step headers and outcomes go to stderr so stdout stays a clean
         // artifact list (or a JSON document).
-        if crate::output::debug() {
-            eprintln!("rpmx: run {rendered}");
+        if rpmx_base::output::debug() {
+            rpmx_base::output::phase("run", &rendered);
         }
-        eprintln!("rpmx: step {label}");
+        rpmx_base::output::phase("step", &label);
         let started = std::time::Instant::now();
         let result = session
             .as_mut()
@@ -178,14 +198,14 @@ impl<'a> Sandbox<'a> {
             .run(&request);
         match result {
             Ok(()) => {
-                eprintln!(
-                    "rpmx: step {label}: ok ({:.1}s)",
-                    started.elapsed().as_secs_f64()
+                rpmx_base::output::phase(
+                    "step",
+                    format!("{label}: ok ({:.1}s)", started.elapsed().as_secs_f64()),
                 );
                 Ok(())
             }
             Err(mut error) => {
-                let help = if crate::output::keep_workdir() {
+                let help = if rpmx_base::output::keep_workdir() {
                     "the work directory was kept for inspection"
                 } else {
                     "re-run with --keep-workdir to inspect the workspace"
@@ -272,7 +292,7 @@ fn expand(value: &str, sandbox: &Sandbox<'_>) -> String {
 #[cfg(test)]
 mod tests {
     use super::{Sandbox, SandboxConfig};
-    use crate::runner::RunnerKind;
+    use crate::runner::{RunnerAssets, RunnerKind};
     use rpmx_base::arch::Arch;
     use std::num::{NonZeroU32, NonZeroU64};
     use std::path::Path;
@@ -286,6 +306,7 @@ mod tests {
             workspace: Path::new("/tmp"),
             stage: Path::new("/tmp"),
             root: Some(Path::new("/root")),
+            assets: RunnerAssets::default(),
             image: Some("image"),
             prefix: "/usr",
             libdir: "/usr/lib64",

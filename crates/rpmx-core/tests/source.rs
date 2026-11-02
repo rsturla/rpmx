@@ -1,7 +1,7 @@
 use std::fs;
 use std::num::{NonZeroU32, NonZeroU64};
 
-use rpmx_core::source::{pack_snapshot, unpack_snapshot};
+use rpmx_core::source::{context_root, pack_snapshot, stage_context, unpack_snapshot};
 
 #[test]
 fn snapshot_round_trips_and_is_deterministic() {
@@ -47,6 +47,19 @@ fn snapshot_preserves_symlinks() {
         fs::read_link(restore.path().join("alias")).expect("target"),
         std::path::Path::new("a.txt")
     );
+}
+
+#[test]
+fn snapshot_preserves_empty_directories() {
+    let work = tempfile::tempdir().expect("work");
+    fs::create_dir_all(work.path().join("empty")).expect("empty");
+    let out = tempfile::tempdir().expect("out");
+    let snapshot = out.path().join("snapshot.tar.gz");
+    pack_snapshot(work.path(), &snapshot, 1_700_000_000).expect("pack");
+
+    let restore = tempfile::tempdir().expect("restore");
+    unpack_snapshot(&snapshot, restore.path()).expect("unpack");
+    assert!(restore.path().join("empty").is_dir());
 }
 
 #[test]
@@ -159,6 +172,7 @@ fn patches_are_applied_and_removed_from_the_workspace() {
         workspace: work.path(),
         stage: stage.path(),
         root: None,
+        assets: rpmx_core::runner::RunnerAssets::default(),
         image: None,
         prefix: "/usr",
         libdir: "/usr/lib64",
@@ -185,4 +199,66 @@ fn patches_are_applied_and_removed_from_the_workspace() {
         b"new\n"
     );
     assert!(!work.path().join(".rpmx-patches").exists());
+}
+
+#[test]
+fn context_is_copied_to_the_workspace_root() {
+    let recipe = tempfile::tempdir().expect("recipe");
+    let context = recipe.path().join("files");
+    fs::create_dir_all(context.join("nested")).expect("nested");
+    fs::create_dir_all(context.join("empty")).expect("empty");
+    fs::write(context.join("os-release"), b"ID=probe\n").expect("os-release");
+    fs::write(context.join("nested/config"), b"value\n").expect("config");
+    std::os::unix::fs::symlink("os-release", context.join("alias")).expect("symlink");
+
+    let workspace = tempfile::tempdir().expect("workspace");
+    stage_context(Some("./files"), recipe.path(), workspace.path()).expect("stage context");
+
+    assert_eq!(
+        fs::read(workspace.path().join("os-release")).expect("os-release"),
+        b"ID=probe\n"
+    );
+    assert_eq!(
+        fs::read(workspace.path().join("nested/config")).expect("config"),
+        b"value\n"
+    );
+    assert!(workspace.path().join("empty").is_dir());
+    let alias = fs::symlink_metadata(workspace.path().join("alias")).expect("alias");
+    assert!(alias.file_type().is_symlink());
+    assert_eq!(
+        fs::read_link(workspace.path().join("alias")).expect("target"),
+        std::path::Path::new("os-release")
+    );
+}
+
+#[test]
+fn context_rejects_a_path_that_escapes_the_recipe() {
+    let recipe = tempfile::tempdir().expect("recipe");
+    let outside = tempfile::tempdir().expect("outside");
+    fs::write(outside.path().join("secret"), b"secret").expect("secret");
+
+    let error = context_root(recipe.path(), "../outside").expect_err("escape");
+    assert_eq!(error.code, "RPMX-SOURCE-033");
+
+    let error = context_root(recipe.path(), ".").expect_err("recipe root");
+    assert_eq!(error.code, "RPMX-SOURCE-033");
+}
+
+#[test]
+fn context_refuses_to_overwrite_an_upstream_source() {
+    let recipe = tempfile::tempdir().expect("recipe");
+    let context = recipe.path().join("files");
+    fs::create_dir_all(&context).expect("context");
+    fs::write(context.join("os-release"), b"context\n").expect("context file");
+
+    let workspace = tempfile::tempdir().expect("workspace");
+    fs::write(workspace.path().join("os-release"), b"upstream\n").expect("upstream");
+
+    let error =
+        stage_context(Some("files"), recipe.path(), workspace.path()).expect_err("collision");
+    assert_eq!(error.code, "RPMX-SOURCE-034");
+    assert_eq!(
+        fs::read(workspace.path().join("os-release")).expect("upstream"),
+        b"upstream\n"
+    );
 }

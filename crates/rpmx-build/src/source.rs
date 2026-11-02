@@ -3,11 +3,10 @@ use std::num::{NonZeroU32, NonZeroU64};
 use std::path::{Path, PathBuf};
 
 use crate::fetch::{fetch_sources, FetchOptions};
-use crate::package;
 use rpmx_base::error::{codes, Error, Result};
 use rpmx_language::model::Recipe;
 use rpmx_language::plan::Plan;
-use rpmx_runner::runner::RunnerKind;
+use rpmx_runner::runner::{RunnerAssets, RunnerKind};
 use rpmx_runner::sandbox::{Sandbox, SandboxConfig};
 
 pub struct SourceOptions<'a> {
@@ -26,6 +25,7 @@ pub struct SourceOptions<'a> {
     pub jobs: NonZeroU32,
     pub step_timeout: NonZeroU64,
     pub root: Option<&'a Path>,
+    pub appliance: Option<&'a Path>,
     pub runner: &'a str,
     pub recipe_dir: &'a Path,
 }
@@ -63,6 +63,12 @@ pub fn assemble(options: SourceOptions<'_>) -> Result<PathBuf> {
         )?;
     }
 
+    stage_context(
+        options.recipe.context.as_deref(),
+        options.recipe_dir,
+        options.workspace,
+    )?;
+
     let host_arch = rpmx_base::arch::Arch::current()?;
     let target_arch = rpmx_base::arch::Arch::parse(&options.plan.arch)?;
     let sandbox = Sandbox::new(SandboxConfig {
@@ -72,6 +78,7 @@ pub fn assemble(options: SourceOptions<'_>) -> Result<PathBuf> {
         workspace: options.workspace,
         stage: options.stage,
         root: options.root,
+        assets: RunnerAssets::new(options.appliance, &[]),
         image: None,
         prefix: options.prefix,
         libdir: options.libdir,
@@ -178,6 +185,199 @@ pub fn apply_patches(
             format!("cannot remove {}: {error}", patch_dir.display()),
         )
     })?;
+    Ok(())
+}
+
+/// Resolve and validate the recipe's context directory.
+///
+/// The path must be a relative subdirectory of the recipe directory. The
+/// contents are copied to the workspace root, matching melange's `--source-dir`.
+pub fn context_root(recipe_dir: &Path, context: &str) -> Result<PathBuf> {
+    use std::path::Component;
+
+    let relative = Path::new(context);
+    if context.is_empty() || relative.is_absolute() {
+        return Err(Error::new(
+            codes::SOURCE_033,
+            format!("context '{context}' must be a relative directory"),
+        ));
+    }
+    let mut normalized = PathBuf::new();
+    for component in relative.components() {
+        match component {
+            Component::Normal(part) => normalized.push(part),
+            Component::CurDir => {}
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+                return Err(Error::new(
+                    codes::SOURCE_033,
+                    format!("context '{context}' must not contain '..' or a root component"),
+                ));
+            }
+        }
+    }
+    if normalized.as_os_str().is_empty() {
+        return Err(Error::new(
+            codes::SOURCE_033,
+            format!("context '{context}' must name a subdirectory of the recipe"),
+        ));
+    }
+
+    let recipe_dir = std::fs::canonicalize(recipe_dir).map_err(|error| {
+        Error::new(
+            codes::SOURCE_033,
+            format!(
+                "cannot resolve recipe directory {}: {error}",
+                recipe_dir.display()
+            ),
+        )
+    })?;
+    let root = std::fs::canonicalize(recipe_dir.join(normalized)).map_err(|error| {
+        Error::new(
+            codes::SOURCE_033,
+            format!("cannot resolve context '{context}': {error}"),
+        )
+    })?;
+    if root == recipe_dir || !root.starts_with(&recipe_dir) {
+        return Err(Error::new(
+            codes::SOURCE_033,
+            format!("context '{context}' escapes the recipe directory"),
+        ));
+    }
+    if !root.is_dir() {
+        return Err(Error::new(
+            codes::SOURCE_033,
+            format!("context '{}' is not a directory", root.display()),
+        ));
+    }
+    Ok(root)
+}
+
+/// Copy the recipe's context directory into the source workspace.
+pub fn stage_context(context: Option<&str>, recipe_dir: &Path, workspace: &Path) -> Result<()> {
+    let Some(context) = context else {
+        return Ok(());
+    };
+    let root = context_root(recipe_dir, context)?;
+    copy_context_tree(&root, &root, workspace)
+}
+
+fn copy_context_tree(root: &Path, directory: &Path, workspace: &Path) -> Result<()> {
+    use std::path::Component;
+
+    let relative = directory.strip_prefix(root).map_err(|error| {
+        Error::new(
+            codes::SOURCE_035,
+            format!(
+                "cannot relativize context path {}: {error}",
+                directory.display()
+            ),
+        )
+    })?;
+    let entries = rpmx_base::io::sorted_entries(directory, codes::SOURCE_035)?;
+
+    for entry in entries {
+        let path = entry.path();
+        let target = workspace.join(relative).join(entry.file_name());
+        if target.symlink_metadata().is_ok() {
+            return Err(Error::new(
+                codes::SOURCE_034,
+                format!(
+                    "context entry {} collides with an upstream source",
+                    target.display()
+                ),
+            ));
+        }
+        let metadata = std::fs::symlink_metadata(&path).map_err(|error| {
+            Error::new(
+                codes::SOURCE_035,
+                format!("cannot stat {}: {error}", path.display()),
+            )
+        })?;
+        let file_type = metadata.file_type();
+
+        if file_type.is_dir() {
+            std::fs::create_dir(&target).map_err(|error| {
+                Error::new(
+                    codes::SOURCE_035,
+                    format!("cannot create {}: {error}", target.display()),
+                )
+            })?;
+            copy_context_tree(root, &path, workspace)?;
+            set_context_mode(&target, &metadata)?;
+        } else if file_type.is_symlink() {
+            let link = std::fs::read_link(&path).map_err(|error| {
+                Error::new(
+                    codes::SOURCE_035,
+                    format!("cannot read symlink {}: {error}", path.display()),
+                )
+            })?;
+            if link.is_absolute()
+                || link.components().any(|component| {
+                    matches!(
+                        component,
+                        Component::ParentDir | Component::RootDir | Component::Prefix(_)
+                    )
+                })
+            {
+                return Err(Error::new(
+                    codes::SOURCE_035,
+                    format!(
+                        "context symlink {} must be relative and stay inside the context",
+                        path.display()
+                    ),
+                ));
+            }
+            #[cfg(unix)]
+            std::os::unix::fs::symlink(&link, &target).map_err(|error| {
+                Error::new(
+                    codes::SOURCE_035,
+                    format!("cannot create symlink {}: {error}", target.display()),
+                )
+            })?;
+            #[cfg(not(unix))]
+            return Err(Error::new(
+                codes::SOURCE_035,
+                format!("symlinks are not supported in context {}", path.display()),
+            ));
+        } else if file_type.is_file() {
+            std::fs::copy(&path, &target).map_err(|error| {
+                Error::new(
+                    codes::SOURCE_035,
+                    format!(
+                        "cannot copy {} to {}: {error}",
+                        path.display(),
+                        target.display()
+                    ),
+                )
+            })?;
+            set_context_mode(&target, &metadata)?;
+        } else {
+            return Err(Error::new(
+                codes::SOURCE_035,
+                format!(
+                    "context entry {} is not a regular file, directory or symlink",
+                    path.display()
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn set_context_mode(path: &Path, metadata: &std::fs::Metadata) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let mode = metadata.permissions().mode() & 0o7777;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).map_err(|error| {
+        Error::new(
+            codes::SOURCE_035,
+            format!("cannot set mode on {}: {error}", path.display()),
+        )
+    })
+}
+
+#[cfg(not(unix))]
+fn set_context_mode(_path: &Path, _metadata: &std::fs::Metadata) -> Result<()> {
     Ok(())
 }
 
@@ -314,7 +514,7 @@ fn detect_format(path: &Path) -> String {
 }
 
 pub fn pack_snapshot(workspace: &Path, snapshot: &Path, source_date_epoch: u32) -> Result<()> {
-    let files = package::scan_stage(workspace)?;
+    let files = snapshot_entries(workspace)?;
     let output = std::fs::File::create(snapshot).map_err(|error| {
         Error::new(
             codes::SOURCE_032,
@@ -327,7 +527,7 @@ pub fn pack_snapshot(workspace: &Path, snapshot: &Path, source_date_epoch: u32) 
     let mut tar = tar::Builder::new(gz);
 
     for file in files {
-        let name = file.path.trim_start_matches('/');
+        let name = file.path.as_str();
         if name == "RPMX-SOURCE.tar.gz" {
             continue;
         }
@@ -338,7 +538,18 @@ pub fn pack_snapshot(workspace: &Path, snapshot: &Path, source_date_epoch: u32) 
         header.set_mtime(u64::from(source_date_epoch));
         header.set_uid(0);
         header.set_gid(0);
-        if let Some(target) = &file.target {
+        if file.directory {
+            header.set_entry_type(tar::EntryType::Directory);
+            header.set_size(0);
+            header.set_mode(file.mode);
+            header.set_cksum();
+            tar.append(&header, std::io::empty()).map_err(|error| {
+                Error::new(
+                    codes::SOURCE_032,
+                    format!("cannot add directory {name} to snapshot: {error}"),
+                )
+            })?;
+        } else if let Some(target) = &file.target {
             header.set_entry_type(tar::EntryType::Symlink);
             header.set_size(0);
             header.set_mode(0o777);
@@ -378,6 +589,98 @@ pub fn pack_snapshot(workspace: &Path, snapshot: &Path, source_date_epoch: u32) 
         Error::new(codes::SOURCE_032, format!("cannot flush snapshot: {error}"))
     })?;
     Ok(())
+}
+
+struct SnapshotEntry {
+    path: String,
+    mode: u32,
+    data: Vec<u8>,
+    target: Option<String>,
+    directory: bool,
+}
+
+fn snapshot_entries(root: &Path) -> Result<Vec<SnapshotEntry>> {
+    let mut entries = Vec::new();
+    snapshot_walk(root, root, &mut entries)?;
+    entries.sort_by(|left, right| left.path.cmp(&right.path));
+    Ok(entries)
+}
+
+fn snapshot_walk(root: &Path, directory: &Path, entries: &mut Vec<SnapshotEntry>) -> Result<()> {
+    let children = rpmx_base::io::sorted_entries(directory, codes::SOURCE_032)?;
+    for child in children {
+        let path = child.path();
+        let relative = path
+            .strip_prefix(root)
+            .map_err(|error| Error::new(codes::SOURCE_032, format!("cannot relativize: {error}")))?
+            .to_string_lossy()
+            .replace('\\', "/");
+        let metadata = std::fs::symlink_metadata(&path).map_err(|error| {
+            Error::new(
+                codes::SOURCE_032,
+                format!("cannot stat {}: {error}", path.display()),
+            )
+        })?;
+        let file_type = metadata.file_type();
+        if file_type.is_dir() {
+            entries.push(SnapshotEntry {
+                path: relative,
+                mode: snapshot_mode(&metadata),
+                data: Vec::new(),
+                target: None,
+                directory: true,
+            });
+            snapshot_walk(root, &path, entries)?;
+        } else if file_type.is_symlink() {
+            let target = std::fs::read_link(&path).map_err(|error| {
+                Error::new(
+                    codes::SOURCE_032,
+                    format!("cannot read symlink {}: {error}", path.display()),
+                )
+            })?;
+            entries.push(SnapshotEntry {
+                path: relative,
+                mode: 0o777,
+                data: Vec::new(),
+                target: Some(target.to_string_lossy().replace('\\', "/")),
+                directory: false,
+            });
+        } else if file_type.is_file() {
+            let data = std::fs::read(&path).map_err(|error| {
+                Error::new(
+                    codes::SOURCE_032,
+                    format!("cannot read {}: {error}", path.display()),
+                )
+            })?;
+            entries.push(SnapshotEntry {
+                path: relative,
+                mode: snapshot_mode(&metadata),
+                data,
+                target: None,
+                directory: false,
+            });
+        } else {
+            return Err(Error::new(
+                codes::SOURCE_032,
+                format!(
+                    "{} is not a regular file, directory or symlink",
+                    path.display()
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn snapshot_mode(metadata: &std::fs::Metadata) -> u32 {
+    use std::os::unix::fs::PermissionsExt;
+    metadata.permissions().mode() & 0o7777
+}
+
+#[cfg(not(unix))]
+fn snapshot_mode(_metadata: &std::fs::Metadata) -> u32 {
+    0o644
 }
 
 pub fn unpack_snapshot(snapshot: &Path, workspace: &Path) -> Result<()> {

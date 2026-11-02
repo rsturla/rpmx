@@ -257,8 +257,8 @@ pub struct SandboxConfig<'a> {
     pub root: Option<&'a Path>,
     pub image: Option<&'a str>,
     pub source_date_epoch: u32,
-    pub jobs: u32,
-    pub timeout: Option<u64>,
+    pub jobs: NonZeroU32,
+    pub timeout: NonZeroU64,
     pub debuginfo: bool,
 }
 
@@ -267,8 +267,8 @@ pub struct RunnerConfig<'a> {
     pub target: Arch,
     pub workspace: &'a Path,
     pub stage: &'a Path,
-    pub jobs: u32,
-    pub timeout: Option<u64>,
+    pub jobs: NonZeroU32,
+    pub timeout: NonZeroU64,
 }
 
 pub struct RunnerRequest<'a> {
@@ -303,22 +303,31 @@ concrete implementations (`BwrapBackend`, `PodmanBackend`, `QemuBackend`) live
 under `runner/backend/`; `sandbox` holds policy only.
 
 `bubblewrap` and `podman` support native execution only. `qemu-system` starts
-a full VM for a foreign target with a target kernel, initramfs and a writable
-copy of the assembled root disk. Nothing is shared with the host: the
-workspace and stage are copied in over SSH, and outputs are tarred back over
-the same connection. The guest has one host-only NIC (`restrict=on`) used only
-for the SSH port forward; it cannot reach the host network or the internet.
-The sandbox checks `supports` before starting anything, so an unsupported
-combination is `RPMX-RUNNER-002`, not a mysterious target binary failure.
-Root assembly and test-root preparation use podman's `--arch` and the host
-binfmt handler; build steps do not.
+a full VM for a foreign target with a separate, runner-owned transport
+appliance. The appliance is a kernel, initramfs, systemd-networkd,
+`openssh-server` and `tar`; the build root is attached as a second disk and is
+never booted. Nothing is shared with the host: the workspace and stage are
+copied in over SSH, and outputs are tarred back over the same connection. The
+guest has one host-only NIC (`restrict=on`) used only for the two SSH port
+forwards; it cannot reach the host network or the internet. The sandbox checks
+`supports` before starting anything, so an unsupported combination is
+`RPMX-RUNNER-002`, not a mysterious target binary failure. Root assembly and
+test-root preparation use podman's `--arch` and the host binfmt handler; build
+steps do not.
 
-A bootable QEMU root needs a kernel, its modules, `dracut`,
-`systemd-networkd`, `openssh-server` and `tar`. Because root assembly runs package
-scriptlets, the kernel transaction generates `modules.dep` and the initramfs.
-`rpmx` injects the SSH key, a DHCP `.network` unit and the SSH config into the
-disk image, then runs every step through `ssh` and copies the workspace and
-stage back with `tar`.
+Runner-owned artifacts are separate from the build root: `SandboxConfig`
+carries `RunnerAssets`, and each backend declares its asset kinds in the
+`rpmx-runner` descriptor registry. The QEMU appliance is the first asset kind;
+bubblewrap and podman need none today. `rpmx doctor` reports every registered
+runner and its cached assets from that registry.
+
+The appliance runs a control sshd (unchrooted) and a build sshd whose sessions
+are chrooted into the build root. The control channel mounts the disk, copies
+the workspace and stage, and syncs outputs. The build channel runs steps. The
+appliance lock is part of `root.lock.yaml` and is resolved from the profile's
+repositories; the profile does not list kernel or SSH packages. The two-channel
+chroot is dependency isolation, not a security boundary: the VM is the
+boundary.
 
 ## 6. Stage-by-stage coverage
 
@@ -408,11 +417,24 @@ Every sandbox backend must pass a common test suite:
   cannot create a nested user namespace. This needs bubblewrap >= 0.9; the
   sandbox fails closed if bwrap is absent or too old.
 - Every step has a wall-clock limit (`--step-timeout`, default 3600 seconds,
-  `0` disables it). GNU `timeout` kills the bwrap process group; the container
+  minimum 1, no disable switch). GNU `timeout` kills the bwrap process group; the container
   backend also records a cidfile so a timed-out container is killed explicitly.
   A timeout is `RPMX-SANDBOX-004`. Memory, CPU and PID limits beyond the
   container's `--pids-limit` are still missing.
 - `profile.sandbox` selects the backend and limits; the recipe cannot request privileges.
+- Guest-controlled host resources are bounded: step stdout/stderr stream live
+  while only the last 64 KiB of stderr is retained for errors, and the QEMU
+  serial log is capped at 1 MiB.
+- Every untrusted decompressed payload is streamed to disk rather than
+  materialized in memory. No arbitrary size ceiling is applied to SRPM/RPM,
+  source snapshot, git or download sizes; host memory stays bounded because
+  the data is never held whole. The third-party RPM reader still reads the
+  compressed SRPM into memory, so that one input is bounded by its compressed
+  size. Structural limits remain: tar extension headers are capped at 1 MiB,
+  sparse entries are rejected, extracted bundle metadata files are capped at
+  8 MiB, and a decompressed kernel image is capped at 512 MiB. Guest sync-out
+  is capped at 8 GiB because it is attacker-controlled output, not an
+  operator-sized input.
 - `rpmx sandbox check` prints what the host supports (user namespaces, cgroups v2, Landlock, bwrap, Podman, gVisor).
 - `rpmx shell --stage build` enters the sandbox for debugging; it is interactive and not used in CI.
 - The sandbox configuration digest is recorded in `RPMX-MANIFEST.json` and provenance.

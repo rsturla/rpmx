@@ -68,7 +68,7 @@ fn pump(mut reader: impl Read + Send + 'static, stderr: bool) -> Receiver<()> {
                 Ok(read) => {
                     clean.clear();
                     sanitizer.push(&chunk[..read], &mut clean);
-                    if stderr || crate::output::logs_to_stderr() {
+                    if stderr || rpmx_base::output::logs_to_stderr() {
                         let _ = std::io::stderr().write_all(&clean);
                     } else {
                         let _ = std::io::stdout().write_all(&clean);

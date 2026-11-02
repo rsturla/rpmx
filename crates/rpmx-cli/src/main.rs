@@ -23,6 +23,8 @@ fn main() -> ExitCode {
     rpmx_core::output::set_logs_to_stderr(json);
     rpmx_core::output::set_keep_workdir(cli.keep_workdir);
     rpmx_core::output::set_debug(cli.debug);
+    rpmx_core::output::set_verbose(cli.verbose);
+    rpmx_core::output::set_color(&cli.color);
     match commands::dispatch::run(cli) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
@@ -45,7 +47,7 @@ fn main() -> ExitCode {
                 });
                 println!("{value}");
             } else {
-                eprintln!("{error}");
+                rpmx_core::output::error(&error);
             }
             ExitCode::from(exit::code_for(error.code))
         }

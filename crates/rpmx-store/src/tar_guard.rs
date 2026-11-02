@@ -1,4 +1,5 @@
 use std::io::{Read, Seek, SeekFrom};
+use std::path::Path;
 
 use rpmx_base::error::{Error, Result};
 
@@ -275,6 +276,28 @@ pub fn unpack_staged(
 }
 
 /// Validate, strip leading path components, and unpack under `subdir`.
+/// A relative link is safe when a purely lexical normalisation of
+/// `parent/link` cannot climb above the extraction root.
+fn relative_link_stays_inside(parent: &Path, link: &Path) -> bool {
+    if link.is_absolute() {
+        return false;
+    }
+    let mut normalized = std::path::PathBuf::new();
+    for component in parent.join(link).components() {
+        match component {
+            std::path::Component::Normal(value) => normalized.push(value),
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                if !normalized.pop() {
+                    return false;
+                }
+            }
+            std::path::Component::RootDir | std::path::Component::Prefix(_) => return false,
+        }
+    }
+    true
+}
+
 pub fn unpack_staged_with(
     mut archive: std::fs::File,
     destination: &std::path::Path,
@@ -322,24 +345,32 @@ pub fn unpack_staged_with(
         if stripped.as_os_str().is_empty() {
             continue;
         }
+        let mut hard_link: Option<std::path::PathBuf> = None;
         match entry.header().entry_type() {
             tar::EntryType::Link => {
-                return Err(Error::new(code, format!("refusing hard link in {subject}")))
+                if let Some(link) = entry.link_name().map_err(|error| {
+                    Error::new(code, format!("cannot read link in {subject}: {error}"))
+                })? {
+                    if !relative_link_stays_inside(Path::new(""), &link) {
+                        return Err(Error::new(
+                            code,
+                            format!(
+                                "refusing hard link '{}' -> '{}' in {subject}",
+                                path.display(),
+                                link.display()
+                            ),
+                        ));
+                    }
+                    ensure_safe_parents(&base, &link, code, subject)?;
+                    hard_link = Some(base.join(&link));
+                }
             }
             tar::EntryType::Symlink => {
                 if let Some(link) = entry.link_name().map_err(|error| {
                     Error::new(code, format!("cannot read link in {subject}: {error}"))
                 })? {
-                    if link.is_absolute()
-                        || link.components().any(|component| {
-                            matches!(
-                                component,
-                                std::path::Component::ParentDir
-                                    | std::path::Component::RootDir
-                                    | std::path::Component::Prefix(_)
-                            )
-                        })
-                    {
+                    let parent = stripped.parent().unwrap_or_else(|| Path::new(""));
+                    if !relative_link_stays_inside(parent, &link) {
                         return Err(Error::new(
                             code,
                             format!(
@@ -368,12 +399,46 @@ pub fn unpack_staged_with(
                 )
             })?;
         }
-        entry.unpack(&target).map_err(|error| {
-            Error::new(
-                code,
-                format!("cannot unpack {} to {}: {error}", subject, target.display()),
-            )
-        })?;
+        if let Some(source) = hard_link {
+            // The tar crate resolves a hard-link target against the process
+            // CWD, not the extraction root. Resolve it here and refuse a
+            // symlink or a path outside the tree.
+            let metadata = std::fs::symlink_metadata(&source).map_err(|error| {
+                Error::new(
+                    code,
+                    format!(
+                        "cannot resolve hard link source {} in {subject}: {error}",
+                        source.display()
+                    ),
+                )
+            })?;
+            if metadata.file_type().is_symlink() || !metadata.is_file() {
+                return Err(Error::new(
+                    code,
+                    format!(
+                        "refusing hard link from non-regular file {} in {subject}",
+                        source.display()
+                    ),
+                ));
+            }
+            std::fs::hard_link(&source, &target).map_err(|error| {
+                Error::new(
+                    code,
+                    format!(
+                        "cannot link {} to {} in {subject}: {error}",
+                        source.display(),
+                        target.display()
+                    ),
+                )
+            })?;
+        } else {
+            entry.unpack(&target).map_err(|error| {
+                Error::new(
+                    code,
+                    format!("cannot unpack {} to {}: {error}", subject, target.display()),
+                )
+            })?;
+        }
     }
     Ok(())
 }
@@ -691,9 +756,10 @@ mod tests {
 
 #[cfg(test)]
 mod extraction_safety {
-    use super::unpack_staged_with;
+    use super::{relative_link_stays_inside, unpack_staged_with};
     use rpmx_base::error::codes;
     use std::io::Write;
+    use std::os::unix::fs::MetadataExt;
 
     fn tar_with(build: impl FnOnce(&mut tar::Builder<&mut Vec<u8>>)) -> std::fs::File {
         let mut bytes = Vec::new();
@@ -704,7 +770,13 @@ mod extraction_safety {
         }
         let directory = tempfile::tempdir().expect("tempdir");
         let path = directory.path().join("archive.tar");
-        let mut file = std::fs::File::create(&path).expect("create");
+        let mut file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&path)
+            .expect("create");
         file.write_all(&bytes).expect("write");
         drop(directory);
         file
@@ -762,6 +834,104 @@ mod extraction_safety {
             header.set_link_name("/etc/passwd").expect("link");
             header.set_cksum();
             builder.append(&header, std::io::empty()).expect("link");
+        });
+        let directory = tempfile::tempdir().expect("tempdir");
+        assert!(unpack_staged_with(
+            archive,
+            directory.path(),
+            "test",
+            codes::SOURCE_031,
+            None,
+            0,
+            ".",
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn intra_tree_links_are_within_the_extraction_root() {
+        use std::path::Path;
+        assert!(relative_link_stays_inside(
+            Path::new("usr/bin"),
+            Path::new("../libexec/tool")
+        ));
+        assert!(relative_link_stays_inside(
+            Path::new("usr/bin"),
+            Path::new("../../etc/config")
+        ));
+        assert!(!relative_link_stays_inside(
+            Path::new("usr/bin"),
+            Path::new("../../../outside")
+        ));
+        assert!(!relative_link_stays_inside(
+            Path::new("usr/bin"),
+            Path::new("/etc/passwd")
+        ));
+    }
+
+    #[test]
+    fn an_intra_tree_symlink_is_unpacked() {
+        let archive = tar_with(|builder| {
+            let mut header = header(tar::EntryType::Symlink, "usr/bin/tool", 0);
+            header.set_link_name("../libexec/tool").expect("link");
+            header.set_cksum();
+            builder.append(&header, std::io::empty()).expect("link");
+        });
+        let directory = tempfile::tempdir().expect("tempdir");
+        unpack_staged_with(
+            archive,
+            directory.path(),
+            "test",
+            codes::SOURCE_031,
+            None,
+            0,
+            ".",
+        )
+        .expect("intra-tree symlink");
+        let link = directory.path().join("usr/bin/tool");
+        assert_eq!(
+            std::fs::read_link(link).expect("link"),
+            std::path::Path::new("../libexec/tool")
+        );
+    }
+
+    #[test]
+    fn an_intra_tree_hard_link_is_created_from_the_extraction_root() {
+        let archive = tar_with(|builder| {
+            let mut file = header(tar::EntryType::Regular, "real", 4);
+            file.set_cksum();
+            builder.append(&file, &b"data"[..]).expect("file");
+            let mut link = header(tar::EntryType::Link, "link", 0);
+            link.set_link_name("real").expect("link");
+            link.set_cksum();
+            builder.append(&link, std::io::empty()).expect("link");
+        });
+        let directory = tempfile::tempdir().expect("tempdir");
+        unpack_staged_with(
+            archive,
+            directory.path(),
+            "test",
+            codes::SOURCE_031,
+            None,
+            0,
+            ".",
+        )
+        .expect("intra-tree hard link");
+        let real = directory.path().join("real");
+        let link = directory.path().join("link");
+        assert_eq!(
+            std::fs::metadata(&real).expect("real").ino(),
+            std::fs::metadata(&link).expect("link").ino()
+        );
+    }
+
+    #[test]
+    fn a_hard_link_to_a_missing_extraction_member_is_rejected() {
+        let archive = tar_with(|builder| {
+            let mut link = header(tar::EntryType::Link, "leak", 0);
+            link.set_link_name("secret.txt").expect("link");
+            link.set_cksum();
+            builder.append(&link, std::io::empty()).expect("link");
         });
         let directory = tempfile::tempdir().expect("tempdir");
         assert!(unpack_staged_with(

@@ -57,6 +57,7 @@ fn lock() -> RootLock {
         closure_digest: digest,
         root_digest: None,
         builder: None,
+        runner_assets: None,
     }
 }
 
@@ -123,7 +124,7 @@ fn load_lock_rejects_a_tampered_closure() {
     write_lock(&path, &tampered).unwrap();
     assert!(load_lock(&path).is_ok());
 
-    tampered.packages.get_mut("x86_64").unwrap()[0].checksum = "sha512:zz".to_string();
+    tampered.packages.get_mut("x86_64").unwrap()[0].checksum = "sha512:cc".to_string();
     write_lock(&path, &tampered).unwrap();
     let error = load_lock(&path).unwrap_err();
     assert_eq!(error.code, "RPMX-ROOT-006");

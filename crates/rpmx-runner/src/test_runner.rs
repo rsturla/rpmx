@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::num::{NonZeroU32, NonZeroU64};
 use std::path::Path;
 
-use crate::runner::RunnerKind;
+use crate::runner::{RunnerAssets, RunnerKind};
 use crate::sandbox::{Sandbox, SandboxConfig};
 use rpmx_base::arch::Arch;
 use rpmx_base::error::{codes, Error, Result};
@@ -15,6 +15,7 @@ pub struct TestSandboxConfig<'a> {
     pub host_arch: Arch,
     pub target_arch: Arch,
     pub runner: RunnerKind,
+    pub assets: RunnerAssets<'a>,
     pub source_date_epoch: u32,
     pub jobs: NonZeroU32,
     pub timeout: NonZeroU64,
@@ -68,6 +69,7 @@ pub fn run_planned_tests(
         workspace: settings.workspace,
         stage: settings.stage,
         root: Some(root),
+        assets: settings.assets,
         image: None,
         source_date_epoch: settings.source_date_epoch,
         jobs: settings.jobs,
@@ -83,6 +85,7 @@ pub fn run_planned_tests(
 }
 
 fn run_one_test(sandbox: &Sandbox<'_>, test: &rpmx_language::plan::PlannedTest) -> Result<()> {
+    rpmx_base::output::phase("test", format!("{} ({})", test.name, test.stage));
     if let Some(argv) = &test.argv {
         let command = argv.first().ok_or_else(|| {
             Error::new(

@@ -159,6 +159,41 @@ proof. `rpmx root digest ROOT` computes the deterministic digest. On a root
 with mode-000 files it re-enters a user namespace via `unshare` or `podman
 unshare`.
 
+### QEMU appliance
+
+A QEMU build does not boot the build root. It boots a separate transport
+appliance containing the kernel, initramfs, systemd-networkd, `openssh-server`
+and `tar`. The appliance is resolved from the profile's repositories, but its
+package list is owned by rpmx; do not add those packages to
+`packages.install`.
+
+`rpmx root resolve` includes the appliance by default. Use `--appliance never`
+for a profile whose repositories cannot provide one, or `--appliance always`
+to force it for a lock that will later be rebuilt on another architecture.
+
+```console
+rpmx root resolve profiles/fedora-44.yaml --appliance always --output root.lock.yaml
+rpmx root assemble root.lock.yaml --root ./root --appliance-root ./appliance
+rpmx build package.yaml --root-lock root.lock.yaml --root ./root
+```
+
+`root assemble` writes an appliance it can reuse to
+`$XDG_CACHE_HOME/rpmx/appliances/<identity>/root` unless `--appliance-root`
+names a directory. `--offline` never resolves; a QEMU build whose lock has no
+appliance fails with `RPMX-ROOT-020`.
+
+The appliance can also be handled on its own:
+
+```console
+rpmx runner resolve profiles/fedora-44.yaml --output appliance.yaml
+rpmx runner assemble appliance.yaml --root ./appliance
+rpmx runner inspect --asset-lock appliance.yaml
+rpmx build package.yaml --runner qemu --runner-asset-root ./appliance
+```
+
+`--runner-asset-root` bypasses the appliance cache for `build`, `source`, `test`
+and `rebuild`; the directory must already contain a bootable appliance.
+
 `root export` and `root import` translate a lock to and from a libpkgmanifest
 `rpm-package-manifest`.
 

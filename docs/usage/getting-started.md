@@ -35,7 +35,9 @@ The three things to remember:
 - `dnf5` in the builder image used for root resolution.
 - `tar`, `findutils`, `binutils` and the usual build tools inside the root.
 - For foreign-architecture builds: `qemu-system-<arch>`, `qemu-user-static` with
-  binfmt, `ssh`, `ssh-keygen`, `mke2fs`, `debugfs` and `tar`.
+  binfmt, `ssh`, `ssh-keygen`, `mke2fs`, `debugfs` and `tar`. The QEMU appliance
+  is resolved from the profile repositories; do not add kernel or SSH packages
+  to the profile.
 
 Check the host:
 
@@ -90,7 +92,9 @@ packages/x86_64/repodata/repomd.xml
 ```
 
 The first build resolves and assembles the root (network, a few minutes). The
-next build reuses the cached root and is fast.
+next build reuses the cached root and is fast. The four lines above are stdout;
+phase lines such as `rpmx: resolve`, `rpmx: prepare`, `rpmx: wrote` and
+`rpmx: done` go to stderr.
 
 ---
 
@@ -110,7 +114,7 @@ next build reuses the cached root and is fast.
 | `rpmx repo` | Write repodata for a directory of RPMs. |
 | `rpmx shell` | Open a shell with the build mounts. |
 | `rpmx steps list\|show` | Inspect the built-in step library. |
-| `rpmx doctor` | Check host tools, runners and cache. |
+| `rpmx doctor` | Check host tools, runners, cache and cached QEMU appliances. |
 | `rpmx fetch` | Populate the source cache. |
 | `rpmx source` | Produce the deterministic source snapshot. |
 | `rpmx srpm` | Write an SRPM from an existing snapshot. |
@@ -129,5 +133,6 @@ Global options:
 | `--pipeline-dir DIR` | Where local step files live (default: `<recipe>/pipelines`). |
 | `--keep-workdir` | Keep temporary directories and print their paths. |
 | `--debug` | Echo step commands before running them. |
+| `--verbose` | List resolved detail such as every build-root package. |
 
 ---

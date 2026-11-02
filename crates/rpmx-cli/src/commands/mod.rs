@@ -1,3 +1,4 @@
+pub mod appliance;
 mod args;
 pub mod autoroot;
 pub mod build;
@@ -67,7 +68,7 @@ impl WorkDir {
         })?;
         if rpmx_core::output::keep_workdir() {
             let path = temporary.keep();
-            eprintln!("work directory ({context}): {}", path.display());
+            rpmx_core::output::phase("work", format!("{context}: {}", path.display()));
             Ok(Self {
                 path,
                 _temporary: None,

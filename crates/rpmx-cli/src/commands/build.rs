@@ -195,6 +195,7 @@ fn build_from_recipe(
         )?;
     }
     let automatic = if root_lock.is_none() && root.is_none() && !unsafe_host_root {
+        let runner_kind = runner.parse::<rpmx_core::runner::RunnerKind>()?;
         crate::commands::autoroot::ensure(
             &bundle.recipe,
             &plan,
@@ -204,6 +205,8 @@ fn build_from_recipe(
             offline,
             false,
             &arch,
+            runner_kind,
+            args.runner_asset_root.as_deref(),
         )?
     } else {
         None
@@ -211,13 +214,18 @@ fn build_from_recipe(
     let verify_digest = automatic.is_none();
     let (root_lock, root) = match automatic {
         Some(root) => {
-            eprintln!(
-                "root {} x86_64 {} packages {} ({})",
-                root.profile,
-                root.packages,
-                root.document.root_digest.as_deref().unwrap_or("-"),
-                if root.cached { "cache" } else { "resolved" }
+            crate::commands::autoroot::report_root(
+                &root.document,
+                &root.profile,
+                if root.cached {
+                    "cache hit"
+                } else {
+                    "assembled"
+                },
             );
+            if let Some(appliance) = &root.appliance {
+                rpmx_core::output::phase("appliance", appliance.display());
+            }
             (Some(root.lock), Some(root.root))
         }
         None => (root_lock, root),
@@ -269,6 +277,7 @@ fn build_from_recipe(
         offline,
         root_lock: root_lock.as_deref(),
         root: root.as_deref(),
+        runner_asset_root: args.runner_asset_root.as_deref(),
         unsafe_host_root,
         source_date_epoch,
         jobs,
@@ -300,6 +309,14 @@ fn build_from_recipe(
             key.as_ref(),
             signature_timestamp.unwrap_or(timestamp),
         )?;
+        rpmx_core::output::phase(
+            "index",
+            format!(
+                "{} in {}",
+                rpmx_core::output::count(report.packages, "package", "packages"),
+                output.display()
+            ),
+        );
         repository.push(report.repomd);
         if let Some(signature) = report.signature {
             repository.push(signature);
@@ -312,6 +329,18 @@ fn build_from_recipe(
         &built.evidence,
         &repository,
     )?;
+    rpmx_core::output::phase(
+        "done",
+        format!(
+            "{} in {}",
+            rpmx_core::output::count(
+                built.rpms.len() + built.srpms.len() + built.evidence.len() + repository.len(),
+                "artifact",
+                "artifacts"
+            ),
+            output.display()
+        ),
+    );
     Ok(built.rpms)
 }
 

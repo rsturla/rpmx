@@ -9,6 +9,100 @@ mod backend;
 
 use backend::{BwrapBackend, PodmanBackend, QemuBackend};
 
+/// A runner-owned artifact that is locked separately from the build root.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum RunnerAssetKind {
+    /// The QEMU transport appliance: kernel, initramfs and SSH tooling.
+    QemuAppliance,
+}
+
+impl RunnerAssetKind {
+    pub const ALL: &'static [Self] = &[Self::QemuAppliance];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::QemuAppliance => "qemu-appliance",
+        }
+    }
+
+    /// Directory name under `$XDG_CACHE_HOME/rpmx/`.
+    pub fn cache_name(self) -> &'static str {
+        match self {
+            Self::QemuAppliance => "appliances",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct RunnerAsset<'a> {
+    pub kind: RunnerAssetKind,
+    pub path: &'a Path,
+}
+
+/// The runner-owned assets available to one session, if any.
+///
+/// The common QEMU appliance is a named slot so callers do not have to keep a
+/// temporary slice alive. `others` is the extension point for future runners.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct RunnerAssets<'a> {
+    qemu_appliance: Option<&'a Path>,
+    others: &'a [RunnerAsset<'a>],
+}
+
+impl<'a> RunnerAssets<'a> {
+    pub fn new(qemu_appliance: Option<&'a Path>, others: &'a [RunnerAsset<'a>]) -> Self {
+        Self {
+            qemu_appliance,
+            others,
+        }
+    }
+
+    pub fn qemu_appliance(&self) -> Option<&'a Path> {
+        self.qemu_appliance
+    }
+
+    pub fn get(&self, kind: RunnerAssetKind) -> Option<&'a Path> {
+        match kind {
+            RunnerAssetKind::QemuAppliance => self.qemu_appliance,
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.qemu_appliance.is_none() && self.others.is_empty()
+    }
+}
+
+/// A runner's static capabilities. Adding a backend means adding one
+/// descriptor, not editing doctor, cache reporting or asset plumbing.
+#[derive(Clone, Copy, Debug)]
+pub struct RunnerDescriptor {
+    pub kind: RunnerKind,
+    pub name: &'static str,
+    pub tools: &'static [&'static str],
+    pub assets: &'static [RunnerAssetKind],
+}
+
+pub const RUNNER_DESCRIPTORS: &[RunnerDescriptor] = &[
+    RunnerDescriptor {
+        kind: RunnerKind::Bwrap,
+        name: "bubblewrap",
+        tools: &["bwrap"],
+        assets: &[],
+    },
+    RunnerDescriptor {
+        kind: RunnerKind::Podman,
+        name: "podman",
+        tools: &["podman"],
+        assets: &[],
+    },
+    RunnerDescriptor {
+        kind: RunnerKind::Qemu,
+        name: "qemu-system",
+        tools: &["qemu-system-x86_64", "qemu-system-aarch64"],
+        assets: &[RunnerAssetKind::QemuAppliance],
+    },
+];
+
 /// The inputs a backend needs to start one session. Policy fields such as the
 /// source date and debuginfo stay in `SandboxConfig`; the runner never sees
 /// them.
@@ -17,6 +111,8 @@ pub struct RunnerConfig<'a> {
     pub target: Arch,
     pub workspace: &'a Path,
     pub stage: &'a Path,
+    /// Runner-owned locked artifacts. The build root is not one of them.
+    pub assets: RunnerAssets<'a>,
     pub jobs: NonZeroU32,
     pub timeout: NonZeroU64,
 }
@@ -67,6 +163,7 @@ pub trait Runner {
 pub enum RunnerKind {
     Auto,
     Bwrap,
+    Podman,
     Qemu,
 }
 
@@ -77,12 +174,25 @@ impl std::str::FromStr for RunnerKind {
         match value {
             "auto" => Ok(Self::Auto),
             "bwrap" => Ok(Self::Bwrap),
+            "podman" => Ok(Self::Podman),
             "qemu" => Ok(Self::Qemu),
             other => Err(Error::new(
                 codes::RUNNER_001,
-                format!("unknown runner '{other}'; expected auto, bwrap or qemu"),
+                format!("unknown runner '{other}'; expected auto, bwrap, podman or qemu"),
             )),
         }
+    }
+}
+
+impl RunnerKind {
+    pub fn descriptors() -> &'static [RunnerDescriptor] {
+        RUNNER_DESCRIPTORS
+    }
+
+    pub fn descriptor(self) -> Option<&'static RunnerDescriptor> {
+        RUNNER_DESCRIPTORS
+            .iter()
+            .find(|descriptor| descriptor.kind == self)
     }
 }
 
@@ -117,6 +227,13 @@ impl RunnerKind {
                 )),
                 Some(root) => Ok(Selection::Bwrap(Some(root))),
                 None => Ok(Selection::Bwrap(None)),
+            },
+            Self::Podman => match image {
+                Some(image) => Ok(Selection::Podman(image)),
+                None => Err(Error::new(
+                    codes::RUNNER_001,
+                    "the podman runner needs a builder image",
+                )),
             },
             Self::Auto => match root {
                 Some(root) if host == target => Ok(Selection::Bwrap(Some(root))),

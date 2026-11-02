@@ -124,7 +124,8 @@ be set by a step.
 - `build.dependencies.tools/host/target/tests` all land in one root; there is no
   separate sysroot for cross builds.
 - Cross-compilation is not implemented. Foreign targets use a full qemu-system
-  VM and need a bootable target root.
+  VM and need a locked, assembled transport appliance; the build root is not
+  bootable.
 - `stage: package` tests, ABI tests and reproducibility tests are not
   implemented.
 - Rich dependencies are not implemented; weak dependencies are.

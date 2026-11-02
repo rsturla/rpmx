@@ -8,6 +8,8 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
+use rpmx_core::appliance;
+use rpmx_core::cache_lock::CacheLock;
 use rpmx_core::error::codes;
 use rpmx_core::hash::sha512_hex;
 use rpmx_core::model::{Recipe, RootRepository, RootSpec};
@@ -17,9 +19,11 @@ use rpmx_core::profile::{
 };
 use rpmx_core::root::{
     assemble, load_lock, remove_tree, resolve_profile, write_lock, AssembleOptions, RootLock,
-    RootSelection,
+    RootSelection, APPLIANCE_SCHEMA,
 };
+use rpmx_core::runner::RunnerKind;
 use rpmx_core::tree::digest_root;
+use rpmx_core::Arch;
 use rpmx_core::Error;
 
 use crate::commands::fetch::default_cache;
@@ -29,6 +33,7 @@ use crate::commands::fetch::default_cache;
 pub struct AutomaticRoot {
     pub lock: PathBuf,
     pub root: PathBuf,
+    pub appliance: Option<PathBuf>,
     pub document: RootLock,
     pub profile: String,
     pub packages: usize,
@@ -41,6 +46,13 @@ pub struct Requirement {
     pub profile: Profile,
     pub name: String,
     pub digest: String,
+}
+
+/// A build root and its optional runner appliance, both assembled.
+#[derive(Debug)]
+pub struct AssembledRoots {
+    pub root: PathBuf,
+    pub appliance: Option<PathBuf>,
 }
 
 /// A cached root lock for a requirement digest, if this host has one.
@@ -73,6 +85,7 @@ pub fn requirement(
     recipe_path: &Path,
     profile: Option<&Path>,
     arch: &str,
+    needs_appliance: bool,
 ) -> Result<Option<Requirement>, Error> {
     let spec = recipe.build.root.as_ref();
     let selected_profile = profile.map(Path::to_path_buf);
@@ -113,8 +126,17 @@ pub fn requirement(
 
     let fallback = format!("{}-root", recipe.package.name);
     let name = profile.name(&fallback);
-    let bytes = serde_json::to_vec(&profile)
+    let mut bytes = serde_json::to_vec(&profile)
         .map_err(|error| Error::new(codes::ROOT_006, error.to_string()))?;
+    // The appliance is a cache identity input: a native root and a QEMU root
+    // are separate cache entries even though their build closure is identical.
+    bytes.extend_from_slice(
+        format!(
+            "\nappliance:{}\nappliance-schema:{APPLIANCE_SCHEMA}\n",
+            u8::from(needs_appliance)
+        )
+        .as_bytes(),
+    );
     Ok(Some(Requirement {
         profile,
         name,
@@ -136,8 +158,15 @@ pub fn ensure(
     offline: bool,
     refresh: bool,
     arch: &str,
+    runner: RunnerKind,
+    runner_asset_root: Option<&Path>,
 ) -> Result<Option<AutomaticRoot>, Error> {
-    let Some(requirement) = requirement(recipe, plan, recipe_path, profile, arch)? else {
+    let host = Arch::current()?;
+    let target = Arch::parse(arch)?;
+    let needs_appliance =
+        runner_asset_root.is_none() && appliance::Policy::Auto.should_resolve(host, target, runner);
+    let Some(requirement) = requirement(recipe, plan, recipe_path, profile, arch, needs_appliance)?
+    else {
         return Ok(None);
     };
     let profile = requirement.profile;
@@ -155,7 +184,7 @@ pub fn ensure(
     let root_path = directory.join("root");
 
     if !refresh {
-        match load_cached(&lock_path, &root_path, arch) {
+        match load_cached(&lock_path, &root_path, arch, needs_appliance, &cas, offline) {
             Ok(Some(root)) => return Ok(Some(root)),
             Ok(None) => {}
             Err(error) if offline => {
@@ -192,7 +221,9 @@ pub fn ensure(
     // delete each other's half-built root.
     let _publishing = CacheLock::acquire(&roots, key)?;
     if !refresh {
-        if let Ok(Some(root)) = load_cached(&lock_path, &root_path, arch) {
+        if let Ok(Some(root)) =
+            load_cached(&lock_path, &root_path, arch, needs_appliance, &cas, offline)
+        {
             return Ok(Some(root));
         }
     }
@@ -218,6 +249,21 @@ pub fn ensure(
             )
         })?;
     let mut document = resolve_profile(&profile, &name, work.path(), &cas)?;
+    if needs_appliance {
+        let appliance_work = work.path().join("appliance");
+        std::fs::create_dir_all(&appliance_work).map_err(|error| {
+            Error::new(
+                codes::ROOT_004,
+                format!("cannot create {}: {error}", appliance_work.display()),
+            )
+        })?;
+        document.set_qemu_appliance(Some(appliance::resolve(
+            &profile,
+            &name,
+            &appliance_work,
+            &cas,
+        )?));
+    }
     // The final root is a sibling of the scratch directory: assembly refuses
     // a root inside its own work tree.
     let assembled = assemble(
@@ -233,9 +279,11 @@ pub fn ensure(
     // root and lock, or no lock and rebuilds.
     write_lock(&lock_path, &document)?;
     let packages = count_packages(&document);
+    let runner_asset_root = ensure_appliance(&document, &cas, offline)?;
     Ok(Some(AutomaticRoot {
         lock: lock_path,
         root: root_path,
+        appliance: runner_asset_root,
         document,
         profile: name,
         packages,
@@ -252,11 +300,34 @@ pub fn ensure_from_lock(
     cache: Option<&Path>,
     offline: bool,
     arch: &str,
-) -> Result<PathBuf, Error> {
+    needs_appliance: bool,
+    override_root: Option<&Path>,
+) -> Result<AssembledRoots, Error> {
     let cas = match cache {
         Some(path) => path.to_path_buf(),
         None => default_cache()?,
     };
+    if let Some(root) = override_root {
+        if !root.is_dir() {
+            return Err(Error::new(
+                codes::ROOT_020,
+                format!("the QEMU appliance {} is not a directory", root.display()),
+            ));
+        }
+    }
+    let appliance_override = override_root.map(Path::to_path_buf);
+    let appliance_path = |needs: bool| -> Result<Option<PathBuf>, Error> {
+        if !needs {
+            return Ok(None);
+        }
+        if let Some(root) = &appliance_override {
+            return Ok(Some(root.clone()));
+        }
+        ensure_appliance(lock, &cas, offline)
+    };
+    // An explicit appliance root does not need the cached lock to contain an
+    // appliance, so do not reject the build-root cache hit.
+    let cache_needs_appliance = needs_appliance && appliance_override.is_none();
     let roots = cas.parent().unwrap_or(&cas).join("roots");
     let digest = lock.require_digest()?.to_string();
     let key = digest.strip_prefix("sha512:").unwrap_or(&digest);
@@ -264,11 +335,23 @@ pub fn ensure_from_lock(
     let lock_path = directory.join("root.lock.yaml");
     let root_path = directory.join("root");
 
-    if let Ok(Some(root)) = load_cached(&lock_path, &root_path, arch) {
-        return Ok(root.root);
+    if let Ok(Some(root)) = load_cached(
+        &lock_path,
+        &root_path,
+        arch,
+        cache_needs_appliance,
+        &cas,
+        offline,
+    ) {
+        let appliance = appliance_path(needs_appliance)?;
+        return Ok(AssembledRoots {
+            root: root.root,
+            appliance,
+        });
     }
     if let Some(root) = find_published_root(&roots, &digest) {
-        return Ok(root);
+        let appliance = appliance_path(needs_appliance)?;
+        return Ok(AssembledRoots { root, appliance });
     }
     if offline {
         return Err(Error::new(
@@ -287,8 +370,19 @@ pub fn ensure_from_lock(
         )
     })?;
     let _publishing = CacheLock::acquire(&roots, &format!("lock-{key}"))?;
-    if let Ok(Some(root)) = load_cached(&lock_path, &root_path, arch) {
-        return Ok(root.root);
+    if let Ok(Some(root)) = load_cached(
+        &lock_path,
+        &root_path,
+        arch,
+        cache_needs_appliance,
+        &cas,
+        offline,
+    ) {
+        let appliance = appliance_path(needs_appliance)?;
+        return Ok(AssembledRoots {
+            root: root.root,
+            appliance,
+        });
     }
     if directory.exists() {
         remove_tree(&directory)?;
@@ -327,7 +421,11 @@ pub fn ensure_from_lock(
         ));
     }
     write_lock(&lock_path, lock)?;
-    Ok(root_path)
+    let appliance = appliance_path(needs_appliance)?;
+    Ok(AssembledRoots {
+        root: root_path,
+        appliance,
+    })
 }
 
 /// Find an already-published root with the same digest under a different
@@ -352,15 +450,82 @@ fn find_published_root(roots: &Path, digest: &str) -> Option<PathBuf> {
     None
 }
 
+/// Ensure the appliance described by a loaded lock, when the selected runner
+/// needs a VM. Native builds never pay for an appliance they cannot use.
+pub fn appliance_for(
+    lock: &RootLock,
+    cache: Option<&Path>,
+    offline: bool,
+    runner: RunnerKind,
+    arch: &str,
+    override_root: Option<&Path>,
+) -> Result<Option<PathBuf>, Error> {
+    let needs =
+        appliance::Policy::Auto.should_resolve(Arch::current()?, Arch::parse(arch)?, runner);
+    if !needs {
+        return Ok(None);
+    }
+    if let Some(root) = override_root {
+        if !root.is_dir() {
+            return Err(Error::new(
+                codes::ROOT_020,
+                format!("the QEMU appliance {} is not a directory", root.display()),
+            ));
+        }
+        return Ok(Some(root.to_path_buf()));
+    }
+    let cas = match cache {
+        Some(path) => path.to_path_buf(),
+        None => default_cache()?,
+    };
+    ensure_appliance(lock, &cas, offline)
+}
+
+/// Load a lock and ensure its appliance, when the runner needs a VM.
+pub fn appliance_for_lock(
+    lock_path: Option<&Path>,
+    cache: Option<&Path>,
+    offline: bool,
+    runner: RunnerKind,
+    arch: &str,
+    override_root: Option<&Path>,
+) -> Result<Option<PathBuf>, Error> {
+    let Some(path) = lock_path else {
+        return Ok(None);
+    };
+    let lock = load_lock(path)?;
+    appliance_for(&lock, cache, offline, runner, arch, override_root)
+}
+
+/// Assemble the locked appliance into its content-addressed cache.
+///
+/// A VM-required path with no appliance metadata is an error: silently falling
+/// through to the runner produces a less actionable `RPMX-RUNNER-004`.
+fn ensure_appliance(lock: &RootLock, cas: &Path, offline: bool) -> Result<Option<PathBuf>, Error> {
+    let Some(appliance) = lock.qemu_appliance() else {
+        return Err(Error::new(
+            codes::ROOT_020,
+            "the root lock has no QEMU appliance; re-resolve it with `--appliance always` or pass --appliance-root",
+        ));
+    };
+    appliance::ensure_cached(appliance, cas, offline).map(Some)
+}
+
 fn load_cached(
     lock_path: &Path,
     root_path: &Path,
     arch: &str,
+    needs_appliance: bool,
+    cas: &Path,
+    offline: bool,
 ) -> Result<Option<AutomaticRoot>, Error> {
     if !lock_path.is_file() || !root_path.is_dir() {
         return Ok(None);
     }
     let document = load_lock(lock_path)?;
+    if needs_appliance && document.qemu_appliance().is_none() {
+        return Ok(None);
+    }
     // Publishing writes the lock last, so a root newer than its lock may have
     // been changed after publication. Re-hash only then: a full walk of a
     // distribution root costs minutes on every build.
@@ -383,9 +548,15 @@ fn load_cached(
             format!("cannot resolve {}: {error}", root_path.display()),
         )
     })?;
+    let appliance = if needs_appliance {
+        ensure_appliance(&document, cas, offline)?
+    } else {
+        None
+    };
     Ok(Some(AutomaticRoot {
         lock: lock_path.to_path_buf(),
         root: path,
+        appliance,
         packages: count_packages(&document),
         profile: document.profile.clone(),
         document,
@@ -393,62 +564,29 @@ fn load_cached(
     }))
 }
 
-/// A per-requirement publishing mutex.
-struct CacheLock {
-    path: PathBuf,
-}
-
-impl CacheLock {
-    fn acquire(roots: &Path, key: &str) -> Result<Self, Error> {
-        use std::io::Write;
-
-        let path = roots.join(format!("{key}.publishing"));
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(600);
-        loop {
-            match std::fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&path)
-            {
-                Ok(mut file) => {
-                    let _ = writeln!(file, "{}", std::process::id());
-                    return Ok(Self { path });
-                }
-                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                    let stale = std::fs::metadata(&path)
-                        .and_then(|metadata| metadata.modified())
-                        .ok()
-                        .and_then(|modified| modified.elapsed().ok())
-                        .is_some_and(|age| age > std::time::Duration::from_secs(120));
-                    if stale {
-                        let _ = std::fs::remove_file(&path);
-                        continue;
-                    }
-                    if std::time::Instant::now() >= deadline {
-                        return Err(Error::new(
-                            codes::ROOT_004,
-                            format!(
-                                "timed out waiting for another rpmx process to publish {}",
-                                roots.display()
-                            ),
-                        ));
-                    }
-                    std::thread::sleep(std::time::Duration::from_millis(100));
-                }
-                Err(error) => {
-                    return Err(Error::new(
-                        codes::ROOT_004,
-                        format!("cannot create {}: {error}", path.display()),
-                    ))
-                }
+/// Report a resolved root on stderr and, with `--verbose`, every package.
+///
+/// `source` says where the root came from (`assembled`, `cache hit`, `lock`),
+/// so a silent cache hit is distinguishable from a first build.
+pub fn report_root(lock: &RootLock, profile: &str, source: &str) {
+    let count = count_packages(lock);
+    rpmx_core::output::phase(
+        "resolve",
+        format!(
+            "{profile} {} {} ({source})",
+            lock.archs.join(","),
+            rpmx_core::output::count(count, "package", "packages")
+        ),
+    );
+    if let Some(builder) = &lock.builder {
+        rpmx_core::output::item(format!("builder {}", builder.image));
+    }
+    if rpmx_core::output::verbose() {
+        for (package_arch, entries) in &lock.packages {
+            for package in entries {
+                rpmx_core::output::item(format!("{}-{}.{package_arch}", package.name, package.evr));
             }
         }
-    }
-}
-
-impl Drop for CacheLock {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.path);
     }
 }
 
@@ -633,9 +771,54 @@ fn count_packages(lock: &RootLock) -> usize {
 mod tests {
     use super::{has_inline_fields, required_packages};
     use rpmx_core::model::Recipe;
+    use rpmx_core::root::{
+        closure_digest, write_lock, ApplianceLock, LockedBuilder, LockedPackage, RootLock,
+        APPLIANCE_SCHEMA,
+    };
+    use std::collections::BTreeMap;
 
     fn recipe(text: &str) -> Recipe {
         rpmx_core::parse_recipe(text).expect("recipe")
+    }
+
+    fn appliance_lock() -> ApplianceLock {
+        let archs = vec!["x86_64".to_string()];
+        let mut packages = BTreeMap::new();
+        packages.insert(
+            "x86_64".to_string(),
+            vec![LockedPackage {
+                name: "kernel-core".to_string(),
+                repo_id: "fedora".to_string(),
+                evr: "1-1.fc44".to_string(),
+                checksum: "sha512:aa".to_string(),
+                size: 1,
+                srpm: None,
+                module: None,
+                location: None,
+            }],
+        );
+        let repositories = Vec::new();
+        let closure = closure_digest("44", &archs, &repositories, &packages);
+        ApplianceLock {
+            schema: APPLIANCE_SCHEMA,
+            profile: "test-qemu-appliance".to_string(),
+            archs,
+            releasever: "44".to_string(),
+            builder: LockedBuilder {
+                image: "registry.fedoraproject.org/fedora:44".to_string(),
+                image_digest: "sha256:builder".to_string(),
+            },
+            repositories,
+            packages,
+            closure_digest: closure,
+        }
+    }
+
+    fn lock_with_appliance() -> RootLock {
+        let appliance = appliance_lock();
+        let mut lock = appliance.as_root_lock();
+        lock.set_qemu_appliance(Some(appliance));
+        lock
     }
 
     #[test]
@@ -688,8 +871,9 @@ outputs:
                 continue;
             };
             let plan = plan(&bundle.recipe);
-            let root = super::requirement(&bundle.recipe, &plan, &bundle.root, None, "x86_64")
-                .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+            let root =
+                super::requirement(&bundle.recipe, &plan, &bundle.root, None, "x86_64", false)
+                    .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
             assert!(
                 root.is_some(),
                 "{} declares no build.root; examples must build with `rpmx build FILE`",
@@ -698,6 +882,132 @@ outputs:
             checked += 1;
         }
         assert!(checked >= 10, "only checked {checked} examples");
+    }
+
+    #[test]
+    fn the_requirement_digest_includes_the_appliance_policy() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let recipe = recipe(
+            r#"
+schema: 1
+package:
+  name: p
+  version: "1"
+  release: 1
+  summary: p
+  license: MIT
+build:
+  root:
+    releasever: "44"
+    repositories:
+      - id: fedora
+        baseurl: https://example.invalid/fedora
+    packages: [bash]
+outputs:
+  - name: p
+    metapackage: true
+"#,
+        );
+        let plan = plan(&recipe);
+        let path = directory.path().join("package.yaml");
+        let native = super::requirement(&recipe, &plan, &path, None, "x86_64", false)
+            .expect("requirement")
+            .expect("root");
+        let vm = super::requirement(&recipe, &plan, &path, None, "x86_64", true)
+            .expect("requirement")
+            .expect("root");
+        assert_ne!(native.digest, vm.digest);
+        assert_eq!(native.profile.packages.install, vm.profile.packages.install);
+    }
+
+    #[test]
+    fn a_native_cache_entry_does_not_need_an_appliance() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let cas = directory.path().join("cas");
+        std::fs::create_dir_all(&cas).expect("cas");
+        let root = directory.path().join("root");
+        std::fs::create_dir_all(&root).expect("root");
+        let lock = appliance_lock().as_root_lock();
+        let lock_path = directory.path().join("root.lock.yaml");
+        write_lock(&lock_path, &lock).expect("lock");
+        let cached = super::load_cached(&lock_path, &root, "x86_64", false, &cas, false)
+            .expect("load")
+            .expect("cached");
+        assert!(cached.document.qemu_appliance().is_none());
+    }
+
+    #[test]
+    fn a_qemu_cache_entry_without_an_appliance_is_a_miss() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let cas = directory.path().join("cas");
+        std::fs::create_dir_all(&cas).expect("cas");
+        let root = directory.path().join("root");
+        std::fs::create_dir_all(&root).expect("root");
+        let lock = appliance_lock().as_root_lock();
+        let lock_path = directory.path().join("root.lock.yaml");
+        write_lock(&lock_path, &lock).expect("lock");
+        let cached =
+            super::load_cached(&lock_path, &root, "x86_64", true, &cas, false).expect("load");
+        assert!(cached.is_none());
+    }
+
+    #[test]
+    fn an_explicit_runner_asset_root_bypasses_the_cache() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let lock = lock_with_appliance();
+        let path = super::appliance_for(
+            &lock,
+            None,
+            true,
+            rpmx_core::runner::RunnerKind::Qemu,
+            "x86_64",
+            Some(directory.path()),
+        )
+        .expect("appliance")
+        .expect("override");
+        assert_eq!(path, directory.path());
+
+        let none = super::appliance_for(
+            &lock,
+            None,
+            true,
+            rpmx_core::runner::RunnerKind::Bwrap,
+            "x86_64",
+            Some(directory.path()),
+        )
+        .expect("native");
+        assert!(none.is_none());
+    }
+
+    #[test]
+    fn ensure_appliance_reuses_a_completed_cache_entry() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let cas = directory.path().join("cas");
+        std::fs::create_dir_all(&cas).expect("cas");
+        let lock = lock_with_appliance();
+        let appliance = lock.qemu_appliance().expect("appliance");
+        let root = rpmx_core::appliance::cache_root(&cas, &appliance.identity());
+        std::fs::create_dir_all(&root).expect("cached appliance");
+        std::fs::write(
+            root.parent().expect("parent").join(".complete"),
+            appliance.identity(),
+        )
+        .expect("marker");
+        let path = super::ensure_appliance(&lock, &cas, true)
+            .expect("cached")
+            .expect("appliance");
+        assert_eq!(path, root);
+    }
+
+    #[test]
+    fn ensure_appliance_offline_without_a_cache_is_root_020() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let cas = directory.path().join("cas");
+        std::fs::create_dir_all(&cas).expect("cas");
+        let lock = lock_with_appliance();
+        let error = super::ensure_appliance(&lock, &cas, true).expect_err("missing cache");
+        assert_eq!(error.code, rpmx_core::error::codes::ROOT_020);
+        assert!(error.message.contains("not cached"));
     }
 
     #[test]
@@ -735,6 +1045,8 @@ outputs:
             true,
             false,
             "x86_64",
+            rpmx_core::runner::RunnerKind::Auto,
+            None,
         )
         .expect_err("invalid arch");
         // `Profile::validate` reports an unknown architecture as ROOT-009.
@@ -772,6 +1084,8 @@ outputs:
             true,
             false,
             "x86_64",
+            rpmx_core::runner::RunnerKind::Auto,
+            None,
         )
         .expect_err("conflicting root");
         assert_eq!(error.code, rpmx_core::error::codes::ROOT_006);
@@ -848,6 +1162,7 @@ outputs:
             &directory.path().join("package.yaml"),
             None,
             "x86_64",
+            false,
         )
         .expect_err("credentials");
         assert_eq!(error.code, rpmx_core::error::codes::ROOT_019);
@@ -906,6 +1221,8 @@ outputs:
             true,
             false,
             "x86_64",
+            rpmx_core::runner::RunnerKind::Auto,
+            None,
         )
         .expect_err("cold offline cache");
         assert_eq!(error.code, rpmx_core::error::codes::ROOT_016);

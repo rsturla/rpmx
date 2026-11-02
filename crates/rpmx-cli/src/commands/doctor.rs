@@ -22,12 +22,11 @@ pub fn run(args: DoctorArgs) -> Result<(), rpmx_core::Error> {
     let mut missing_core = false;
 
     for (name, required) in [
-        ("bwrap", false),
-        ("podman", false),
         ("dnf5", false),
         ("tar", true),
         ("git", false),
         ("ssh", false),
+        ("ssh-keygen", false),
         ("mke2fs", false),
         ("debugfs", false),
         ("unshare", false),
@@ -59,23 +58,31 @@ pub fn run(args: DoctorArgs) -> Result<(), rpmx_core::Error> {
         checks.push(check);
     }
 
-    let qemu = ["qemu-system-x86_64", "qemu-system-aarch64"]
-        .into_iter()
-        .find(|name| on_path(name).is_some());
-    checks.push(match qemu {
-        Some(name) => Check {
-            name: "qemu-system",
-            status: "ok",
-            version: version(name),
-            detail: Some(name.to_string()),
-        },
-        None => Check {
-            name: "qemu-system",
-            status: "warn",
-            version: None,
-            detail: Some("foreign-architecture builds only".to_string()),
-        },
-    });
+    for descriptor in rpmx_core::runner::RunnerKind::descriptors() {
+        let found = descriptor
+            .tools
+            .iter()
+            .find(|tool| on_path(tool).is_some())
+            .copied();
+        checks.push(match found {
+            Some(tool) => Check {
+                name: descriptor.name,
+                status: "ok",
+                version: version(tool),
+                detail: Some(tool.to_string()),
+            },
+            None => Check {
+                name: descriptor.name,
+                status: "warn",
+                version: None,
+                detail: Some(if descriptor.assets.is_empty() {
+                    "optional runner".to_string()
+                } else {
+                    "optional for foreign-architecture builds".to_string()
+                }),
+            },
+        });
+    }
 
     if on_path("bwrap").is_none() && on_path("podman").is_none() {
         missing_core = true;
@@ -117,6 +124,25 @@ pub fn run(args: DoctorArgs) -> Result<(), rpmx_core::Error> {
         },
     };
     checks.push(cache_check);
+
+    for kind in rpmx_core::runner::RunnerAssetKind::ALL {
+        let count = count_cached_assets(&cache, kind.cache_name());
+        checks.push(if count > 0 {
+            Check {
+                name: kind.name(),
+                status: "ok",
+                version: None,
+                detail: Some(format!("{count} cached")),
+            }
+        } else {
+            Check {
+                name: kind.name(),
+                status: "warn",
+                version: None,
+                detail: Some("none cached; the first build that needs it resolves one".to_string()),
+            }
+        });
+    }
 
     let failed = missing_core || checks.iter().any(|check| check.status == "fail");
 
@@ -168,6 +194,10 @@ fn on_path(name: &str) -> Option<PathBuf> {
 }
 
 fn version(name: &str) -> Option<String> {
+    // ssh-keygen has no non-destructive version flag.
+    if name == "ssh-keygen" {
+        return None;
+    }
     let flag = match name {
         "ssh" | "mke2fs" => "-V",
         _ => "--version",
@@ -183,6 +213,21 @@ fn version(name: &str) -> Option<String> {
         .map(|line| line.trim().chars().take(60).collect())
 }
 
+/// Count completed runner-asset cache entries. A missing directory is zero,
+/// not an error: a host that never runs that runner has no such assets.
+fn count_cached_assets(cache: &std::path::Path, directory: &str) -> usize {
+    let Ok(entries) = std::fs::read_dir(cache.join(directory)) else {
+        return 0;
+    };
+    entries
+        .flatten()
+        .filter(|entry| {
+            let path = entry.path();
+            path.join(".complete").is_file() && path.join("root").is_dir()
+        })
+        .count()
+}
+
 fn cache_dir() -> PathBuf {
     if let Ok(base) = std::env::var("XDG_CACHE_HOME") {
         return PathBuf::from(base).join("rpmx");
@@ -191,4 +236,28 @@ fn cache_dir() -> PathBuf {
         return PathBuf::from(home).join(".cache").join("rpmx");
     }
     PathBuf::from(".rpmx-cache")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::count_cached_assets;
+
+    #[test]
+    fn only_completed_assets_are_counted() {
+        let cache = tempfile::tempdir().expect("cache");
+        let assets = cache.path().join("appliances");
+        std::fs::create_dir_all(&assets).expect("assets");
+        let complete = assets.join("complete");
+        std::fs::create_dir_all(complete.join("root")).expect("root");
+        std::fs::write(complete.join(".complete"), "sha512:aa").expect("marker");
+        let partial = assets.join("partial");
+        std::fs::create_dir_all(partial.join("root")).expect("partial root");
+        assert_eq!(count_cached_assets(cache.path(), "appliances"), 1);
+    }
+
+    #[test]
+    fn a_missing_asset_directory_is_zero() {
+        let cache = tempfile::tempdir().expect("cache");
+        assert_eq!(count_cached_assets(cache.path(), "appliances"), 0);
+    }
 }

@@ -21,6 +21,7 @@ pub struct SourceRequest<'a> {
     pub locked: bool,
     pub root_lock: Option<&'a Path>,
     pub root: Option<&'a Path>,
+    pub runner_asset_root: Option<&'a Path>,
     pub unsafe_host_root: bool,
     /// Re-hash an explicit root. A caller that already resolved the root
     /// passes false to avoid hashing the whole tree twice.
@@ -52,6 +53,7 @@ pub fn run(args: SourceArgs, pipeline_dir: Option<&Path>) -> Result<PathBuf, Err
         locked: args.locked,
         root_lock: args.root_lock.as_deref(),
         root: args.root.as_deref(),
+        runner_asset_root: args.runner_asset_root.as_deref(),
         unsafe_host_root: args.unsafe_host_root,
         verify_root: true,
         output: &args.output,
@@ -91,17 +93,21 @@ pub fn execute(request: SourceRequest<'_>) -> Result<PathBuf, Error> {
                 request.offline,
                 false,
                 request.arch,
+                request.runner.parse::<rpmx_core::runner::RunnerKind>()?,
+                request.runner_asset_root,
             )?
         } else {
             None
         };
     if let Some(root) = &automatic {
-        eprintln!(
-            "root {} x86_64 {} packages {} ({})",
-            root.profile,
-            root.packages,
-            root.document.root_digest.as_deref().unwrap_or("-"),
-            if root.cached { "cache" } else { "resolved" }
+        crate::commands::autoroot::report_root(
+            &root.document,
+            &root.profile,
+            if root.cached {
+                "cache hit"
+            } else {
+                "assembled"
+            },
         );
     }
     let verify_digest = request.verify_root && automatic.is_none();
@@ -155,7 +161,19 @@ pub fn execute(request: SourceRequest<'_>) -> Result<PathBuf, Error> {
         .as_ref()
         .map(|selection| selection.lock.libdir.as_str())
         .unwrap_or(rpmx_core::guest::LIBDIR);
+    let appliance = crate::commands::autoroot::appliance_for_lock(
+        root_lock,
+        request.cache,
+        request.offline,
+        request.runner.parse::<rpmx_core::runner::RunnerKind>()?,
+        request.arch,
+        request.runner_asset_root,
+    )?;
 
+    rpmx_core::output::phase(
+        "source",
+        format!("{} assembling RPMX-SOURCE.tar.gz", request.arch),
+    );
     let snapshot = assemble(SourceOptions {
         recipe: &bundle.recipe,
         plan: &plan,
@@ -172,9 +190,11 @@ pub fn execute(request: SourceRequest<'_>) -> Result<PathBuf, Error> {
         jobs: request.jobs,
         step_timeout: request.step_timeout,
         root: selected_root,
+        appliance: appliance.as_deref(),
         runner: request.runner,
         recipe_dir: request.file.parent().unwrap_or_else(|| Path::new(".")),
     })?;
+    rpmx_core::output::phase("source", format!("{} {}", request.arch, snapshot.display()));
 
     if let Some(selection) = &selected {
         let mut text = serde_json::to_string_pretty(&selection.lock)
@@ -207,6 +227,14 @@ pub fn execute(request: SourceRequest<'_>) -> Result<PathBuf, Error> {
         } else {
             println!("{}", snapshot.display());
         }
+        rpmx_core::output::phase(
+            "done",
+            format!(
+                "{} in {}",
+                rpmx_core::output::count(1, "artifact", "artifacts"),
+                request.output.display()
+            ),
+        );
     }
     Ok(snapshot)
 }

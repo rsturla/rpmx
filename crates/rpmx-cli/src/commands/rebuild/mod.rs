@@ -31,6 +31,7 @@ pub struct RebuildRequest<'a> {
     pub root_image: Option<&'a str>,
     pub root_lock: Option<&'a Path>,
     pub root: Option<&'a Path>,
+    pub runner_asset_root: Option<&'a Path>,
     pub cache: Option<&'a Path>,
     pub offline: bool,
     /// Re-hash an explicit root against its lock. A full build that just
@@ -77,6 +78,7 @@ pub fn run(args: RebuildArgs) -> Result<Vec<PathBuf>, Error> {
         root_image: args.root_image.as_deref(),
         root_lock: args.root_lock.as_deref(),
         root: args.root.as_deref(),
+        runner_asset_root: args.runner_asset_root.as_deref(),
         cache: args.runtime.cache.cache.as_deref(),
         offline: args.offline,
         verify_root: true,
@@ -111,6 +113,7 @@ pub fn execute(request: RebuildRequest<'_>) -> Result<RebuildOutput, Error> {
         builder_image,
         locked_packages,
         assembled_root,
+        assembled_appliance,
         signature_timestamp,
     } = state;
     let output = request.output.to_path_buf();
@@ -143,6 +146,7 @@ pub fn execute(request: RebuildRequest<'_>) -> Result<RebuildOutput, Error> {
         workspace: &build,
         stage: &stage,
         root: assembled_root.as_deref(),
+        assets: rpmx_core::runner::RunnerAssets::new(assembled_appliance.as_deref(), &[]),
         image: request.root_image,
         prefix,
         libdir,
@@ -152,6 +156,7 @@ pub fn execute(request: RebuildRequest<'_>) -> Result<RebuildOutput, Error> {
         debuginfo,
     })?;
 
+    rpmx_core::output::phase("check", "build tools");
     check_build_tools(
         &sandbox,
         &build,
@@ -161,6 +166,7 @@ pub fn execute(request: RebuildRequest<'_>) -> Result<RebuildOutput, Error> {
         &cell.test_tools,
         &locked_packages,
     )?;
+    rpmx_core::output::phase("build", format!("{arch} {} steps", cell.pipeline.len()));
     for step in &cell.pipeline {
         if let Some(digest) = &step.step_digest {
             match extracted.lock_steps.get(&step.uses) {
@@ -202,6 +208,17 @@ pub fn execute(request: RebuildRequest<'_>) -> Result<RebuildOutput, Error> {
         source_date_epoch: extracted.source_date_epoch,
         debuginfo,
     })?;
+    rpmx_core::output::phase(
+        "package",
+        format!(
+            "{arch} {}",
+            packages
+                .iter()
+                .map(|package| package.name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    );
 
     if !request.no_lint {
         let findings = crate::commands::package_lint::check(&packages);
@@ -223,6 +240,7 @@ pub fn execute(request: RebuildRequest<'_>) -> Result<RebuildOutput, Error> {
             sbom.attach_package(&mut package, &recipe)?;
         }
         let path = emit::binary(&package, &output, signing.as_ref(), signature_timestamp)?;
+        rpmx_core::output::wrote(&path);
         built.push((
             path.clone(),
             package.name.clone(),
@@ -282,6 +300,7 @@ pub fn execute(request: RebuildRequest<'_>) -> Result<RebuildOutput, Error> {
             pinned_lock: request.test_root_lock,
             arch,
             runner: runner_kind,
+            appliance: assembled_appliance.as_deref(),
             source_date_epoch: extracted.source_date_epoch,
             jobs,
             timeout: step_timeout,
@@ -300,6 +319,14 @@ pub fn execute(request: RebuildRequest<'_>) -> Result<RebuildOutput, Error> {
             signing.as_ref(),
             signature_timestamp.unwrap_or(extracted.source_date_epoch),
         )?;
+        rpmx_core::output::phase(
+            "index",
+            format!(
+                "{} in {}",
+                rpmx_core::output::count(report.packages, "package", "packages"),
+                output.display()
+            ),
+        );
         repository.push(report.repomd);
         if let Some(signature) = report.signature {
             repository.push(signature);
@@ -313,6 +340,20 @@ pub fn execute(request: RebuildRequest<'_>) -> Result<RebuildOutput, Error> {
         &repository,
         signing.as_ref().map(|key| key.fingerprint()),
     )?;
+    if !quiet {
+        rpmx_core::output::phase(
+            "done",
+            format!(
+                "{} in {}",
+                rpmx_core::output::count(
+                    written.len() + evidence.len() + repository.len(),
+                    "artifact",
+                    "artifacts"
+                ),
+                output.display()
+            ),
+        );
+    }
     Ok(RebuildOutput {
         rpms: written,
         evidence,

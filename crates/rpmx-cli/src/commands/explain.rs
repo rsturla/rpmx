@@ -35,6 +35,7 @@ pub fn run(args: ExplainArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> 
             &bundle.root,
             args.policy.profile.as_deref(),
             &args.arch,
+            rpmx_core::Arch::parse(&args.arch)? != rpmx_core::Arch::current()?,
         )? {
             Some(requirement) => serde_json::json!({
                 "profile": requirement.name,

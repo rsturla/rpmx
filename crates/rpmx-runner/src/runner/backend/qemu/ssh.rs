@@ -82,7 +82,7 @@ pub(super) fn take_stdout_echo(child: &mut Child) -> Option<Receiver<std::io::Re
     child.stdout.take().map(|mut stdout| {
         let (done, finished) = mpsc::channel();
         std::thread::spawn(move || {
-            let mut out: Box<dyn std::io::Write + Send> = if crate::output::logs_to_stderr() {
+            let mut out: Box<dyn std::io::Write + Send> = if rpmx_base::output::logs_to_stderr() {
                 Box::new(std::io::stderr())
             } else {
                 Box::new(std::io::stdout())
@@ -302,18 +302,15 @@ pub(super) fn stream_tar_out(
             ),
         ));
     }
-    rpmx_store::tar_guard::validate(
-        &mut archive,
+    rpmx_store::tar_guard::unpack_staged_with(
+        archive,
+        host,
         &format!("archive from {remote}"),
         codes::RUNNER_003,
         Some(MAX_GUEST_TRANSFER_BYTES),
-    )?;
-    tar::Archive::new(archive).unpack(host).map_err(|error| {
-        Error::new(
-            codes::RUNNER_003,
-            format!("cannot unpack {remote} into {}: {error}", host.display()),
-        )
-    })
+        0,
+        "",
+    )
 }
 
 pub(super) fn stream_command_output(

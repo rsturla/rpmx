@@ -5,6 +5,26 @@ does not promise a stable schema or CLI yet.
 
 ## Unreleased
 
+- Human progress output now names each phase on stderr (`resolve`, `source`,
+  `srpm`, `prepare`, `build`, `package`, `test`, `index`, `done`), includes the
+  architecture for arch-specific phases, reports every artifact as
+  `rpmx: wrote <path>`, reports each package as it enters a build root, and
+  ends with an artifact count. stdout remains the artifact list or the single
+  JSON document. `--verbose` lists the resolved root package set.
+- QEMU builds no longer boot the build root. A separate, locked transport
+  appliance is resolved from the profile repositories, assembled into its own
+  cache, and attached as a second disk. Build steps run on a chrooted build
+  channel while an unchrooted control channel mounts the disk and moves the
+  workspace and stage. Profiles no longer list kernel, dracut, networkd or SSH
+  packages; the build root keeps its own closure. `rpmx root resolve` and
+  `rpmx root assemble` grow appliance flags, `root.lock.yaml` carries the
+  appliance closure, and installed test roots no longer install the boot set.
+  Runner assets are now a generic lock section and cache concept; the QEMU
+  appliance is its first kind. `rpmx runner resolve|assemble|inspect` handles
+  assets independently (`rpmx appliance` remains an alias), and
+  `--runner-asset-root` lets `build`, `source`, `test` and `rebuild` use a
+  pre-assembled asset. `rpmx doctor` reports all runner tools and cached
+  assets through the runner registry.
 - Steps no longer hardcode guest paths. Built-in steps use `$STAGE`, `$PREFIX`,
   `$LIBDIR` and `$JOBS` (or the `${...}` placeholders); the planner keeps those
   placeholders in the plan, lock and SRPM, and the loader rejects a literal
@@ -20,6 +40,8 @@ does not promise a stable schema or CLI yet.
   `enhances`) in recipes, RPM headers and repository metadata.
 - Locked build roots resolved with dnf5 and assembled offline from the CAS.
 - Source snapshots, patches, git sources and a content-addressed cache.
+- A recipe `context:` directory copied into the source workspace, with one tree
+  digest in the lock and inclusion in the source snapshot and SRPM.
 - Matrix and template planning, reusable steps, build and installed tests.
 - SPDX 2.3 SBOMs, CPE references and optional OpenPGP signing.
 - File directories, per-path owner/group/mode and file capabilities.
@@ -31,3 +53,12 @@ does not promise a stable schema or CLI yet.
   tar-based workspace transfer; root assembly and test-root installation use
   podman --arch. Root assembly, SRPM embedding and installed tests follow the
   same host/target contract.
+- QEMU workspace transfers stream over ssh instead of buffering whole archives;
+  step output streams live, guest stderr retains only a bounded tail, and the
+  serial log is capped.
+- Untrusted decompressed payloads stream to disk instead of host memory, with
+  no arbitrary SRPM/RPM or download size ceiling. Structural limits cover tar
+  extension headers, sparse entries, bundle metadata and decompressed kernel
+  images; guest sync-out keeps an 8 GiB cap because it is attacker output.
+- `--jobs` and `--step-timeout` require a positive value; a step timeout can no
+  longer be disabled.

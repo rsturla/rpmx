@@ -8,6 +8,7 @@ pub fn run(cli: Cli) -> Result<(), Error> {
         keep_workdir: _,
         debug: _,
         json: _,
+        verbose: _,
         command,
     } = cli;
     match command {
@@ -29,6 +30,11 @@ pub fn run(cli: Cli) -> Result<(), Error> {
             cli::RootCommand::Digest(args) => commands::root::digest(args),
             cli::RootCommand::Export(args) => commands::root::export(args),
             cli::RootCommand::Import(args) => commands::root::import(args),
+        },
+        Command::Runner { command } => match command {
+            cli::RunnerCommand::Resolve(args) => commands::appliance::resolve(args),
+            cli::RunnerCommand::Assemble(args) => commands::appliance::assemble(args),
+            cli::RunnerCommand::Inspect(args) => commands::appliance::inspect(args),
         },
         Command::Fetch(args) => commands::fetch::run(args),
         Command::Source(args) => commands::source::run(args, pipeline_dir.as_deref()).map(|_| ()),
