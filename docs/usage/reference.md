@@ -107,10 +107,29 @@ diagnostics. `explain --json`, `test --install-dir --json`, `doctor --json` and
 
 Steps see a fixed environment: `PATH`, `HOME`, `TMPDIR`, `LANG`, `LC_ALL`,
 `TZ`, `SOURCE_DATE_EPOCH`, `SRC`, `BUILD`, `STAGE`, `PREFIX`, `LIBDIR`,
-`JOBS`, `RPMX_HOST_ARCH`, `RPMX_TARGET_ARCH`, `RPMX_CROSS` and
-`RPMX_DEBUGINFO`. The host environment is not inherited. `SOURCE_DATE_EPOCH`,
-`SRC`, `BUILD`, `STAGE`, `PREFIX`, `LIBDIR` and `JOBS` are reserved and cannot
-be set by a step.
+`JOBS`, `RPMX_HOST_ARCH`, `RPMX_EXEC_ARCH`, `RPMX_TARGET_ARCH`,
+`RPMX_CROSS`, `RPMX_EMULATED` and `RPMX_DEBUGINFO`. The host environment is
+not inherited. `SOURCE_DATE_EPOCH`, `SRC`, `BUILD`, `STAGE`, `PREFIX`,
+`LIBDIR` and `JOBS` are reserved and cannot be set by a step.
+
+`RPMX_CROSS=1` means the target is produced by a host-native cross toolchain.
+`RPMX_EMULATED=1` means the steps themselves are emulated (binfmt). A cross
+build sets the former and not the latter.
+
+### Cross-compilation variables
+
+A profile with a `cross` block also exports:
+
+| Variable | Value |
+|---|---|
+| `RPMX_TARGET_TRIPLE` | The GNU triple, such as `aarch64-linux-gnu`. |
+| `RPMX_HOST_TRIPLE` | The host architecture's GNU triple. |
+| `RPMX_SYSROOT` | Guest path of the read-only sysroot (`/sysroot`). |
+| `CC`, `CXX`, `AR`, `LD`, `STRIP`, `OBJCOPY` | Toolchain commands. |
+| `PKG_CONFIG`, `PKG_CONFIG_SYSROOT_DIR`, `PKG_CONFIG_LIBDIR` | Sysroot-aware pkg-config. |
+| `CFLAGS`, `CXXFLAGS`, `LDFLAGS` | `--sysroot`, the rpath link, and any profile flags. |
+| `RPMX_CMAKE_TOOLCHAIN_FILE`, `RPMX_MESON_CROSS_FILE` | Generated files in `${BUILD}/.rpmx`. |
+| `GOOS`, `GOARCH`, `CGO_ENABLED` | Go's cross settings; cgo stays on for a distribution package. |
 
 ---
 
@@ -121,8 +140,10 @@ be set by a step.
   implemented; use `scriptlets` raw shell.
 - `update:` metadata and `rpmx update` are not implemented; `rpmx bump` handles
   manual version updates.
-- `build.dependencies.tools/host/target/tests` all land in one root; there is no
-  separate sysroot for cross builds.
+- Installed tests for a cross build still use the build root's lock; they run
+  under binfmt against a target root, not the sysroot.
+- A cross rebuild from an existing SRPM needs the cross profile, because the
+  embedded lock does not yet carry the sysroot closure.
 - Cross-compilation is not implemented. Foreign targets use bubblewrap + host
   binfmt by default; `--runner qemu` selects the full-VM path and needs an
   assembled transport appliance. The build root is not bootable.

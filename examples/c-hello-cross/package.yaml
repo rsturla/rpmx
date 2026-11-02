@@ -1,0 +1,74 @@
+# yaml-language-server: $schema=https://example.org/rpmx/package.schema.json
+#
+# A cross-compiled C fixture. It builds for aarch64 on an x86_64 host with a
+# native cross toolchain and a target sysroot, and links zlib so the result has
+# a real non-libc dynamic dependency.
+#
+# This is the end-to-end proof for cross compilation: the produced RPM must
+# contain aarch64 ELF objects, every DT_NEEDED must resolve inside the sysroot,
+# and the binary must run on an aarch64 machine.
+
+schema: 1
+
+package:
+  name: c-hello-cross
+  version: "1.0"
+  release: 1
+  summary: A C fixture cross-compiled for the target architecture
+  license: MIT
+  source-date-epoch: 1704067200
+
+source-assembly:
+  pipeline:
+    - runs: |
+        cat > hello.c <<'COMPILE'
+        #include <stdio.h>
+        #include <string.h>
+        #include <zlib.h>
+
+        int main(void) {
+            const char *src = "hello from a cross build";
+            unsigned char compressed[128];
+            uLongf compressed_len = sizeof compressed;
+            if (compress2(compressed, &compressed_len,
+                          (const Bytef *)src, strlen(src) + 1, 9) != Z_OK) {
+                return 1;
+            }
+            char round_trip[128];
+            uLongf round_trip_len = sizeof round_trip;
+            if (uncompress((Bytef *)round_trip, &round_trip_len,
+                           compressed, compressed_len) != Z_OK) {
+                return 1;
+            }
+            printf("%s (%lu compressed bytes)\n", round_trip,
+                   (unsigned long)compressed_len);
+            return 0;
+        }
+        COMPILE
+        cat > Makefile <<'MAKE'
+        CFLAGS ?= -O2 -Wall -Wextra -Werror
+        LDLIBS ?= -lz
+        all: c-hello-cross
+        c-hello-cross: hello.c
+        	$(CC) $(CFLAGS) -o $@ hello.c $(LDLIBS)
+        install: c-hello-cross
+        	install -D -m 0755 c-hello-cross $(DESTDIR)/usr/bin/c-hello-cross
+        MAKE
+
+build:
+  root:
+    profile: ../fedora-44-cross.profile.yaml
+  dependencies:
+    tools: [make]
+    # A target library: it belongs in the sysroot, not the build root.
+    host: [zlib-devel]
+  pipeline:
+    - uses: make/build
+    - uses: make/install
+    - uses: strip
+
+outputs:
+  - name: c-hello-cross
+    files:
+      include: ["/usr/bin/c-hello-cross"]
+

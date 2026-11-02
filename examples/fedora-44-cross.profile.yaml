@@ -1,0 +1,30 @@
+document: rpmx-profile
+version: 1
+name: fedora-44-cross-aarch64
+releasever: "44"
+dist-tag: .fc44
+archs: [aarch64]
+builder:
+  image: registry.fedoraproject.org/fedora:44
+repositories:
+  - id: fedora
+    metalink: https://mirrors.fedoraproject.org/metalink?repo=fedora-$releasever&arch=$basearch
+  - id: updates
+    metalink: https://mirrors.fedoraproject.org/metalink?repo=updates-released-f$releasever&arch=$basearch
+# The target sysroot: headers and libraries the output links against.
+packages:
+  install: [glibc-devel, zlib-devel]
+# The build root: host packages, including the cross toolchain. Nothing here
+# is installed into the sysroot and nothing is emulated.
+cross:
+  packages: [bash, coreutils, findutils, patch, gawk, sed, grep, diffutils,
+    make, tar, gzip, pkgconf-pkg-config,
+    gcc-aarch64-linux-gnu, binutils-aarch64-linux-gnu]
+  # Fedora's gcc links -latomic_asneeded, a shim its native gcc provides and
+  # the cross package does not. A toolchain quirk belongs in the profile.
+  cflags: [-fno-link-libatomic]
+debuginfo: false
+sbom: true
+options:
+  weak_deps: false
+  docs: false

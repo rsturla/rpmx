@@ -12,6 +12,7 @@ architecture and contribution material lives in
 | [`recipes.md`](recipes.md) | The complete `package.yaml` reference and a worked example. |
 | [`profiles-and-roots.md`](profiles-and-roots.md) | Profiles, inline roots, local and authenticated repositories, root resolution and caching. |
 | [`building.md`](building.md) | The build pipeline, artifacts, signing, the package lock, `bump`, repositories and SRPM plumbing. |
+| [`cross-compilation.md`](cross-compilation.md) | Building for another architecture with a native toolchain and a target sysroot. |
 | [`testing.md`](testing.md) | Build- and installed-stage tests, selection, JUnit, and `--install-dir`. |
 | [`debugging.md`](debugging.md) | `plan`, `explain`, `steps`, `doctor`, `shell`, `--keep-workdir` and `--debug`. |
 | [`troubleshooting.md`](troubleshooting.md) | Common failures and what to do about them. |

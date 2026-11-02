@@ -358,9 +358,15 @@ Root assembly and test-root installation use podman's `--arch` and the host
 binfmt handler. Build steps use binfmt when the target is foreign and bubblewrap
 or qemu is selected; they do not use podman.
 
-The sandbox passes `RPMX_HOST_ARCH`, `RPMX_TARGET_ARCH` and `RPMX_CROSS` to
-steps. A runner that cannot execute the target fails with `RPMX-RUNNER-002`
-before any step runs.
+The sandbox passes `RPMX_HOST_ARCH`, `RPMX_EXEC_ARCH`, `RPMX_TARGET_ARCH`,
+`RPMX_CROSS` and `RPMX_EMULATED` to steps. A runner that cannot execute the
+target fails with `RPMX-RUNNER-002` before any step runs.
+
+A profile with a `cross` block builds the target with a host-native toolchain
+against a target sysroot: nothing is emulated, and the sysroot is unpacked from
+the locked packages rather than installed by a target-arch dnf. See
+[`docs/usage/reference.md`](docs/usage/reference.md) for the exported
+toolchain variables.
 
 ## Sandbox
 
