@@ -35,10 +35,10 @@ impl ArchArtifacts {
 }
 
 pub fn run(args: BuildArgs, pipeline_dir: Option<&Path>) -> Result<Vec<PathBuf>, Error> {
-    if args.save_test_root.is_some() && !args.run_tests && args.test.is_empty() {
+    if args.save_test_root.is_some() && args.no_tests {
         return Err(Error::new(
             codes::CLI_001,
-            "--save-test-root needs --run-tests (or --test NAME); there is no test root otherwise",
+            "--save-test-root cannot be combined with --no-tests; there is no test root otherwise",
         ));
     }
     if args.save_test_root.is_some() && args.skip_installed {
@@ -484,7 +484,7 @@ fn build_one(
 ) -> Result<ArchArtifacts, Error> {
     let output = arch_output(args, arch);
     let build_started = std::time::Instant::now();
-    let run_tests = args.run_tests || !args.test.is_empty();
+    let run_tests = !args.no_tests;
     let (bundle, plan) = load_plan(&args.file, arch, pipeline_dir, false, true, policy)?;
     if args.save_test_root.is_some()
         && !plan.cells.iter().any(|cell| {

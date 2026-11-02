@@ -105,7 +105,7 @@ pub fn run(args: RebuildArgs) -> Result<Vec<PathBuf>, Error> {
         cache: args.runtime.cache.cache.as_deref(),
         offline: args.offline,
         verify_root: true,
-        run_tests: args.run_tests || !args.test.is_empty(),
+        run_tests: !args.no_tests,
         skip_installed: args.skip_installed,
         save_test_root: args.save_test_root.as_deref(),
         test_filter: &args.test,
@@ -149,19 +149,6 @@ pub fn execute(request: RebuildRequest<'_>) -> Result<RebuildOutput, Error> {
     } = state;
     let output = request.output.to_path_buf();
     let run_tests = request.run_tests;
-    if !run_tests && !cell.tests.is_empty() {
-        static WARNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-        if !WARNED.swap(true, std::sync::atomic::Ordering::Relaxed) {
-            rpmx_core::output::warning(
-                "test",
-                format!(
-                    "the recipe declares {} test(s) but none were run; use \
-                     --run-tests or `rpmx test`",
-                    cell.tests.len()
-                ),
-            );
-        }
-    }
     let sbom_path = request.sbom;
     let quiet = request.quiet;
     let json = rpmx_core::output::json();

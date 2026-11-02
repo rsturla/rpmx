@@ -9,7 +9,7 @@ rpmx build --output /tmp/out                 # /tmp/out/<arch>/
 rpmx build --arch x86_64,aarch64 --arch-jobs 2
 rpmx build --arch all --arch-jobs all
 rpmx build --jobs 32
-rpmx build --run-tests
+rpmx build --no-tests              # skip the tests a build runs by default
 rpmx build --test installed --junit report.xml
 rpmx build --stage /tmp/stage    # package an existing tree, skip the pipeline
 rpmx build --locked
@@ -26,7 +26,11 @@ architectures.
 
 `--stage DIR` packages a staged tree; it does not run source assembly, SRPM
 creation or builds. It verifies the lock when `--locked` is given.
-`--test` implies `--run-tests`.
+
+A build runs the recipe's tests after it packages them, so a green build means
+the same thing it means under `rpmbuild`. `--no-tests` skips them, and
+`--skip-installed` runs only build-stage tests (the installed stage needs to
+execute the target binary). `--test NAME` runs one test instead of all.
 
 The full build runs:
 

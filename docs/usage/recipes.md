@@ -426,11 +426,12 @@ tests:
 - `stage: installed` installs the built RPMs into a disposable test root and
   runs there.
 - `stage: package` is not implemented yet.
-- Tests run only with `rpmx build --run-tests`, `rpmx test`, or when a filter is
-  given.
+- Tests run with `rpmx build`, `rpmx rebuild` and `rpmx test`; `--no-tests`
+  skips them on a build.
 - `--test NAME` selects tests; `--junit FILE` writes JUnit XML.
 - Installed tests use `build.dependencies.tests` plus the built RPMs. Real
-  dependency checking is performed; there is no `--nodeps`.
+  dependency checking is performed; the only retry is for a conflict with a
+  package the test root already has, which the package under test replaces.
 
 ### 5.10 Matrix and variables
 

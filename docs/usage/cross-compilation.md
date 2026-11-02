@@ -145,13 +145,17 @@ sysroot's architecture. Without `--arch`, the output goes to
 
 ### Building and testing separately
 
-`rpmx build` runs no tests unless `--run-tests` is passed, so a fast host can
-produce packages and a capable machine can test them. `--skip-installed` keeps
-the native build-stage tests while leaving installed-stage tests to the target:
+`rpmx build` runs the recipe's tests by default. A cross build executes
+build-stage tests natively (they are host binaries) but cannot execute
+installed-stage tests without binfmt, so `--skip-installed` keeps the native
+tests while leaving the installed stage to the target. A fast host can also
+package without testing at all:
 
 ```console
 # build host: no installed tests, no binfmt
-rpmx build package.yaml
+rpmx build package.yaml --skip-installed
+# or: package only, no tests at all
+rpmx build package.yaml --no-tests
 
 # test host of the target architecture: no binfmt, no build root
 rpmx test package.yaml --install-dir packages/aarch64 --profile native-aarch64.profile.yaml

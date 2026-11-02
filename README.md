@@ -19,9 +19,10 @@ prototype, not production software.
 - **Locked roots.** Package closure and the assembled root are pinned by
   NEVRA and SHA-512 digest. Builds run offline from the content-addressed
   cache.
-- **Real tests.** Build-stage tests run in the build sandbox. Installed-stage
-  tests run in a fresh test root with the produced RPMs installed and real
-  dependency checking.
+- **Real tests.** `rpmx build` runs the recipe's tests by default
+  (`--no-tests` opts out). Build-stage tests run in the build sandbox.
+  Installed-stage tests run in a fresh test root with the produced RPMs
+  installed and real dependency checking.
 - **SBOM and CPE.** Every package embeds an SPDX 2.3 document at
   `/usr/share/sbom/<name>-<version>-<release>.spdx.json`. Build-level SPDX and
   CPE references are written beside the RPMs.

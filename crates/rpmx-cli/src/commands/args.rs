@@ -93,9 +93,12 @@ pub struct BuildArgs {
     /// Use the host root for source assembly (unsafe).
     #[arg(long)]
     pub unsafe_host_root: bool,
-    /// Run build-stage and installed-stage tests.
+    /// Run the recipe's tests (the default; kept for explicitness).
     #[arg(long)]
     pub run_tests: bool,
+    /// Do not run any tests.
+    #[arg(long, conflicts_with_all = ["run_tests", "test"])]
+    pub no_tests: bool,
     /// With tests, skip installed-stage tests (they execute target binaries).
     #[arg(long)]
     pub skip_installed: bool,
@@ -118,7 +121,7 @@ pub struct BuildArgs {
     #[arg(long)]
     pub sbom: Option<PathBuf>,
     /// Use a pinned test-root lock instead of resolving one.
-    #[arg(long, requires = "run_tests")]
+    #[arg(long, conflicts_with = "no_tests")]
     pub test_root_lock: Option<PathBuf>,
     #[command(flatten)]
     pub signing: OptionalSigningArgs,
@@ -160,9 +163,12 @@ pub struct RebuildArgs {
     /// Do not use the network; fail if the root is not cached.
     #[arg(long)]
     pub offline: bool,
-    /// Run build-stage tests after the build.
+    /// Run the recipe's tests (the default; kept for explicitness).
     #[arg(long)]
     pub run_tests: bool,
+    /// Do not run any tests.
+    #[arg(long, conflicts_with_all = ["run_tests", "test"])]
+    pub no_tests: bool,
     /// With tests, skip installed-stage tests (they execute target binaries).
     #[arg(long)]
     pub skip_installed: bool,
@@ -185,7 +191,7 @@ pub struct RebuildArgs {
     #[arg(long)]
     pub sbom: Option<PathBuf>,
     /// Use a pinned test-root lock instead of resolving one.
-    #[arg(long, requires = "run_tests")]
+    #[arg(long, conflicts_with = "no_tests")]
     pub test_root_lock: Option<PathBuf>,
     #[command(flatten)]
     pub signing: OptionalSigningArgs,

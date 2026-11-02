@@ -5,6 +5,9 @@ does not promise a stable schema or CLI yet.
 
 ## Unreleased
 
+- `rpmx build` and `rpmx rebuild` run the recipe's tests by default, so a green
+  build means tested. `--no-tests` opts out and `--skip-installed` runs only
+  build-stage tests; `--run-tests` remains as an explicit no-op.
 - Cross-compilation: a profile with a `cross` block builds a target
   architecture with a host-native toolchain against a target sysroot, with no
   emulation. `packages.install` is the sysroot; `cross.packages` is the build
