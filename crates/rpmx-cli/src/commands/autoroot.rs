@@ -523,6 +523,9 @@ fn load_cached(
         return Ok(None);
     }
     let document = load_lock(lock_path)?;
+    // A cache hit must still describe the requested target. The digest walk is
+    // expensive, but the target is a cheap identity check.
+    document.require_target(arch)?;
     if needs_appliance && document.qemu_appliance().is_none() {
         return Ok(None);
     }
@@ -950,6 +953,28 @@ outputs:
             .expect("load")
             .expect("cached");
         assert!(cached.document.qemu_appliance().is_none());
+    }
+
+    #[test]
+    fn a_cache_hit_for_another_architecture_is_rejected() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let cas = directory.path().join("cas");
+        std::fs::create_dir_all(&cas).expect("cas");
+        let root = directory.path().join("root");
+        std::fs::create_dir_all(&root).expect("root");
+        let lock = appliance_lock().as_root_lock();
+        let lock_path = directory.path().join("root.lock.yaml");
+        write_lock(&lock_path, &lock).expect("lock");
+
+        assert!(
+            super::load_cached(&lock_path, &root, "x86_64", false, &cas, false)
+                .expect("load")
+                .is_some(),
+            "the positive control must hit"
+        );
+        let error = super::load_cached(&lock_path, &root, "aarch64", false, &cas, false)
+            .expect_err("a cache entry for another architecture must not hit");
+        assert_eq!(error.code, rpmx_core::error::codes::ROOT_016);
     }
 
     #[test]
