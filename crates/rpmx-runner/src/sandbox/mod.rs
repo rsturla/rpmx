@@ -7,6 +7,7 @@ use crate::runner::{
 };
 use rpmx_base::arch::Arch;
 use rpmx_base::error::{codes, Error, Result};
+use rpmx_base::guest::CrossToolchain;
 use rpmx_language::plan::PlannedStep;
 
 /// Deterministic environment for every step. The host environment is never
@@ -30,8 +31,17 @@ const RESERVED_ENV: &[&str] = &[
 #[derive(Clone, Copy)]
 pub struct SandboxConfig<'a> {
     pub runner: RunnerKind,
+    /// The machine rpmx runs on.
     pub host: Arch,
+    /// The architecture the steps execute as. It equals `target` for a native
+    /// or emulated build and equals `host` for a cross build.
+    pub exec: Arch,
+    /// The architecture of the produced package.
     pub target: Arch,
+    /// Target sysroot, mounted read-only, when cross-compiling.
+    pub sysroot: Option<&'a Path>,
+    /// Toolchain commands used when `sysroot` is set.
+    pub cross: Option<&'a CrossToolchain>,
     pub workspace: &'a Path,
     pub stage: &'a Path,
     pub root: Option<&'a Path>,
@@ -52,7 +62,9 @@ impl<'a> SandboxConfig<'a> {
     fn runner_config(&self) -> RunnerConfig<'a> {
         RunnerConfig {
             host: self.host,
+            exec: self.exec,
             target: self.target,
+            sysroot: self.sysroot,
             workspace: self.workspace,
             stage: self.stage,
             assets: self.assets,
@@ -83,10 +95,13 @@ impl<'a> Sandbox<'a> {
                 "runner assets require an assembled root",
             ));
         }
-        let runner =
-            config
-                .runner
-                .resolve(config.host, config.target, config.root, config.image)?;
+        let runner = config.runner.resolve(
+            config.host,
+            config.exec,
+            config.target,
+            config.root,
+            config.image,
+        )?;
         Ok(Self::with_runner(config, runner))
     }
 
@@ -171,11 +186,11 @@ impl<'a> Sandbox<'a> {
 
         let mut session = self.session.borrow_mut();
         if session.is_none() {
-            if !self.runner.supports(self.config.host, self.config.target) {
+            if !self.runner.supports(self.config.host, self.config.exec) {
                 return Err(unsupported(
                     self.runner.name(),
                     self.config.host,
-                    self.config.target,
+                    self.config.exec,
                 ));
             }
             *session = Some(self.runner.start(&self.config.runner_config())?);
@@ -285,6 +300,10 @@ impl Drop for Sandbox<'_> {
 
 /// A readable label for an unnamed inline step.
 fn base_env(sandbox: &Sandbox<'_>) -> Vec<(&'static str, String)> {
+    environment(&sandbox.config)
+}
+
+fn environment(config: &SandboxConfig<'_>) -> Vec<(&'static str, String)> {
     let mut env = vec![
         ("PATH", SANDBOX_PATH.to_string()),
         ("HOME", rpmx_base::guest::BUILD.to_string()),
@@ -292,37 +311,87 @@ fn base_env(sandbox: &Sandbox<'_>) -> Vec<(&'static str, String)> {
         ("LANG", "C.UTF-8".to_string()),
         ("LC_ALL", "C.UTF-8".to_string()),
         ("TZ", "UTC".to_string()),
-        (
-            "SOURCE_DATE_EPOCH",
-            sandbox.config.source_date_epoch.to_string(),
-        ),
+        ("SOURCE_DATE_EPOCH", config.source_date_epoch.to_string()),
         ("SRC", rpmx_base::guest::BUILD.to_string()),
         ("BUILD", rpmx_base::guest::BUILD.to_string()),
         ("STAGE", rpmx_base::guest::STAGE.to_string()),
-        ("PREFIX", sandbox.config.prefix.to_string()),
-        ("LIBDIR", sandbox.config.libdir.to_string()),
-        ("JOBS", sandbox.config.jobs.to_string()),
-        ("RPMX_HOST_ARCH", sandbox.config.host.to_string()),
-        ("RPMX_TARGET_ARCH", sandbox.config.target.to_string()),
+        ("PREFIX", config.prefix.to_string()),
+        ("LIBDIR", config.libdir.to_string()),
+        ("JOBS", config.jobs.to_string()),
+        ("RPMX_HOST_ARCH", config.host.to_string()),
+        ("RPMX_EXEC_ARCH", config.exec.to_string()),
+        ("RPMX_TARGET_ARCH", config.target.to_string()),
+        (
+            "RPMX_EMULATED",
+            if config.exec != config.host { "1" } else { "0" }.to_string(),
+        ),
         (
             "RPMX_CROSS",
-            if sandbox.config.host == sandbox.config.target {
-                "0"
-            } else {
-                "1"
-            }
-            .to_string(),
+            if config.sysroot.is_some() { "1" } else { "0" }.to_string(),
         ),
         (
             "RPMX_DEBUGINFO",
-            if sandbox.config.debuginfo { "1" } else { "0" }.to_string(),
+            if config.debuginfo { "1" } else { "0" }.to_string(),
         ),
     ];
-    if sandbox.config.debuginfo {
-        env.push(("CFLAGS", "-g".to_string()));
-        env.push(("CXXFLAGS", "-g".to_string()));
+    let mut flags = String::new();
+    if config.debuginfo {
+        flags.push_str("-g");
+    }
+    if config.cross.is_some() && config.sysroot.is_some() {
+        if !flags.is_empty() {
+            flags.push(' ');
+        }
+        flags.push_str(&format!("--sysroot={}", rpmx_base::guest::SYSROOT));
+    }
+    if !flags.is_empty() {
+        env.push(("CFLAGS", flags.clone()));
+        env.push(("CXXFLAGS", flags));
+    }
+    if let (Some(toolchain), Some(_sysroot)) = (config.cross, config.sysroot) {
+        env.extend(cross_env(config, toolchain));
     }
     env
+}
+
+/// Environment that turns native tools into a cross toolchain.
+///
+/// Everything is expressed in guest paths: the sysroot is mounted at
+/// [`rpmx_base::guest::SYSROOT`] and the libraries live under the profile's
+/// `PREFIX`/`LIBDIR`, so no distribution layout is assumed.
+fn cross_env(
+    config: &SandboxConfig<'_>,
+    toolchain: &CrossToolchain,
+) -> Vec<(&'static str, String)> {
+    let sysroot = rpmx_base::guest::SYSROOT;
+    let libdir = config.libdir;
+    let prefix = config.prefix;
+    let pkgconfig = format!("{sysroot}{libdir}/pkgconfig:{sysroot}{prefix}/share/pkgconfig");
+    vec![
+        ("RPMX_TARGET_TRIPLE", toolchain.triple.clone()),
+        ("RPMX_SYSROOT", sysroot.to_string()),
+        ("CC", toolchain.cc.clone()),
+        ("CXX", toolchain.cxx.clone()),
+        ("AR", toolchain.ar.clone()),
+        ("LD", toolchain.ld.clone()),
+        ("STRIP", toolchain.strip.clone()),
+        ("OBJCOPY", toolchain.objcopy.clone()),
+        ("PKG_CONFIG", toolchain.pkg_config.clone()),
+        ("PKG_CONFIG_SYSROOT_DIR", sysroot.to_string()),
+        ("PKG_CONFIG_LIBDIR", pkgconfig),
+        (
+            "LDFLAGS",
+            format!("--sysroot={sysroot} -Wl,-rpath-link,{sysroot}{libdir}"),
+        ),
+        (
+            "RPMX_CMAKE_TOOLCHAIN_FILE",
+            format!("{}/.rpmx/toolchain.cmake", rpmx_base::guest::BUILD),
+        ),
+        (
+            "RPMX_MESON_CROSS_FILE",
+            format!("{}/.rpmx/meson.cross", rpmx_base::guest::BUILD),
+        ),
+    ]
 }
 
 fn expand(value: &str, sandbox: &Sandbox<'_>) -> String {
@@ -344,11 +413,61 @@ mod tests {
     use std::path::Path;
 
     #[test]
+    fn a_cross_environment_uses_guest_paths_and_the_profile_layout() {
+        use rpmx_base::guest::CrossToolchain;
+
+        let toolchain = CrossToolchain::new("aarch64-linux-gnu");
+        let config = SandboxConfig {
+            runner: RunnerKind::Auto,
+            host: Arch::X86_64,
+            exec: Arch::X86_64,
+            target: Arch::Aarch64,
+            sysroot: Some(Path::new("/cache/sysroots/arm")),
+            cross: Some(&toolchain),
+            workspace: Path::new("/tmp"),
+            stage: Path::new("/tmp"),
+            root: Some(Path::new("/root")),
+            assets: RunnerAssets::default(),
+            image: None,
+            prefix: "/usr",
+            libdir: "/usr/lib64",
+            source_date_epoch: 1,
+            jobs: NonZeroU32::new(1).expect("jobs"),
+            timeout: NonZeroU64::new(1).expect("timeout"),
+            debuginfo: true,
+        };
+        let env: std::collections::BTreeMap<_, _> =
+            super::environment(&config).into_iter().collect();
+        assert_eq!(env["CC"], "aarch64-linux-gnu-gcc");
+        assert_eq!(env["CXX"], "aarch64-linux-gnu-g++");
+        assert_eq!(env["RPMX_SYSROOT"], "/sysroot");
+        assert_eq!(env["RPMX_TARGET_TRIPLE"], "aarch64-linux-gnu");
+        assert_eq!(
+            env["PKG_CONFIG_LIBDIR"],
+            "/sysroot/usr/lib64/pkgconfig:/sysroot/usr/share/pkgconfig"
+        );
+        assert_eq!(env["PKG_CONFIG_SYSROOT_DIR"], "/sysroot");
+        assert!(
+            env["CFLAGS"].contains("--sysroot=/sysroot"),
+            "{}",
+            env["CFLAGS"]
+        );
+        assert!(env["CFLAGS"].contains("-g"), "{}", env["CFLAGS"]);
+        assert!(env["LDFLAGS"].contains("-rpath-link,/sysroot/usr/lib64"));
+        assert_eq!(env["RPMX_CROSS"], "1");
+        assert_eq!(env["RPMX_EMULATED"], "0");
+        assert_eq!(env["RPMX_EXEC_ARCH"], "x86_64");
+    }
+
+    #[test]
     fn a_root_and_an_image_cannot_both_be_configured() {
         let config = SandboxConfig {
             runner: RunnerKind::Auto,
             host: Arch::X86_64,
+            exec: Arch::X86_64,
             target: Arch::X86_64,
+            sysroot: None,
+            cross: None,
             workspace: Path::new("/tmp"),
             stage: Path::new("/tmp"),
             root: Some(Path::new("/root")),

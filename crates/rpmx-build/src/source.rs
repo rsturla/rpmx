@@ -74,7 +74,10 @@ pub fn assemble(options: SourceOptions<'_>) -> Result<PathBuf> {
     let sandbox = Sandbox::new(SandboxConfig {
         runner: options.runner.parse::<RunnerKind>()?,
         host: host_arch,
+        exec: target_arch,
         target: target_arch,
+        sysroot: None,
+        cross: None,
         workspace: options.workspace,
         stage: options.stage,
         root: options.root,

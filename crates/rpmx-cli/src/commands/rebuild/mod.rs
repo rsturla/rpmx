@@ -143,7 +143,10 @@ pub fn execute(request: RebuildRequest<'_>) -> Result<RebuildOutput, Error> {
     let sandbox = Sandbox::new(SandboxConfig {
         runner: runner_kind,
         host: host_arch,
+        exec: target_arch,
         target: target_arch,
+        sysroot: None,
+        cross: None,
         workspace: &build,
         stage: &stage,
         root: assembled_root.as_deref(),

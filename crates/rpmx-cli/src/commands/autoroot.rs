@@ -697,6 +697,9 @@ fn inline_profile(spec: &RootSpec, arch: &str) -> Result<Profile, Error> {
             install: spec.packages.clone(),
             reinstall: Vec::new(),
         },
+        // An inline root describes one closure; cross needs a profile because
+        // it names a second, host-architecture package set.
+        cross: None,
         modules: Default::default(),
         options: ResolveOptions::default(),
         paths: Default::default(),

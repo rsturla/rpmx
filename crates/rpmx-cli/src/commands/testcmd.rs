@@ -248,7 +248,10 @@ fn run_installed(
     let sandbox = Sandbox::new(SandboxConfig {
         runner,
         host,
+        exec: target,
         target,
+        sysroot: None,
+        cross: None,
         workspace: &workspace,
         stage: &stage,
         root: Some(&prepared.path),

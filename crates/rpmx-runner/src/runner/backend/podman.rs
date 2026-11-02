@@ -11,6 +11,9 @@ static CID_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 pub struct PodmanBackend<'a> {
     pub image: &'a str,
+    /// Architecture the container executes. It is the execution architecture,
+    /// not the package target: a cross build runs a host container.
+    pub arch: Arch,
 }
 
 impl Runner for PodmanBackend<'_> {
@@ -18,8 +21,8 @@ impl Runner for PodmanBackend<'_> {
         "podman"
     }
 
-    fn supports(&self, host: Arch, target: Arch) -> bool {
-        host == target
+    fn supports(&self, host: Arch, exec: Arch) -> bool {
+        host == exec
     }
 
     fn start(&self, config: &RunnerConfig<'_>) -> Result<Box<dyn Session>> {
@@ -35,7 +38,7 @@ impl Runner for PodmanBackend<'_> {
             "--name".to_string(),
             name.clone(),
             "--arch".to_string(),
-            config.target.to_string(),
+            self.arch.to_string(),
             "--network=none".to_string(),
             "--read-only".to_string(),
             "--cap-drop=all".to_string(),

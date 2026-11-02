@@ -107,8 +107,15 @@ pub const RUNNER_DESCRIPTORS: &[RunnerDescriptor] = &[
 /// source date and debuginfo stay in `SandboxConfig`; the runner never sees
 /// them.
 pub struct RunnerConfig<'a> {
+    /// The machine rpmx runs on.
     pub host: Arch,
+    /// The architecture the steps execute as. It differs from `target` for a
+    /// cross build, where a host compiler produces target binaries.
+    pub exec: Arch,
+    /// The architecture of the produced package.
     pub target: Arch,
+    /// Target sysroot mounted read-only for a cross build.
+    pub sysroot: Option<&'a Path>,
     pub workspace: &'a Path,
     pub stage: &'a Path,
     /// Runner-owned locked artifacts. The build root is not one of them.
@@ -166,7 +173,9 @@ pub trait Session {
 /// A way to create an execution environment.
 pub trait Runner {
     fn name(&self) -> &'static str;
-    fn supports(&self, host: Arch, target: Arch) -> bool;
+    /// Whether this backend can execute `exec` steps on a `host` machine.
+    /// `target` never decides this: a cross build executes natively.
+    fn supports(&self, host: Arch, exec: Arch) -> bool;
     fn start(&self, config: &RunnerConfig<'_>) -> Result<Box<dyn Session>>;
 }
 
@@ -220,11 +229,11 @@ enum Selection<'a> {
 /// needs an assembled root and a usable host binfmt handler.
 fn bwrap<'a>(
     host: Arch,
-    target: Arch,
+    exec: Arch,
     root: Option<&'a Path>,
     emulation: bool,
 ) -> Result<Selection<'a>> {
-    if host == target {
+    if exec == host {
         return Ok(Selection::Bwrap(root));
     }
     match root {
@@ -232,15 +241,15 @@ fn bwrap<'a>(
         Some(_) => Err(Error::new(
             codes::RUNNER_002,
             format!(
-                "bubblewrap cannot execute {target} on a {host} host: no enabled \
-                 F-flag qemu-user binfmt handler; install qemu-user-static or use \
+                "bubblewrap cannot execute {exec} on a {host} host: no enabled \
+                 F-flag qemu-user binfmt handler; install a qemu-user handler or use \
                  --runner qemu"
             ),
         )),
         None => Err(Error::new(
             codes::RUNNER_002,
             format!(
-                "bubblewrap needs an assembled {target} root for a foreign target; \
+                "bubblewrap needs an assembled {exec} root for a foreign execution; \
                  use --runner qemu or resolve a target root"
             ),
         )),
@@ -251,6 +260,7 @@ impl RunnerKind {
     fn choose<'a>(
         self,
         host: Arch,
+        exec: Arch,
         target: Arch,
         root: Option<&'a Path>,
         image: Option<&'a str>,
@@ -258,12 +268,20 @@ impl RunnerKind {
     ) -> Result<Selection<'a>> {
         match self {
             Self::Qemu => {
+                if exec == host && target != exec {
+                    return Err(Error::new(
+                        codes::RUNNER_002,
+                        "a cross build executes host binaries; it cannot boot a \
+                         target VM. Use --runner bwrap",
+                    )
+                    .at("runner"));
+                }
                 let root = root.ok_or_else(|| {
                     Error::new(codes::ROOT_016, "the qemu runner needs an assembled root")
                 })?;
                 Ok(Selection::Qemu(root))
             }
-            Self::Bwrap => bwrap(host, target, root, emulation),
+            Self::Bwrap => bwrap(host, exec, root, emulation),
             Self::Podman => match image {
                 Some(image) => Ok(Selection::Podman(image)),
                 None => Err(Error::new(
@@ -272,14 +290,15 @@ impl RunnerKind {
                 )),
             },
             Self::Auto => match root {
-                Some(root) => bwrap(host, target, Some(root), emulation),
+                Some(root) => bwrap(host, exec, Some(root), emulation),
                 None => match image {
-                    Some(image) if host == target => Ok(Selection::Podman(image)),
+                    Some(image) if host == exec => Ok(Selection::Podman(image)),
                     Some(_) => Err(Error::new(
                         codes::RUNNER_002,
-                        "a foreign builder image needs a target root or --runner qemu",
+                        "a builder image can only run on the host architecture; \
+                         resolve an execution root or use --runner qemu",
                     )),
-                    None => bwrap(host, target, None, emulation),
+                    None => bwrap(host, exec, None, emulation),
                 },
             },
         }
@@ -291,24 +310,27 @@ impl RunnerKind {
     pub fn resolve<'a>(
         self,
         host: Arch,
+        exec: Arch,
         target: Arch,
         root: Option<&'a Path>,
         image: Option<&'a str>,
     ) -> Result<Box<dyn Runner + 'a>> {
-        let emulation = host != target && emulation_available(target);
-        Ok(match self.choose(host, target, root, image, emulation)? {
-            Selection::Bwrap(root) => Box::new(BwrapBackend { root }),
-            Selection::Qemu(root) => Box::new(QemuBackend { root }),
-            Selection::Podman(image) => Box::new(PodmanBackend { image }),
-        })
+        let emulation = exec != host && emulation_available(exec);
+        Ok(
+            match self.choose(host, exec, target, root, image, emulation)? {
+                Selection::Bwrap(root) => Box::new(BwrapBackend { root }),
+                Selection::Qemu(root) => Box::new(QemuBackend { root }),
+                Selection::Podman(image) => Box::new(PodmanBackend { image, arch: exec }),
+            },
+        )
     }
 }
 
-pub(crate) fn unsupported(runner: &str, host: Arch, target: Arch) -> Error {
+pub(crate) fn unsupported(runner: &str, host: Arch, exec: Arch) -> Error {
     Error::new(
         codes::RUNNER_002,
         format!(
-            "runner '{runner}' cannot execute {target} steps on a {host} host; \
+            "runner '{runner}' cannot execute {exec} steps on a {host} host; \
              use a runner that supports this architecture"
         ),
     )
@@ -326,7 +348,7 @@ mod tests {
         image: Option<&'a str>,
     ) -> Result<Selection<'a>, rpmx_base::error::Error> {
         let host = Arch::X86_64;
-        kind.choose(host, host, root, image, false)
+        kind.choose(host, host, host, root, image, false)
     }
 
     #[test]
@@ -365,7 +387,14 @@ mod tests {
     fn foreign_auto_uses_bubblewrap_with_binfmt() {
         let root = Path::new("/root");
         let selection = RunnerKind::Auto
-            .choose(Arch::X86_64, Arch::Aarch64, Some(root), None, true)
+            .choose(
+                Arch::X86_64,
+                Arch::Aarch64,
+                Arch::Aarch64,
+                Some(root),
+                None,
+                true,
+            )
             .expect("foreign auto");
         assert!(matches!(selection, Selection::Bwrap(Some(path)) if path == root));
     }
@@ -374,7 +403,14 @@ mod tests {
     fn foreign_auto_without_binfmt_is_an_error() {
         let root = Path::new("/root");
         let error = RunnerKind::Auto
-            .choose(Arch::X86_64, Arch::Aarch64, Some(root), None, false)
+            .choose(
+                Arch::X86_64,
+                Arch::Aarch64,
+                Arch::Aarch64,
+                Some(root),
+                None,
+                false,
+            )
             .expect_err("foreign auto needs binfmt");
         assert_eq!(error.code, "RPMX-RUNNER-002");
     }
@@ -396,7 +432,14 @@ mod tests {
     fn foreign_bwrap_uses_the_target_root_with_binfmt() {
         let root = Path::new("/root");
         let selection = RunnerKind::Bwrap
-            .choose(Arch::X86_64, Arch::Aarch64, Some(root), None, true)
+            .choose(
+                Arch::X86_64,
+                Arch::Aarch64,
+                Arch::Aarch64,
+                Some(root),
+                None,
+                true,
+            )
             .expect("foreign bwrap");
         assert!(matches!(selection, Selection::Bwrap(Some(path)) if path == root));
     }
@@ -406,6 +449,7 @@ mod tests {
         let error = RunnerKind::Bwrap
             .choose(
                 Arch::X86_64,
+                Arch::Aarch64,
                 Arch::Aarch64,
                 Some(Path::new("/root")),
                 None,
@@ -418,9 +462,52 @@ mod tests {
     #[test]
     fn foreign_bwrap_without_a_root_is_an_error() {
         let error = RunnerKind::Bwrap
-            .choose(Arch::X86_64, Arch::Aarch64, None, None, true)
+            .choose(Arch::X86_64, Arch::Aarch64, Arch::Aarch64, None, None, true)
             .expect_err("bwrap needs a target root");
         assert_eq!(error.code, "RPMX-RUNNER-002");
+    }
+
+    #[test]
+    fn a_cross_build_runs_natively_without_binfmt() {
+        // host == exec != target: the compiler runs on the host, so the
+        // foreign-execution machinery must not be consulted at all.
+        let root = Path::new("/build-root");
+        let selection = RunnerKind::Auto
+            .choose(
+                Arch::X86_64,
+                Arch::X86_64,
+                Arch::Aarch64,
+                Some(root),
+                None,
+                false,
+            )
+            .expect("cross auto runs natively");
+        assert!(matches!(selection, Selection::Bwrap(Some(path)) if path == root));
+    }
+
+    #[test]
+    fn a_cross_build_rejects_the_qemu_vm() {
+        let error = RunnerKind::Qemu
+            .choose(
+                Arch::X86_64,
+                Arch::X86_64,
+                Arch::Aarch64,
+                Some(Path::new("/build-root")),
+                None,
+                false,
+            )
+            .expect_err("a cross build cannot boot a target VM");
+        assert_eq!(error.code, "RPMX-RUNNER-002");
+        assert!(error.message.contains("cross build"), "{}", error.message);
+    }
+
+    #[test]
+    fn a_cross_build_without_a_root_cannot_run_steps() {
+        let selection =
+            RunnerKind::Bwrap.choose(Arch::X86_64, Arch::X86_64, Arch::Aarch64, None, None, false);
+        // With no root the host root is used, which is a deliberate escape
+        // hatch (--unsafe-host-root); it is not a cross build root.
+        assert!(matches!(selection, Ok(Selection::Bwrap(None))));
     }
 
     fn handler(flags: &str, enabled: bool) -> String {

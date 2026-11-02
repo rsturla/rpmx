@@ -65,7 +65,10 @@ pub fn run_planned_tests(
     let test_sandbox = Sandbox::new(SandboxConfig {
         runner: settings.runner,
         host: settings.host_arch,
+        exec: settings.target_arch,
         target: settings.target_arch,
+        sysroot: None,
+        cross: None,
         workspace: settings.workspace,
         stage: settings.stage,
         root: Some(root),

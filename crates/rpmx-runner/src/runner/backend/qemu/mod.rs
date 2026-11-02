@@ -34,8 +34,8 @@ impl Runner for QemuBackend<'_> {
         "qemu-system"
     }
 
-    fn supports(&self, _host: Arch, target: Arch) -> bool {
-        qemu_binary(target)
+    fn supports(&self, _host: Arch, exec: Arch) -> bool {
+        qemu_binary(exec)
             .map(|path| command_exists(&path))
             .unwrap_or(false)
     }
@@ -444,7 +444,9 @@ mod tests {
     fn a_missing_appliance_is_a_runner_error() {
         let config = RunnerConfig {
             host: Arch::X86_64,
+            exec: Arch::X86_64,
             target: Arch::X86_64,
+            sysroot: None,
             workspace: std::path::Path::new("/tmp"),
             stage: std::path::Path::new("/tmp"),
             assets: RunnerAssets::default(),

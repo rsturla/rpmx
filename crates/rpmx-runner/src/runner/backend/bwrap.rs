@@ -15,8 +15,8 @@ impl Runner for BwrapBackend<'_> {
         "bubblewrap"
     }
 
-    fn supports(&self, host: Arch, target: Arch) -> bool {
-        host == target || (self.root.is_some() && crate::runner::emulation_available(target))
+    fn supports(&self, host: Arch, exec: Arch) -> bool {
+        exec == host || (self.root.is_some() && crate::runner::emulation_available(exec))
     }
 
     fn start(&self, config: &RunnerConfig<'_>) -> Result<Box<dyn Session>> {
@@ -27,6 +27,7 @@ impl Runner for BwrapBackend<'_> {
                 .unwrap_or_else(|| PathBuf::from("/")),
             workspace: config.workspace.to_path_buf(),
             stage: config.stage.to_path_buf(),
+            sysroot: config.sysroot.map(Path::to_path_buf),
             timeout: config.timeout,
         }))
     }
@@ -34,6 +35,7 @@ impl Runner for BwrapBackend<'_> {
 
 struct BwrapSession {
     root: PathBuf,
+    sysroot: Option<PathBuf>,
     workspace: PathBuf,
     stage: PathBuf,
     timeout: NonZeroU64,
@@ -65,9 +67,13 @@ impl Session for BwrapSession {
             "--bind".to_string(),
             self.stage.display().to_string(),
             rpmx_base::guest::STAGE.to_string(),
-            "--chdir".to_string(),
-            request.cwd.to_string(),
         ];
+        if let Some(sysroot) = &self.sysroot {
+            args.push("--ro-bind".to_string());
+            args.push(sysroot.display().to_string());
+            args.push(rpmx_base::guest::SYSROOT.to_string());
+        }
+        args.extend(["--chdir".to_string(), request.cwd.to_string()]);
         for (key, value) in request.env {
             args.push("--setenv".to_string());
             args.push(key.clone());

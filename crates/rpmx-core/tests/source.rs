@@ -168,7 +168,10 @@ fn patches_are_applied_and_removed_from_the_workspace() {
     let sandbox = Sandbox::new(SandboxConfig {
         runner: RunnerKind::Bwrap,
         host: rpmx_core::arch::Arch::current().expect("host arch"),
+        exec: rpmx_core::arch::Arch::current().expect("exec arch"),
         target: rpmx_core::arch::Arch::current().expect("target arch"),
+        sysroot: None,
+        cross: None,
         workspace: work.path(),
         stage: stage.path(),
         root: None,
