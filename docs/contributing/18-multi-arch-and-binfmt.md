@@ -20,6 +20,13 @@ reviews (correctness, second opinion, security, spec fidelity).
    read-modify-write evidence files, and runner assets decoupled from the
    build-root cache identity.
 
+**Compatibility policy.** This is a greenfield change. Do not add migration
+code, legacy schema readers, dual CLI paths, alias flags, or conditional output
+layouts. Breaking CLI, lock, output, log and evidence changes are expected.
+Preserve the correctness contracts: produced package bytes, signatures, sandbox
+invariants, and offline rebuild of an SRPM produced by this version. Older
+SRPMs, reviewable locks and CLI behaviour are not compatibility targets.
+
 ## 2. Non-goals
 
 - Cross-compilation. Both foreign modes execute target binaries.
@@ -165,9 +172,9 @@ in the same ticket that changes the behaviour.
 
 Only the **reviewable** `package.lock.json` (`commands/lock.rs::PackageLock`)
 moves to schema 2. The SRPM-embedded lock
-(`rpmx-store::srpm::PackageLock`) is a different document, stays schema 1, and
-`rebuild` is unaffected. Add a regression test that a pre-change SRPM still
-rebuilds.
+(`rpmx-store::srpm::PackageLock`) is a different document; it may change if the
+implementation needs it. Older SRPMs are not a compatibility target. Add a test
+that an SRPM produced by this version rebuilds offline.
 
 ```json
 {
@@ -607,8 +614,8 @@ incompatible flags, per-arch indexing/report, `--sbom-dir` and JUnit
 aggregation (so there is no window where multi-arch writes collide), docs
 updates in the same ticket.
 4.3 Lock schema 2: `lock`, `lock --check`, `build --locked`; clarify the
-embedded SRPM lock is unchanged; schema-1 rejection; add an old-SRPM rebuild
-regression test.
+embedded SRPM lock is a separate document; schema-1 rejection; add an
+SRPM-produced-here rebuild test.
 - Proof: CLI parsing tests; fake `PreparedBuild` aggregation test; real
 two-arch serial build (x86_64 + aarch64) with two output roots/repodata and no
 cross-arch files; rejection tests; lock round-trip/drift/subset tests.
@@ -709,7 +716,8 @@ binfmt/qemu are available.
 9. `cargo fmt`, `cargo clippy --workspace --all-targets -- -D warnings`,
    `cargo test --workspace`, and `cargo deny check licenses` pass.
    `cargo deny check advisories` is informational and non-blocking.
-10. A pre-change SRPM still rebuilds (the embedded schema-1 lock is untouched).
+10. An SRPM produced by this version rebuilds offline; older SRPMs and
+    reviewable locks are not supported.
 11. Every build-related log line from a two-arch build carries the correct
     `[<arch>]` tag, including guest stdout/stderr; a single-arch build also
     carries its arch; no line is attributed to the wrong worker.
