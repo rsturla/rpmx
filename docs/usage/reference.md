@@ -144,10 +144,10 @@ A profile with a `cross` block also exports:
   [`cross-compilation.md`](cross-compilation.md). Emulated foreign targets use
   bubblewrap + host binfmt by default; `--runner qemu` selects the full-VM path
   and needs an assembled transport appliance. The build root is not bootable.
-- Installed tests for a cross build are not supported: the test root is
-  assembled from the build root's host-arch lock.
-- Cross rebuild from an existing SRPM is not supported yet, because the
-  embedded lock does not carry the sysroot closure.
+- Installed tests for a cross build run in a target test root, so they need
+  binfmt or a real target machine. The build itself needs neither.
+- A cross SRPM carries its sysroot lock and toolchain, so `rpmx rebuild` needs
+  no profile.
 - `stage: package` tests, ABI tests and reproducibility tests are not
   implemented.
 - Rich dependencies are not implemented; weak dependencies are.

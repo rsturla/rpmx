@@ -91,12 +91,25 @@ Two checks make a broken cross build fail instead of shipping:
   and it catches both a missing dependency and a host library linked by
   mistake.
 
-## Limitations
+## Rebuilding
+
+A cross SRPM carries `sysroot.lock.json` and a `cross` block naming it, the
+triple and the toolchain flags. `rpmx rebuild package.src.rpm` therefore needs
+no profile: it assembles the target sysroot from the embedded lock (payloads
+only, no emulation), runs the same native toolchain, and packages for the
+sysroot's architecture. Without `--arch`, the output goes to
+`packages/<srpm arch>/`.
+
+## Tests
 
 - `tests: stage: build` runs in the build sandbox and crosses like any step.
-  Installed-stage tests are not supported for a cross build: the test root is
-  assembled from the build root's host-arch lock. A cross rebuild from an
-  existing SRPM is unsupported for the same reason.
+- `tests: stage: installed` runs the packaged target binary in a target test
+  root assembled from the sysroot lock. The test root is a target-architecture
+  root, so executing it needs binfmt or a real target machine; `tests:` lists
+  the packages that root needs.
+
+## Limitations
+
 - A cross build needs a profile. An inline `build.root` describes one closure
   and cannot name a second, host-architecture package set.
 - Recipe-specific target code generation, such as a configure script that runs
