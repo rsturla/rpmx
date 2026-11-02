@@ -95,6 +95,23 @@ impl<'a> Sandbox<'a> {
                 "runner assets require an assembled root",
             ));
         }
+        // A foreign execution without a cross profile is emulation. It is a
+        // deliberate choice, not something to discover from a 15x build time.
+        if config.exec != config.host && config.cross.is_none() {
+            static WARNED: std::sync::atomic::AtomicBool =
+                std::sync::atomic::AtomicBool::new(false);
+            if !WARNED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                rpmx_base::output::warning(
+                    "emulation",
+                    format!(
+                        "executing {} steps through qemu-user; a profile with a \
+                         cross block builds them natively (see \
+                         docs/usage/cross-compilation.md)",
+                        config.target
+                    ),
+                );
+            }
+        }
         prepare_cross_files(&config)?;
         let runner = config.runner.resolve(
             config.host,

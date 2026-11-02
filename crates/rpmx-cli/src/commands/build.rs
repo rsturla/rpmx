@@ -490,6 +490,26 @@ fn build_one(
             false,
         )?;
     }
+    // A cross profile needs an assembled build root so the target sysroot can
+    // be mounted; the host root cannot provide that.
+    if args.unsafe_host_root {
+        if let Some(requirement) = crate::commands::autoroot::requirement(
+            &bundle.recipe,
+            &plan,
+            &bundle.root,
+            profile,
+            arch,
+        )? {
+            if requirement.sysroot.is_some() {
+                return Err(Error::new(
+                    codes::ROOT_016,
+                    "--unsafe-host-root cannot run a cross build: the build root \
+                     must be an assembled host root so the target sysroot can be \
+                     mounted; drop the flag or remove the cross block",
+                ));
+            }
+        }
+    }
     let automatic = if args.root_lock.is_none() && args.root.is_none() && !args.unsafe_host_root {
         crate::commands::autoroot::ensure(
             &bundle.recipe,
