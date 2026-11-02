@@ -99,6 +99,9 @@ pub struct BuildArgs {
     /// With tests, skip installed-stage tests (they execute target binaries).
     #[arg(long)]
     pub skip_installed: bool,
+    /// Keep the prepared installed-stage test root here so it can be shipped.
+    #[arg(long, value_name = "DIR")]
+    pub save_test_root: Option<PathBuf>,
     /// Do not write repository metadata after the build.
     #[arg(long)]
     pub no_index: bool,
@@ -163,6 +166,9 @@ pub struct RebuildArgs {
     /// With tests, skip installed-stage tests (they execute target binaries).
     #[arg(long)]
     pub skip_installed: bool,
+    /// Keep the prepared installed-stage test root here so it can be shipped.
+    #[arg(long, value_name = "DIR")]
+    pub save_test_root: Option<PathBuf>,
     /// Do not write repository metadata after the build.
     #[arg(long)]
     pub no_index: bool,
@@ -320,6 +326,13 @@ pub struct TestArgs {
     /// Skip installed-stage tests (they execute target binaries).
     #[arg(long)]
     pub skip_installed: bool,
+    /// Keep the prepared installed-stage test root here so it can be shipped.
+    #[arg(long, value_name = "DIR")]
+    pub save_test_root: Option<PathBuf>,
+    /// Run the tests against this pre-assembled test root instead of preparing
+    /// one. `root.lock.yaml` is read from it unless --test-root-lock is given.
+    #[arg(long, value_name = "DIR")]
+    pub test_root: Option<PathBuf>,
     /// Write a JUnit XML report.
     #[arg(long)]
     pub junit: Option<PathBuf>,

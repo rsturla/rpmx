@@ -69,18 +69,25 @@ pub fn run(args: TestArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
     }
     // Validate everything local before resolving a root: a missing RPM or a
     // build-stage test must not cost a network resolution first.
-    let installed = match args.install_dir.as_deref() {
-        Some(directory) => {
-            let rpms = rpms_in(directory)?;
-            let (tests, tools) = installed_tests(&plan, &args.selected)?;
-            Some((rpms, tests, tools))
+    let installed = if args.test_root.is_some() {
+        // The package is already installed in the prebuilt root.
+        let (tests, tools) = installed_tests(&plan, &args.selected)?;
+        Some((Vec::new(), tests, tools))
+    } else {
+        match args.install_dir.as_deref() {
+            Some(directory) => {
+                let rpms = rpms_in(directory)?;
+                let (tests, tools) = installed_tests(&plan, &args.selected)?;
+                Some((rpms, tests, tools))
+            }
+            None => None,
         }
-        None => None,
     };
     // Prebuilt RPMs plus a pinned test root are self-contained: a machine that
     // is not the build host (for example the target itself) must not need the
     // build root or the cross profile just to run the tests.
-    let standalone = args.install_dir.is_some() && args.test_root_lock.is_some();
+    let standalone =
+        (args.install_dir.is_some() && args.test_root_lock.is_some()) || args.test_root.is_some();
     let automatic = if !standalone && args.root_lock.is_none() && args.root.is_none() {
         crate::commands::autoroot::ensure(
             &bundle.recipe,
@@ -103,8 +110,8 @@ pub fn run(args: TestArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
         .root
         .clone()
         .or_else(|| automatic.as_ref().map(|root| root.root.clone()));
-    if (root_lock.is_none() && args.test_root_lock.is_none())
-        || (args.install_dir.is_none() && root.is_none())
+    if (root_lock.is_none() && args.test_root_lock.is_none() && args.test_root.is_none())
+        || (args.install_dir.is_none() && args.test_root.is_none() && root.is_none())
     {
         return Err(Error::new(
             codes::ROOT_016,
@@ -162,20 +169,31 @@ pub fn run(args: TestArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
             .test_root_lock
             .clone()
             .or_else(|| {
+                // A saved root writes its lock beside the directory, because
+                // the root itself is read-only.
+                args.test_root.as_ref().and_then(|root| {
+                    [
+                        root.with_extension("lock.yaml"),
+                        root.join("root.lock.yaml"),
+                    ]
+                    .into_iter()
+                    .find(|path| path.is_file())
+                })
+            })
+            .or_else(|| {
                 automatic
                     .as_ref()
                     .and_then(|root| root.sysroot.as_ref())
                     .map(|sysroot| sysroot.lock.clone())
             })
             .or_else(|| root_lock.clone());
-        return run_installed(
-            &args,
-            &arch,
-            test_lock.as_deref().expect("checked above"),
-            &rpms,
-            &tests,
-            &tools,
-        );
+        let Some(test_lock) = test_lock.as_deref() else {
+            return Err(Error::new(
+                codes::TEST_005,
+                "the test root has no lock; pass --test-root-lock or use a root saved by --save-test-root",
+            ));
+        };
+        return run_installed(&args, &arch, test_lock, &rpms, &tests, &tools);
     }
 
     let output = crate::commands::default_output(&arch);
@@ -204,6 +222,7 @@ pub fn run(args: TestArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
         step_timeout: args.runtime.step_timeout,
         run_tests: true,
         skip_installed: args.skip_installed,
+        save_test_root: args.save_test_root.as_deref(),
         test_filter: &args.selected,
         junit: args.junit.as_deref(),
         no_lint: false,
@@ -302,15 +321,39 @@ fn run_installed(
         )
     })?;
     let tools: Vec<String> = tools.iter().cloned().collect();
-    let prepared = prepare_test_root(TestRootOptions {
-        lock: &lock,
-        pinned: args.test_root_lock.as_deref(),
-        tools: &tools,
-        rpms,
-        image: lock.builder.as_ref().map(|builder| builder.image.as_str()),
-        cache: &cache,
-        work: work.path(),
-    })?;
+    let test_root_path = match &args.test_root {
+        Some(directory) => {
+            // A shipped root: validate that it is the architecture the tests
+            // are for, then use it as is.
+            lock.require_target(&target.to_string())?;
+            let directory = std::fs::canonicalize(directory).map_err(|error| {
+                Error::new(
+                    codes::TEST_003,
+                    format!("cannot resolve {}: {error}", directory.display()),
+                )
+            })?;
+            if !directory.is_dir() {
+                return Err(Error::new(
+                    codes::TEST_003,
+                    format!("{} is not a directory", directory.display()),
+                ));
+            }
+            directory
+        }
+        None => {
+            prepare_test_root(TestRootOptions {
+                lock: &lock,
+                destination: None,
+                pinned: args.test_root_lock.as_deref(),
+                tools: &tools,
+                rpms,
+                image: lock.builder.as_ref().map(|builder| builder.image.as_str()),
+                cache: &cache,
+                work: work.path(),
+            })?
+            .path
+        }
+    };
     let appliance = crate::commands::autoroot::appliance_for(
         &lock,
         Some(&cache),
@@ -331,7 +374,7 @@ fn run_installed(
         cross: None,
         workspace: &workspace,
         stage: &stage,
-        root: Some(&prepared.path),
+        root: Some(&test_root_path),
         assets: rpmx_core::runner::RunnerAssets::new(appliance.as_deref(), &[]),
         image: None,
         prefix: &lock.prefix,
@@ -361,7 +404,7 @@ fn run_installed(
         let result = run_planned_tests(
             &sandbox,
             std::slice::from_ref(test),
-            Some(&prepared.path),
+            Some(&test_root_path),
             settings,
         );
         let error = result.as_ref().err().map(|error| error.message.clone());
@@ -391,7 +434,9 @@ fn run_installed(
         .iter()
         .filter(|outcome| outcome.error.is_some())
         .count();
-    let _ = rpmx_core::root::remove_tree(&prepared.path);
+    if args.test_root.is_none() {
+        let _ = rpmx_core::root::remove_tree(&test_root_path);
+    }
     if rpmx_core::output::json() {
         println!(
             "{}",

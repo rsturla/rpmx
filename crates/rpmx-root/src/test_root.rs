@@ -9,6 +9,9 @@ use rpmx_runner::runner::emulation_available;
 
 pub struct TestRootOptions<'a> {
     pub lock: &'a RootLock,
+    /// Assemble here instead of a scratch directory, so the root can be
+    /// shipped to the machine that runs the tests.
+    pub destination: Option<&'a Path>,
     pub pinned: Option<&'a Path>,
     pub tools: &'a [String],
     pub rpms: &'a [PathBuf],
@@ -86,7 +89,10 @@ pub fn prepare(options: TestRootOptions<'_>) -> Result<PreparedTestRoot> {
 
     let resolve_work = options.work.join("test-resolve");
     let assemble_work = options.work.join("test-assemble");
-    let root_path = options.work.join("test-root");
+    let root_path = match options.destination {
+        Some(destination) => destination.to_path_buf(),
+        None => options.work.join("test-root"),
+    };
     let test_lock = match options.pinned {
         Some(path) => {
             let pinned = root::load_lock(path)?;
@@ -133,6 +139,14 @@ pub fn prepare(options: TestRootOptions<'_>) -> Result<PreparedTestRoot> {
                 String::from_utf8_lossy(&output.stderr).trim()
             ),
         ));
+    }
+
+    if let Some(destination) = options.destination {
+        // The root's own top directory is read-only once the filesystem
+        // package is installed, so the lock lives beside the root instead of
+        // inside it. A shipped directory plus this file is self-contained.
+        let lock_path = destination.with_extension("lock.yaml");
+        crate::root::write_lock(&lock_path, &test_lock)?;
     }
 
     Ok(PreparedTestRoot {

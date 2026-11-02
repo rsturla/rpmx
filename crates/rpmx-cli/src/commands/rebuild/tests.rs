@@ -34,6 +34,8 @@ pub(super) struct TestRunOptions<'a> {
     pub(super) debuginfo: bool,
     /// Skip installed-stage tests, which execute target binaries.
     pub(super) skip_installed: bool,
+    /// Keep the prepared test root here instead of deleting it.
+    pub(super) save_test_root: Option<&'a Path>,
     pub(super) filter: &'a [String],
     pub(super) junit: Option<&'a Path>,
 }
@@ -66,6 +68,7 @@ pub(super) fn run(options: TestRunOptions<'_>) -> Result<Option<PathBuf>, Error>
             })?;
         Some(prepare_test_root(TestRootOptions {
             lock,
+            destination: options.save_test_root,
             pinned: options.pinned_lock,
             tools: &options.cell.test_tools,
             rpms: options.written,
@@ -136,7 +139,9 @@ pub(super) fn run(options: TestRunOptions<'_>) -> Result<Option<PathBuf>, Error>
         })?;
     }
     let evidence = if let Some(prepared) = prepared {
-        let _ = rpmx_core::root::remove_tree(&prepared.path);
+        if options.save_test_root.is_none() {
+            let _ = rpmx_core::root::remove_tree(&prepared.path);
+        }
         let path = options.output.join(format!(
             "{}-{}-{}.test-root.lock.json",
             options.cell.package, options.cell.version, options.cell.release

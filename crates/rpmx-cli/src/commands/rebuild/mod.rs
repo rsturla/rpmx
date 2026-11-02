@@ -49,6 +49,8 @@ pub struct RebuildRequest<'a> {
     pub run_tests: bool,
     /// Skip installed-stage tests, which execute target binaries.
     pub skip_installed: bool,
+    /// Keep the prepared test root here instead of deleting it.
+    pub save_test_root: Option<&'a Path>,
     pub test_filter: &'a [String],
     pub no_index: bool,
     pub no_lint: bool,
@@ -105,6 +107,7 @@ pub fn run(args: RebuildArgs) -> Result<Vec<PathBuf>, Error> {
         verify_root: true,
         run_tests: args.run_tests || !args.test.is_empty(),
         skip_installed: args.skip_installed,
+        save_test_root: args.save_test_root.as_deref(),
         test_filter: &args.test,
         no_index: args.no_index,
         no_lint: args.no_lint,
@@ -171,6 +174,17 @@ pub fn execute(request: RebuildRequest<'_>) -> Result<RebuildOutput, Error> {
     // supplies the sysroot and toolchain.
     let effective_sysroot: Option<&std::path::Path> = request.sysroot.or(sysroot.as_deref());
     let effective_cross = request.cross.or(cross.as_ref());
+    // A foreign execution without a cross profile is emulation. Say so once
+    // per build: the difference is roughly 15x, and it is a choice.
+    if exec != host_arch && effective_cross.is_none() {
+        rpmx_core::output::warning(
+            "emulation",
+            format!(
+                "executing {arch} steps through qemu-user; a profile with a cross \
+                 block builds them natively (see docs/usage/cross-compilation.md)"
+            ),
+        );
+    }
     let sandbox = Sandbox::new(SandboxConfig {
         runner: runner_kind,
         host: host_arch,
@@ -292,8 +306,7 @@ pub fn execute(request: RebuildRequest<'_>) -> Result<RebuildOutput, Error> {
             return Err(Error::new(
                 codes::BUILD_009,
                 format!(
-                    "the staged payload needs libraries that are not in the {} sysroot: {detail}",
-                    arch
+                    "the staged payload needs libraries that are not in the {arch} sysroot: {detail}"
                 ),
             ));
         }
@@ -412,6 +425,7 @@ pub fn execute(request: RebuildRequest<'_>) -> Result<RebuildOutput, Error> {
             timeout: step_timeout,
             debuginfo,
             skip_installed: request.skip_installed,
+            save_test_root: request.save_test_root,
             filter: request.test_filter,
             junit: request.junit,
         })? {

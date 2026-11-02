@@ -644,6 +644,7 @@ fn build_one(
         step_timeout: args.runtime.step_timeout,
         run_tests,
         skip_installed: args.skip_installed,
+        save_test_root: args.save_test_root.as_deref(),
         test_filter: &args.test,
         junit: args.junit.as_deref(),
         no_lint: args.no_lint,
