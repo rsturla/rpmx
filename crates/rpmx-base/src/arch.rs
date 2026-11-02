@@ -65,6 +65,42 @@ impl Arch {
             Self::I686 => "386",
         }
     }
+
+    /// The GNU target triple a cross toolchain is named after.
+    ///
+    /// This is the compiler's name for the architecture, not the RPM name:
+    /// `ppc64le` is `powerpc64le` to GCC, and Fedora ships the toolchain as
+    /// `gcc-<triple>`. Keep this in step with [`Arch::as_str`]; a wrong triple
+    /// silently selects a host compiler instead of failing.
+    pub const fn triple(self) -> &'static str {
+        match self {
+            Self::X86_64 => "x86_64-linux-gnu",
+            Self::Aarch64 => "aarch64-linux-gnu",
+            Self::Ppc64le => "powerpc64le-linux-gnu",
+            Self::S390x => "s390x-linux-gnu",
+            Self::I686 => "i686-linux-gnu",
+        }
+    }
+
+    /// The ELF `e_machine` value for this architecture.
+    ///
+    /// Used to reject a payload that does not match the package's target
+    /// architecture, which is the only way a cross build can silently produce
+    /// a package containing host binaries.
+    pub const fn elf_machine(self) -> u16 {
+        match self {
+            // EM_X86_64
+            Self::X86_64 => 62,
+            // EM_AARCH64
+            Self::Aarch64 => 183,
+            // EM_PPC64
+            Self::Ppc64le => 21,
+            // EM_S390
+            Self::S390x => 22,
+            // EM_386
+            Self::I686 => 3,
+        }
+    }
 }
 
 /// The native architecture as an RPM string. Used as the CLI default.
@@ -115,5 +151,34 @@ mod tests {
         ] {
             assert_eq!(arch.oci_arch(), oci);
         }
+    }
+
+    #[test]
+    fn every_rpm_arch_has_a_distinct_triple_and_elf_machine() {
+        let mut triples = std::collections::BTreeSet::new();
+        let mut machines = std::collections::BTreeSet::new();
+        for arch in [
+            Arch::X86_64,
+            Arch::Aarch64,
+            Arch::Ppc64le,
+            Arch::S390x,
+            Arch::I686,
+        ] {
+            assert!(
+                arch.triple().starts_with(arch.as_str()) || arch == Arch::Ppc64le,
+                "{} has triple {}",
+                arch,
+                arch.triple()
+            );
+            assert!(triples.insert(arch.triple()), "duplicate triple for {arch}");
+            assert!(
+                machines.insert(arch.elf_machine()),
+                "duplicate ELF machine for {arch}"
+            );
+        }
+        assert_eq!(Arch::Aarch64.triple(), "aarch64-linux-gnu");
+        assert_eq!(Arch::Ppc64le.triple(), "powerpc64le-linux-gnu");
+        assert_eq!(Arch::Aarch64.elf_machine(), 183);
+        assert_eq!(Arch::X86_64.elf_machine(), 62);
     }
 }
