@@ -1,0 +1,109 @@
+# yaml-language-server: $schema=https://example.org/rpmx/package.schema.json
+#
+# A very simple fedora-release replacement for "Eternal Linux".
+#
+# The release files live in files/ next to this recipe. `context` copies the
+# directory into the source workspace and the lock records one tree digest.
+# The package has no upstream tarball.
+#
+# This file builds with the current prototype. The installed test requires a
+# test root; the package content is checked by the build and by `rpm -qpl`.
+
+schema: 1
+
+package:
+  name: eternal-release
+  version: "1"
+  release: 1
+  summary: Eternal Linux release files
+  description: |
+    A minimal release package for Eternal Linux. It provides the
+    /etc/os-release identity, the legacy /etc/system-release and
+    /etc/redhat-release files, and the Eternal Linux repository definitions.
+  license: MIT
+  source-date-epoch: 1704067200
+  maintainers:
+    - name: Jane Packager
+      email: jane@example.org
+  cpe:
+    vendor: eternal
+    product: eternal
+
+# One local input directory. Its contents are copied to the workspace root,
+# so the build reads os-release, eternal.repo and friends directly.
+context: files
+
+build:
+  root:
+    profile: ../fedora-44-build.profile.yaml
+  dependencies:
+    tools: [bash, coreutils]
+  pipeline:
+    - runs: |
+        install -d ${stage}/etc/yum.repos.d \
+            ${stage}/usr/share/licenses/eternal-release
+        install -m 0644 os-release ${stage}/etc/os-release
+        install -m 0644 system-release ${stage}/etc/system-release
+        install -m 0644 redhat-release ${stage}/etc/redhat-release
+        install -m 0644 eternal.repo \
+            ${stage}/etc/yum.repos.d/eternal.repo
+        install -m 0644 eternal-updates.repo \
+            ${stage}/etc/yum.repos.d/eternal-updates.repo
+        install -m 0644 LICENSE \
+            ${stage}/usr/share/licenses/eternal-release/LICENSE
+
+outputs:
+  - name: eternal-release
+    summary: Eternal Linux release files
+    description: |
+      The distribution identity and repository definitions for Eternal Linux.
+    arch: noarch
+    files:
+      include:
+        - /etc/os-release
+        - /etc/system-release
+        - /etc/redhat-release
+        - /etc/yum.repos.d/eternal.repo
+        - /etc/yum.repos.d/eternal-updates.repo
+        - /usr/share/licenses/eternal-release/LICENSE
+      license:
+        - /usr/share/licenses/eternal-release/LICENSE
+      config:
+        - /etc/os-release
+        - /etc/system-release
+        - /etc/redhat-release
+        - /etc/yum.repos.d/eternal.repo
+        - /etc/yum.repos.d/eternal-updates.repo
+      noreplace:
+        - /etc/os-release
+        - /etc/system-release
+        - /etc/redhat-release
+        - /etc/yum.repos.d/eternal.repo
+        - /etc/yum.repos.d/eternal-updates.repo
+    dependencies:
+      provides:
+        - system-release
+        - "system-release(releasever) = 1"
+      conflicts:
+        - fedora-release
+        - generic-release
+        - redhat-release
+
+tests:
+  - name: release-files
+    stage: build
+    argv:
+      - sh
+      - -c
+      - |
+        grep -q '^ID=eternal$' os-release
+        grep -q '^VERSION_ID="1"$' os-release
+        grep -q '^PRETTY_NAME="Eternal Linux 1"$' os-release
+        test -f system-release
+        test -f redhat-release
+        test -f eternal.repo
+        test -f eternal-updates.repo
+        grep -q 'baseurl=https://repo.eternal.example.org/eternal/$releasever/$basearch' \
+            eternal.repo
+        grep -q 'baseurl=https://repo.eternal.example.org/eternal/updates/$releasever/$basearch' \
+            eternal-updates.repo

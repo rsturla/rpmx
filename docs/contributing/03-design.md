@@ -246,6 +246,18 @@ Source rules:
 - The lock records the digest, size, signature result, and the locator that succeeded. A rebuild may use any locator that yields the same digest.
 - A native SRPM can be used as the only input for offline or archival builds. See [`07-srpm-first.md`](07-srpm-first.md).
 
+**Context.** A recipe may declare one local context directory:
+
+```yaml
+context: files
+```
+
+Its contents are copied to the workspace root before patches and source
+assembly. The path is relative to the root recipe directory. The lock records
+one tree digest over paths, modes and contents. This is for package-local
+static files; generated files belong in source assembly. It mirrors melange's
+`--source-dir` without copying the whole recipe directory.
+
 **Patches** are an ordered array:
 
 ```yaml

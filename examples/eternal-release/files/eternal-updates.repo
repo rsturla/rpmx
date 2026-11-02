@@ -1,0 +1,8 @@
+[eternal-updates]
+name=Eternal Linux $releasever - Updates
+baseurl=https://repo.eternal.example.org/eternal/updates/$releasever/$basearch
+enabled=1
+gpgcheck=1
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-eternal
+metadata_expire=6h
+countme=1

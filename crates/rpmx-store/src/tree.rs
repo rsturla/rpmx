@@ -41,8 +41,20 @@ const SKIP: &[&str] = &[
 /// Mtimes are excluded: package payloads carry stable times, but directories
 /// created by scriptlets do not. Special files are not represented.
 pub fn tree_digest(root: &Path) -> Result<String> {
+    digest(root, true, codes::ROOT_014)
+}
+
+/// A deterministic digest over a recipe context directory.
+///
+/// Unlike [`tree_digest`], nothing is skipped: a context is the package's
+/// local input, so every file and directory is part of its identity.
+pub fn context_digest(root: &Path) -> Result<String> {
+    digest(root, false, codes::SOURCE_035)
+}
+
+fn digest(root: &Path, skip_volatile: bool, code: rpmx_base::error::Code) -> Result<String> {
     let mut lines = Vec::new();
-    walk(root, Path::new(""), &mut lines)?;
+    walk(root, Path::new(""), &mut lines, skip_volatile, code)?;
     // Global ordering, not traversal ordering: the digest must not depend on
     // how a directory's entries happen to be interleaved with its children.
     lines.sort();
@@ -54,34 +66,37 @@ pub fn tree_digest(root: &Path) -> Result<String> {
     Ok(format!("sha512:{:x}", hasher.finalize()))
 }
 
-fn walk(root: &Path, relative: &Path, lines: &mut Vec<String>) -> Result<()> {
+fn walk(
+    root: &Path,
+    relative: &Path,
+    lines: &mut Vec<String>,
+    skip_volatile: bool,
+    code: rpmx_base::error::Code,
+) -> Result<()> {
     let directory = root.join(relative);
-    let entries = rpmx_base::io::sorted_entries(&directory, codes::ROOT_014)?;
+    let entries = rpmx_base::io::sorted_entries(&directory, code)?;
 
     for entry in entries {
         let name = entry.file_name();
         let child = relative.join(&name);
         let relative_text = child.to_string_lossy().into_owned();
-        if is_skipped(&relative_text) {
+        if skip_volatile && is_skipped(&relative_text) {
             continue;
         }
         let path = entry.path();
         let metadata = fs::symlink_metadata(&path).map_err(|error| {
-            Error::new(
-                codes::ROOT_014,
-                format!("cannot stat {}: {error}", path.display()),
-            )
+            Error::new(code, format!("cannot stat {}: {error}", path.display()))
         })?;
         let mode = metadata.mode() & 0o7777;
         let file_type = metadata.file_type();
 
         if file_type.is_dir() {
             lines.push(format!("d|{relative_text}|{mode:o}"));
-            walk(root, &child, lines)?;
+            walk(root, &child, lines, skip_volatile, code)?;
         } else if file_type.is_symlink() {
             let target = fs::read_link(&path).map_err(|error| {
                 Error::new(
-                    codes::ROOT_014,
+                    code,
                     format!("cannot read symlink {}: {error}", path.display()),
                 )
             })?;
@@ -89,28 +104,21 @@ fn walk(root: &Path, relative: &Path, lines: &mut Vec<String>) -> Result<()> {
         } else if file_type.is_file() {
             lines.push(format!(
                 "f|{relative_text}|{mode:o}|{}",
-                file_digest(&path)?
+                file_digest(&path, code)?
             ));
         }
     }
     Ok(())
 }
 
-fn file_digest(path: &Path) -> Result<String> {
-    let mut file = File::open(path).map_err(|error| {
-        Error::new(
-            codes::ROOT_014,
-            format!("cannot read {}: {error}", path.display()),
-        )
-    })?;
+fn file_digest(path: &Path, code: rpmx_base::error::Code) -> Result<String> {
+    let mut file = File::open(path)
+        .map_err(|error| Error::new(code, format!("cannot read {}: {error}", path.display())))?;
     let mut hasher = Sha512::new();
     let mut buffer = vec![0_u8; 1 << 20];
     loop {
         let read = file.read(&mut buffer).map_err(|error| {
-            Error::new(
-                codes::ROOT_014,
-                format!("cannot read {}: {error}", path.display()),
-            )
+            Error::new(code, format!("cannot read {}: {error}", path.display()))
         })?;
         if read == 0 {
             break;

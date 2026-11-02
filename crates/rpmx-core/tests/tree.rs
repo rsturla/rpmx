@@ -2,7 +2,7 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::time::{Duration, SystemTime};
 
-use rpmx_core::tree::tree_digest;
+use rpmx_core::tree::{context_digest, tree_digest};
 
 fn write(path: &std::path::Path, content: &str) {
     if let Some(parent) = path.parent() {
@@ -72,4 +72,30 @@ fn digest_ignores_package_manager_state() {
     write(&work.path().join("usr/lib/sysimage/rpm/rpmdb.sqlite"), "db");
     std::fs::write(work.path().join("etc/machine-id"), "other").unwrap();
     assert_eq!(first, tree_digest(work.path()).unwrap());
+}
+
+#[test]
+fn context_digest_covers_every_path_including_volatile_names() {
+    let work = tempfile::tempdir().unwrap();
+    write(&work.path().join("etc/os-release"), "eternal");
+    write(&work.path().join("var/log/first"), "a log line");
+    let first = context_digest(work.path()).unwrap();
+
+    write(&work.path().join("var/log/second"), "another log line");
+    assert_ne!(first, context_digest(work.path()).unwrap());
+}
+
+#[test]
+fn context_digest_covers_nested_files_and_modes() {
+    let work = tempfile::tempdir().unwrap();
+    let path = work.path().join("vendor/etc/passwd");
+    write(&path, "root:x:0:0");
+    let first = context_digest(work.path()).unwrap();
+
+    write(&path, "root:x:0:0\n");
+    let content_changed = context_digest(work.path()).unwrap();
+    assert_ne!(first, content_changed);
+
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+    assert_ne!(content_changed, context_digest(work.path()).unwrap());
 }

@@ -33,6 +33,11 @@ fn kind(value: &Value) -> &'static str {
 pub struct Recipe {
     pub schema: u32,
     pub package: Package,
+    /// A local directory copied into the source workspace before assembly.
+    /// Paths are relative to the recipe directory and the contents land at the
+    /// workspace root, like melange's `--source-dir`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context: Option<String>,
     #[serde(default)]
     pub vars: BTreeMap<String, Value>,
     #[serde(default)]
@@ -638,7 +643,6 @@ pub struct Test {
     pub pipeline: Option<Vec<Step>>,
 }
 
-
 /// One YAML file in a recipe bundle.
 ///
 /// The root recipe and every included fragment use this shape. A fragment may
@@ -653,6 +657,8 @@ pub struct RecipeFragment {
     pub include: Vec<String>,
     #[serde(default)]
     pub package: Option<Package>,
+    #[serde(default)]
+    pub context: Option<String>,
     #[serde(default)]
     pub vars: Option<BTreeMap<String, Value>>,
     #[serde(default)]

@@ -238,7 +238,30 @@ patches:
 The patched tree is part of the source snapshot, so a rebuild does not reapply
 patches.
 
-### 5.5 Source assembly
+### 5.5 Context
+
+`context:` copies a local directory into the source workspace before patches
+and source assembly:
+
+```yaml
+context: files
+```
+
+The path is relative to the root recipe directory and must be a subdirectory. The
+contents land at the workspace root, matching melange's `--source-dir`, so a
+file at `files/os-release` is available as `os-release` inside the build.
+
+- One tree digest covers every path, mode and file content. It is recorded in
+  `package.lock.json`; changing any file makes `--locked` fail.
+- The copied tree becomes part of the deterministic source snapshot and the
+  SRPM, so `rpmx rebuild` does not need the original directory.
+- Context entries may be regular files, directories or relative symlinks.
+  Absolute symlinks and symlinks containing `..` are rejected.
+- A context entry that collides with an extracted upstream source is an error.
+- Use `context:` for static package-local files. Use `source-assembly:` for
+  files generated from the package version or other build data.
+
+### 5.6 Source assembly
 
 Source assembly runs in a locked root before the SRPM is written. Use it for
 deterministic generation and vendoring:
@@ -255,7 +278,7 @@ source-assembly:
 Anything installed here becomes part of the source snapshot and the SRPM. It
 does not run during `rpmx rebuild`.
 
-### 5.6 Build pipeline
+### 5.7 Build pipeline
 
 A pipeline is an ordered list. Each entry is exactly one of:
 
@@ -313,7 +336,7 @@ Use it as `uses: acme/install-config`. The step's `needs.tools` also joins the
 root requirement. Local steps are hashed into the lock and embedded in the
 SRPM.
 
-### 5.7 Outputs and files
+### 5.8 Outputs and files
 
 ```yaml
 outputs:
@@ -377,7 +400,7 @@ Rules:
 `scriptlets` phases: `pre`, `post`, `preun`, `postun`; `interpreter` defaults to
 `/bin/sh`.
 
-### 5.8 Tests
+### 5.9 Tests
 
 ```yaml
 tests:
@@ -406,7 +429,7 @@ tests:
 - Installed tests use `build.dependencies.tests` plus the built RPMs. Real
   dependency checking is performed; there is no `--nodeps`.
 
-### 5.9 Matrix and variables
+### 5.10 Matrix and variables
 
 Two mechanisms, both resolved before any build:
 

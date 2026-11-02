@@ -1,0 +1,14 @@
+NAME="Eternal Linux"
+VERSION="1 (Eternal)"
+ID=eternal
+ID_LIKE="rhel fedora"
+VERSION_ID="1"
+PRETTY_NAME="Eternal Linux 1"
+ANSI_COLOR="0;31"
+CPE_NAME="cpe:/o:eternal:eternal:1"
+HOME_URL="https://eternal.example.org/"
+DOCUMENTATION_URL="https://docs.eternal.example.org/"
+SUPPORT_URL="https://eternal.example.org/support"
+BUG_REPORT_URL="https://eternal.example.org/bugs"
+VARIANT="Server"
+VARIANT_ID=server

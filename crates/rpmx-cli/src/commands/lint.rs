@@ -5,9 +5,9 @@ use serde::Serialize;
 
 use rpmx_core::error::codes;
 use rpmx_core::model::Recipe;
-use rpmx_core::RecipeBundle;
 use rpmx_core::plan::Plan;
 use rpmx_core::Error;
+use rpmx_core::RecipeBundle;
 
 use crate::commands::{load_plan, resolve_policy, LintArgs, PolicyInput};
 use crate::render;
@@ -168,6 +168,24 @@ fn render_diagnostic(diagnostic: &Diagnostic) -> String {
 fn check(recipe: &Recipe, plan: &Plan, recipe_path: &Path) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
     let recipe_dir = recipe_path.parent().unwrap_or_else(|| Path::new("."));
+
+    if let Some(context) = &recipe.context {
+        match rpmx_core::source::context_root(recipe_dir, context) {
+            Ok(root) => {
+                if let Err(error) = rpmx_core::tree::context_digest(&root) {
+                    diagnostics.push(
+                        Diagnostic::error(error.code, "context/digest", error.message)
+                            .at("context"),
+                    );
+                }
+            }
+            Err(error) => {
+                diagnostics.push(
+                    Diagnostic::error(error.code, "context/path", error.message).at("context"),
+                );
+            }
+        }
+    }
 
     if let Err(error) = spdx_syntax(&recipe.package.license) {
         diagnostics.push(
