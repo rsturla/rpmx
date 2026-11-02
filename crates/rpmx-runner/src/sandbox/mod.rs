@@ -459,25 +459,41 @@ needs_exe_wrapper = true
     Ok(())
 }
 
-/// Environment that turns native tools into a cross toolchain.
-///
-/// Everything is expressed in guest paths: the sysroot is mounted at
-/// [`rpmx_base::guest::SYSROOT`] and the libraries live under the profile's
-/// `PREFIX`/`LIBDIR`, so no distribution layout is assumed.
 fn cross_env(
     config: &SandboxConfig<'_>,
     toolchain: &CrossToolchain,
 ) -> Vec<(&'static str, String)> {
+    cross_environment(
+        config.host,
+        config.target,
+        config.prefix,
+        config.libdir,
+        toolchain,
+    )
+}
+
+/// Environment that turns native tools into a cross toolchain.
+///
+/// Everything is expressed in guest paths: the sysroot is mounted at
+/// [`rpmx_base::guest::SYSROOT`] and the libraries live under the profile's
+/// `PREFIX`/`LIBDIR`, so no distribution layout is assumed. It is public so a
+/// command that builds its own sandbox (`rpmx shell`) sees the same toolchain
+/// as a step.
+pub fn cross_environment(
+    host: Arch,
+    target: Arch,
+    prefix: &str,
+    libdir: &str,
+    toolchain: &CrossToolchain,
+) -> Vec<(&'static str, String)> {
     let sysroot = rpmx_base::guest::SYSROOT;
-    let libdir = config.libdir;
-    let prefix = config.prefix;
     let pkgconfig = format!("{sysroot}{libdir}/pkgconfig:{sysroot}{prefix}/share/pkgconfig");
     vec![
         ("RPMX_TARGET_TRIPLE", toolchain.triple.clone()),
-        ("RPMX_HOST_TRIPLE", config.host.triple().to_string()),
+        ("RPMX_HOST_TRIPLE", host.triple().to_string()),
         ("RPMX_SYSROOT", sysroot.to_string()),
         ("GOOS", "linux".to_string()),
-        ("GOARCH", config.target.go_arch().to_string()),
+        ("GOARCH", target.go_arch().to_string()),
         // A distribution package links the system C library on purpose: the
         // pure-Go resolver and user lookup ignore nsswitch.conf and NSS.
         ("CGO_ENABLED", "1".to_string()),

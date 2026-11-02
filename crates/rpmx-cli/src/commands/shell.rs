@@ -12,11 +12,39 @@ use rpmx_core::Error;
 
 use crate::commands::{autoroot, load_plan, resolve_policy, PolicyInput, ShellArgs, WorkDir};
 
+struct ShellRoot {
+    root: PathBuf,
+    sysroot: Option<PathBuf>,
+    cross: Option<rpmx_core::guest::CrossToolchain>,
+}
+
 pub fn run(args: ShellArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
-    let root = match args.root.clone() {
-        Some(root) => root,
-        None => resolve_root(&args, pipeline_dir)?,
+    let arch = match (&args.arch, &args.root) {
+        (Some(arch), _) => arch.clone(),
+        // An explicit root carries no cross context, so the recipe is not
+        // needed to choose an architecture.
+        (None, Some(_)) => rpmx_core::arch::native_arch().to_string(),
+        (None, None) => {
+            let declared = rpmx_core::load_recipe_bundle(&args.file)?;
+            crate::commands::autoroot::declared_arch(
+                &declared.recipe,
+                &declared.root,
+                args.policy.profile.as_deref(),
+            )?
+            .unwrap_or_else(|| rpmx_core::arch::native_arch().to_string())
+        }
     };
+    let shell_root = match args.root.clone() {
+        Some(root) => ShellRoot {
+            root,
+            sysroot: None,
+            cross: None,
+        },
+        None => resolve_root(&args, &arch, pipeline_dir)?,
+    };
+    let root = shell_root.root;
+    let sysroot = shell_root.sysroot;
+    let cross = shell_root.cross;
     let workspace = match args.workspace.clone() {
         Some(workspace) => workspace,
         None => std::env::current_dir().map_err(|error| {
@@ -82,6 +110,30 @@ pub fn run(args: ShellArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
         "--bind",
         &stage,
         rpmx_core::guest::STAGE,
+    ]);
+    let sysroot_path = sysroot.as_ref().map(|path| path.display().to_string());
+    if let Some(path) = &sysroot_path {
+        bwrap.args(["--ro-bind", path, rpmx_core::guest::SYSROOT]);
+    }
+    let cross_env = match (&cross, &sysroot_path) {
+        (Some(toolchain), Some(_)) => rpmx_core::sandbox::cross_environment(
+            rpmx_core::Arch::current()?,
+            rpmx_core::Arch::parse(&arch)?,
+            rpmx_core::guest::PREFIX,
+            rpmx_core::guest::LIBDIR,
+            toolchain,
+        ),
+        _ => Vec::new(),
+    };
+    for (key, value) in &cross_env {
+        bwrap.args(["--setenv", key, value]);
+    }
+    if !cross_env.is_empty() {
+        bwrap.args(["--setenv", "RPMX_CROSS", "1"]);
+        bwrap.args(["--setenv", "RPMX_TARGET_ARCH", &arch]);
+        bwrap.args(["--setenv", "RPMX_EMULATED", "0"]);
+    }
+    bwrap.args([
         "--chdir",
         rpmx_core::guest::BUILD,
         "--setenv",
@@ -119,7 +171,11 @@ pub fn run(args: ShellArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
     }
 }
 
-fn resolve_root(args: &ShellArgs, pipeline_dir: Option<&Path>) -> Result<PathBuf, Error> {
+fn resolve_root(
+    args: &ShellArgs,
+    arch: &str,
+    pipeline_dir: Option<&Path>,
+) -> Result<ShellRoot, Error> {
     let resolved = resolve_policy(PolicyInput {
         profile: args.policy.profile.as_deref(),
         dist_tag: args.policy.dist_tag.as_deref(),
@@ -127,7 +183,7 @@ fn resolve_root(args: &ShellArgs, pipeline_dir: Option<&Path>) -> Result<PathBuf
     })?;
     let (bundle, plan) = load_plan(
         &args.file,
-        &args.arch,
+        arch,
         pipeline_dir,
         false,
         resolved.plan_policy(),
@@ -140,12 +196,18 @@ fn resolve_root(args: &ShellArgs, pipeline_dir: Option<&Path>) -> Result<PathBuf
         args.cache.cache.as_deref(),
         args.offline,
         false,
-        &args.arch,
+        arch,
     )?;
-    automatic.map(|root| root.root).ok_or_else(|| {
-        Error::new(
-            codes::ROOT_016,
-            "no build root: set build.root in the recipe, pass --profile, or pass --root",
-        )
-    })
+    automatic
+        .map(|root| ShellRoot {
+            sysroot: root.sysroot.as_ref().map(|sysroot| sysroot.root.clone()),
+            cross: root.cross.clone(),
+            root: root.root,
+        })
+        .ok_or_else(|| {
+            Error::new(
+                codes::ROOT_016,
+                "no build root: set build.root in the recipe, pass --profile, or pass --root",
+            )
+        })
 }

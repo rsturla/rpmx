@@ -47,10 +47,20 @@ pub fn run(args: SourceArgs, pipeline_dir: Option<&Path>) -> Result<PathBuf, Err
         build_release: args.policy.build_release,
     })?;
     let policy = resolved.plan_policy();
+    let declared = rpmx_core::load_recipe_bundle(&args.file)?;
+    let arch = match &args.arch {
+        Some(arch) => arch.clone(),
+        None => crate::commands::autoroot::declared_arch(
+            &declared.recipe,
+            &declared.root,
+            args.policy.profile.as_deref(),
+        )?
+        .unwrap_or_else(|| rpmx_core::arch::native_arch().to_string()),
+    };
     execute(SourceRequest {
         file: &args.file,
-        arch: &args.arch,
-        exec: rpmx_core::arch::Arch::parse(&args.arch)?,
+        arch: &arch,
+        exec: rpmx_core::arch::Arch::parse(&arch)?,
         sysroot: None,
         cross: None,
         runner: &args.runner,
@@ -117,6 +127,19 @@ pub fn execute(request: SourceRequest<'_>) -> Result<PathBuf, Error> {
             },
         );
     }
+    // A standalone `rpmx source`/`rpmx srpm` resolves the roots here, so it
+    // learns about a cross profile at this point; a pipeline caller already
+    // passed the resolved context and has no automatic root.
+    let mut exec = request.exec;
+    let mut sysroot = request.sysroot;
+    let mut cross = request.cross;
+    if let Some(root) = &automatic {
+        if let Some(target) = &root.sysroot {
+            exec = rpmx_core::arch::Arch::current()?;
+            sysroot = Some(target.root.as_path());
+            cross = root.cross.as_ref();
+        }
+    }
     let verify_digest = request.verify_root && automatic.is_none();
     let automatic_lock = automatic.as_ref().map(|root| root.lock.as_path());
     let automatic_root = automatic.as_ref().map(|root| root.root.as_path());
@@ -147,7 +170,7 @@ pub fn execute(request: SourceRequest<'_>) -> Result<PathBuf, Error> {
         root,
         allow_host: request.unsafe_host_root,
         // The root is where steps run: the build root for a cross build.
-        arch: request.exec.as_str(),
+        arch: exec.as_str(),
         verify_digest,
     })?;
     let selected = match &root_request {
@@ -201,9 +224,9 @@ pub fn execute(request: SourceRequest<'_>) -> Result<PathBuf, Error> {
         step_timeout: request.step_timeout,
         root: selected_root,
         appliance: appliance.as_deref(),
-        exec: request.exec,
-        sysroot: request.sysroot,
-        cross: request.cross,
+        exec,
+        sysroot,
+        cross,
         runner: request.runner,
         recipe_dir: request.file.parent().unwrap_or_else(|| Path::new(".")),
     })?;

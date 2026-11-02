@@ -218,9 +218,10 @@ pub struct ShellArgs {
     pub file: PathBuf,
     #[command(flatten)]
     pub policy: crate::cli::PolicyArgs,
-    /// Target architecture used for templates.
-    #[arg(long, default_value = rpmx_core::arch::native_arch())]
-    pub arch: String,
+    /// Target architecture used for templates. Defaults to the single target
+    /// the recipe's profile declares, or the host architecture.
+    #[arg(long)]
+    pub arch: Option<String>,
     /// Assembled root to use as /. Resolved from the recipe when omitted.
     #[arg(long)]
     pub root: Option<PathBuf>,
@@ -381,9 +382,10 @@ pub struct SourceArgs {
     /// Recipe to assemble. (default: ./package.yaml).
     #[arg(default_value = "package.yaml")]
     pub file: PathBuf,
-    /// Target architecture used for templates.
-    #[arg(long, default_value = rpmx_core::arch::native_arch())]
-    pub arch: String,
+    /// Target architecture used for templates. Defaults to the single target
+    /// the recipe's profile declares, or the host architecture.
+    #[arg(long)]
+    pub arch: Option<String>,
     /// Runner: auto, bwrap, podman or qemu.
     #[arg(long, default_value = "auto", value_parser = ["auto", "bwrap", "podman", "qemu"])]
     pub runner: String,
@@ -436,9 +438,10 @@ pub struct SrpmArgs {
     /// Output directory.
     #[arg(long, default_value = ".")]
     pub output: PathBuf,
-    /// Build architecture recorded in the source header.
-    #[arg(long, default_value = rpmx_core::arch::native_arch())]
-    pub arch: String,
+    /// Build architecture recorded in the source header. Defaults to the
+    /// single target the recipe's profile declares, or the host architecture.
+    #[arg(long)]
+    pub arch: Option<String>,
     /// Runner: auto, bwrap, podman or qemu.
     #[arg(long, default_value = "auto", value_parser = ["auto", "bwrap", "podman", "qemu"])]
     pub runner: String,

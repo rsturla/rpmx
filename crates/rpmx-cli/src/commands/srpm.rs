@@ -35,6 +35,16 @@ pub fn run(args: SrpmArgs, pipeline_dir: Option<&Path>) -> Result<Vec<PathBuf>, 
         build_release: args.policy.build_release,
     })?;
     let policy = resolved.plan_policy();
+    let declared = rpmx_core::load_recipe_bundle(&args.file)?;
+    let arch = match &args.arch {
+        Some(arch) => arch.clone(),
+        None => crate::commands::autoroot::declared_arch(
+            &declared.recipe,
+            &declared.root,
+            args.policy.profile.as_deref(),
+        )?
+        .unwrap_or_else(|| rpmx_core::arch::native_arch().to_string()),
+    };
     let work;
     let sources = match args.sources.as_deref() {
         Some(path) => path.to_path_buf(),
@@ -49,8 +59,8 @@ pub fn run(args: SrpmArgs, pipeline_dir: Option<&Path>) -> Result<Vec<PathBuf>, 
             })?;
             crate::commands::source::execute(crate::commands::source::SourceRequest {
                 file: &args.file,
-                arch: &args.arch,
-                exec: rpmx_core::arch::Arch::parse(&args.arch)?,
+                arch: &arch,
+                exec: rpmx_core::arch::Arch::parse(&arch)?,
                 sysroot: None,
                 cross: None,
                 runner: &args.runner,
@@ -80,11 +90,11 @@ pub fn run(args: SrpmArgs, pipeline_dir: Option<&Path>) -> Result<Vec<PathBuf>, 
         policy,
         sources: &sources,
         output: &args.output,
-        arch: &args.arch,
+        arch: &arch,
         source_date_epoch: args.source_date_epoch,
         cell: args.cell.as_deref(),
         root_lock: args.root_lock.as_deref(),
-        exec: rpmx_core::arch::Arch::parse(&args.arch)?,
+        exec: rpmx_core::arch::Arch::parse(&arch)?,
         signing: &args.signing,
         quiet: args.quiet,
         pipeline_dir,
