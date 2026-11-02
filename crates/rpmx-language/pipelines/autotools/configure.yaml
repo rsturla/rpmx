@@ -1,5 +1,5 @@
 name: autotools/configure
-version: 1
+version: 2
 summary: Configure an autotools project
 inputs:
   args:
@@ -10,4 +10,8 @@ needs:
 run:
   cwd: "${source.dir}"
   runs: |
-    ./configure --prefix="$PREFIX" --libdir="$LIBDIR" ${inputs.args}
+    cross=""
+    if [ "$RPMX_CROSS" = 1 ]; then
+      cross="--host=$RPMX_TARGET_TRIPLE"
+    fi
+    ./configure --prefix="$PREFIX" --libdir="$LIBDIR" $cross ${inputs.args}

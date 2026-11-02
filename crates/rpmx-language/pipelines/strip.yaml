@@ -1,5 +1,5 @@
 name: strip
-version: 1
+version: 2
 summary: Strip ELF files and optionally extract debuginfo
 needs:
   tools: [binutils, findutils]
@@ -15,14 +15,14 @@ run:
           rel="$${f#"$STAGE"}"
           debug="$debug_root$rel.debug"
           mkdir -p "$(dirname "$debug")"
-          if objcopy --only-keep-debug "$f" "$debug" 2>/dev/null; then
-            strip --strip-unneeded "$f" 2>/dev/null || true
-            ( cd "$(dirname "$debug")" && objcopy --add-gnu-debuglink="$(basename "$debug")" "$f" ) 2>/dev/null || true
+          if "${OBJCOPY:-objcopy}" --only-keep-debug "$f" "$debug" 2>/dev/null; then
+            "${STRIP:-strip}" --strip-unneeded "$f" 2>/dev/null || true
+            ( cd "$(dirname "$debug")" && "${OBJCOPY:-objcopy}" --add-gnu-debuglink="$(basename "$debug")" "$f" ) 2>/dev/null || true
           else
             rm -f "$debug"
           fi
         else
-          strip --strip-unneeded "$f" 2>/dev/null || true
+          "${STRIP:-strip}" --strip-unneeded "$f" 2>/dev/null || true
         fi
       done
     ' sh {} +

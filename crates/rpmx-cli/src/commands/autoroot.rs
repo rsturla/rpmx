@@ -42,6 +42,8 @@ pub struct AutomaticRoot {
     pub cached: bool,
     /// The target sysroot, when the profile cross-compiles.
     pub sysroot: Option<Box<AutomaticRoot>>,
+    /// Toolchain commands for a cross build.
+    pub cross: Option<rpmx_core::guest::CrossToolchain>,
 }
 
 /// The merged root requirement for a recipe: profile, name and digest.
@@ -53,6 +55,8 @@ pub struct Requirement {
     pub digest: String,
     /// The target sysroot, when the profile cross-compiles.
     pub sysroot: Option<SysrootRequirement>,
+    /// Toolchain commands for a cross build.
+    pub cross: Option<rpmx_core::guest::CrossToolchain>,
 }
 
 /// The target half of a cross build: a second closure with its own identity.
@@ -150,6 +154,11 @@ pub fn requirement(
     profile.validate()?;
     // `archs` is an allowed set. A root is resolved for exactly one target.
     let profile = profile.for_target(arch)?;
+    let cross = if crossing {
+        Some(rpmx_core::guest::CrossToolchain::new(profile.triple()?))
+    } else {
+        None
+    };
 
     let (primary, sysroot) = if crossing {
         let sysroot = profile.sysroot_profile()?;
@@ -176,6 +185,7 @@ pub fn requirement(
         name,
         digest,
         sysroot,
+        cross,
     }))
 }
 
@@ -244,6 +254,7 @@ pub fn ensure(
         }
         root.sysroot = Some(Box::new(assembled));
     }
+    root.cross = requirement.cross;
     Ok(Some(root))
 }
 
@@ -381,6 +392,7 @@ fn ensure_root(
         packages,
         cached: false,
         sysroot: None,
+        cross: None,
     })
 }
 
@@ -737,6 +749,7 @@ fn load_cached(
         document,
         cached: true,
         sysroot: None,
+        cross: None,
     }))
 }
 

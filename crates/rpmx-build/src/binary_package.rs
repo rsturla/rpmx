@@ -21,6 +21,12 @@ pub fn prepare_binary_packages(
     options: BinaryPackageOptions<'_>,
 ) -> Result<Vec<BinaryPackageSpec>> {
     let staged = package::scan_stage(options.stage)?;
+    let target = rpmx_base::arch::Arch::parse(options.arch)?;
+    for file in &staged {
+        if let Some(info) = crate::elf::inspect(&file.data) {
+            crate::elf::require_machine(&file.path, &info, target)?;
+        }
+    }
     let mut outputs = options.cell.outputs.clone();
     let debug_name = format!("{}-debuginfo", options.recipe.package.name);
     if options.debuginfo {

@@ -1,5 +1,5 @@
 name: cmake/configure
-version: 1
+version: 2
 summary: Configure a CMake project
 inputs:
   args:
@@ -10,4 +10,8 @@ needs:
 run:
   cwd: "${source.dir}"
   runs: |
-    cmake -S . -B build -DCMAKE_INSTALL_PREFIX="$PREFIX" -DCMAKE_INSTALL_LIBDIR="${LIBDIR##*/}" ${inputs.args}
+    cross=""
+    if [ "$RPMX_CROSS" = 1 ]; then
+      cross="-DCMAKE_TOOLCHAIN_FILE=$RPMX_CMAKE_TOOLCHAIN_FILE"
+    fi
+    cmake -S . -B build -DCMAKE_INSTALL_PREFIX="$PREFIX" -DCMAKE_INSTALL_LIBDIR="${LIBDIR##*/}" $cross ${inputs.args}

@@ -12,6 +12,12 @@ use crate::commands::{load_plan, resolve_policy, PlanPolicy, PolicyInput, Source
 pub struct SourceRequest<'a> {
     pub file: &'a Path,
     pub arch: &'a str,
+    /// Where steps execute: the host for a cross build, the target otherwise.
+    pub exec: rpmx_core::arch::Arch,
+    /// Target sysroot, mounted read-only, for a cross build.
+    pub sysroot: Option<&'a Path>,
+    /// Toolchain commands for a cross build.
+    pub cross: Option<&'a rpmx_core::guest::CrossToolchain>,
     pub runner: &'a str,
     pub policy: PlanPolicy<'a>,
     pub profile: Option<&'a Path>,
@@ -44,6 +50,9 @@ pub fn run(args: SourceArgs, pipeline_dir: Option<&Path>) -> Result<PathBuf, Err
     execute(SourceRequest {
         file: &args.file,
         arch: &args.arch,
+        exec: rpmx_core::arch::Arch::parse(&args.arch)?,
+        sysroot: None,
+        cross: None,
         runner: &args.runner,
         policy,
         profile: args.policy.profile.as_deref(),
@@ -191,6 +200,9 @@ pub fn execute(request: SourceRequest<'_>) -> Result<PathBuf, Error> {
         step_timeout: request.step_timeout,
         root: selected_root,
         appliance: appliance.as_deref(),
+        exec: request.exec,
+        sysroot: request.sysroot,
+        cross: request.cross,
         runner: request.runner,
         recipe_dir: request.file.parent().unwrap_or_else(|| Path::new(".")),
     })?;

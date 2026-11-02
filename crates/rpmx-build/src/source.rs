@@ -26,6 +26,9 @@ pub struct SourceOptions<'a> {
     pub step_timeout: NonZeroU64,
     pub root: Option<&'a Path>,
     pub appliance: Option<&'a Path>,
+    pub exec: rpmx_base::arch::Arch,
+    pub sysroot: Option<&'a Path>,
+    pub cross: Option<&'a rpmx_base::guest::CrossToolchain>,
     pub runner: &'a str,
     pub recipe_dir: &'a Path,
 }
@@ -74,10 +77,10 @@ pub fn assemble(options: SourceOptions<'_>) -> Result<PathBuf> {
     let sandbox = Sandbox::new(SandboxConfig {
         runner: options.runner.parse::<RunnerKind>()?,
         host: host_arch,
-        exec: target_arch,
+        exec: options.exec,
         target: target_arch,
-        sysroot: None,
-        cross: None,
+        sysroot: options.sysroot,
+        cross: options.cross,
         workspace: options.workspace,
         stage: options.stage,
         root: options.root,

@@ -1,13 +1,17 @@
 name: meson/setup
-version: 1
+version: 2
 summary: Configure a Meson project
 inputs:
   args:
     type: list<string>
     default: []
 needs:
-  tools: [meson]
+  tools: [meson, ninja]
 run:
   cwd: "${source.dir}"
   runs: |
-    meson setup build --prefix="$PREFIX" --libdir="${LIBDIR##*/}" --buildtype=release ${inputs.args}
+    cross=""
+    if [ "$RPMX_CROSS" = 1 ]; then
+      cross="--cross-file=$RPMX_MESON_CROSS_FILE"
+    fi
+    meson setup build --prefix="$PREFIX" --libdir="${LIBDIR##*/}" --buildtype=release $cross ${inputs.args}

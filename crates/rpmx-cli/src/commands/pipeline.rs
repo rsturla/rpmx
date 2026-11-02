@@ -19,6 +19,14 @@ pub struct BuildPipeline<'a> {
     pub file: &'a Path,
     pub output: &'a Path,
     pub arch: &'a str,
+    /// Where steps execute: the host for a cross build, the target otherwise.
+    pub exec: rpmx_core::arch::Arch,
+    /// Target sysroot, mounted read-only, for a cross build.
+    pub sysroot: Option<&'a Path>,
+    /// Toolchain commands for a cross build.
+    pub cross: Option<&'a rpmx_core::guest::CrossToolchain>,
+    /// Package names in the target sysroot, which satisfy host dependencies.
+    pub sysroot_packages: Option<&'a std::collections::BTreeSet<String>>,
     pub runner: &'a str,
     pub policy: PlanPolicy<'a>,
     pub profile: Option<&'a Path>,
@@ -70,6 +78,9 @@ impl BuildPipeline<'_> {
         source::execute(SourceRequest {
             file: self.file,
             arch: self.arch,
+            exec: self.exec,
+            sysroot: self.sysroot,
+            cross: self.cross,
             runner: self.runner,
             policy: self.policy,
             profile: self.profile,
@@ -116,6 +127,10 @@ impl BuildPipeline<'_> {
                     file: &srpm_path,
                     output: self.output,
                     arch: self.arch,
+                    exec: self.exec,
+                    sysroot: self.sysroot,
+                    cross: self.cross,
+                    sysroot_packages: self.sysroot_packages,
                     runner: self.runner,
                     cell: Some(&planned.id),
                     policy: self.policy,

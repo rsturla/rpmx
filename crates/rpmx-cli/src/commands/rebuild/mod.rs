@@ -23,6 +23,15 @@ pub struct RebuildRequest<'a> {
     pub file: &'a Path,
     pub output: &'a Path,
     pub arch: &'a str,
+    /// Where steps execute: the host for a cross build, the target otherwise.
+    pub exec: rpmx_core::arch::Arch,
+    /// Target sysroot, mounted read-only, for a cross build.
+    pub sysroot: Option<&'a Path>,
+    /// Toolchain commands for a cross build.
+    pub cross: Option<&'a rpmx_core::guest::CrossToolchain>,
+    /// Package names in the target sysroot. Host dependencies are satisfied
+    /// by either root.
+    pub sysroot_packages: Option<&'a std::collections::BTreeSet<String>>,
     pub runner: &'a str,
     pub cell: Option<&'a str>,
     pub policy: PlanPolicy<'a>,
@@ -70,6 +79,10 @@ pub fn run(args: RebuildArgs) -> Result<Vec<PathBuf>, Error> {
         file: &args.file,
         output: &output,
         arch: &args.arch,
+        exec: rpmx_core::arch::Arch::parse(&args.arch)?,
+        sysroot: None,
+        cross: None,
+        sysroot_packages: None,
         runner: &args.runner,
         cell: args.cell.as_deref(),
         policy: resolved.plan_policy(),
@@ -143,10 +156,10 @@ pub fn execute(request: RebuildRequest<'_>) -> Result<RebuildOutput, Error> {
     let sandbox = Sandbox::new(SandboxConfig {
         runner: runner_kind,
         host: host_arch,
-        exec: target_arch,
+        exec: request.exec,
         target: target_arch,
-        sysroot: None,
-        cross: None,
+        sysroot: request.sysroot,
+        cross: request.cross,
         workspace: &build,
         stage: &stage,
         root: assembled_root.as_deref(),
@@ -162,6 +175,12 @@ pub fn execute(request: RebuildRequest<'_>) -> Result<RebuildOutput, Error> {
 
     {
         let _phase = rpmx_core::output::enter_phase("build");
+        // A host dependency is satisfied by either root: the build root holds
+        // native packages, the sysroot holds target ones.
+        let mut available = locked_packages.clone();
+        if let Some(sysroot) = request.sysroot_packages {
+            available.extend(sysroot.iter().cloned());
+        }
         check_build_tools(
             &sandbox,
             &build,
@@ -169,7 +188,7 @@ pub fn execute(request: RebuildRequest<'_>) -> Result<RebuildOutput, Error> {
             &cell.host,
             &cell.target,
             &cell.test_tools,
-            &locked_packages,
+            &available,
         )?;
         rpmx_core::output::phase("build", format!("{arch} · {} steps", cell.pipeline.len()));
         let total_steps = cell.pipeline.len();
@@ -205,6 +224,34 @@ pub fn execute(request: RebuildRequest<'_>) -> Result<RebuildOutput, Error> {
         })?;
 
         sandbox.sync()?;
+    }
+
+    if let Some(sysroot) = request.sysroot {
+        let missing = rpmx_core::elf::unresolved_needed(&stage, sysroot).map_err(|error| {
+            Error::new(
+                codes::BUILD_009,
+                format!("cannot inspect the staged payload: {error}"),
+            )
+        })?;
+        if !missing.is_empty() {
+            let detail = missing
+                .iter()
+                .take(10)
+                .map(|(file, needed)| format!("{file}: {needed}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            return Err(Error::new(
+                codes::BUILD_009,
+                format!(
+                    "the staged payload needs libraries that are not in the {} sysroot: {detail}",
+                    arch
+                ),
+            ));
+        }
+        rpmx_core::output::phase(
+            "link",
+            format!("{arch} · every DT_NEEDED resolves inside the sysroot"),
+        );
     }
 
     let package_started = std::time::Instant::now();

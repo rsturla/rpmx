@@ -79,6 +79,8 @@ pub mod codes {
         BUILD_006 = "RPMX-BUILD-006",
         /// Build-time test setup or execution failed (test root, stage, install, argv, or I/O).
         BUILD_007 = "RPMX-BUILD-007",
+        BUILD_008 = "RPMX-BUILD-008",
+        BUILD_009 = "RPMX-BUILD-009",
         /// Cache garbage collection was refused without references, or the cache cannot be read.
         CACHE_001 = "RPMX-CACHE-001",
         /// A cache entry could not be removed during garbage collection.

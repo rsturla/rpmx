@@ -497,6 +497,32 @@ fn build_one(
         None
     };
     let verify_digest = automatic.is_none();
+    // A cross build runs its steps natively in the host-architecture build
+    // root, with the target root mounted as a sysroot.
+    let host_arch = rpmx_core::arch::Arch::current()?;
+    let target_arch = rpmx_core::arch::Arch::parse(arch)?;
+    let sysroot: Option<std::path::PathBuf> = automatic
+        .as_ref()
+        .and_then(|root| root.sysroot.as_ref())
+        .map(|sysroot| sysroot.root.clone());
+    let cross = automatic.as_ref().and_then(|root| root.cross.clone());
+    let sysroot_packages: Option<std::collections::BTreeSet<String>> = automatic
+        .as_ref()
+        .and_then(|root| root.sysroot.as_ref())
+        .map(|sysroot| {
+            sysroot
+                .document
+                .packages
+                .values()
+                .flatten()
+                .map(|package| package.name.clone())
+                .collect()
+        });
+    let exec = if sysroot.is_some() {
+        host_arch
+    } else {
+        target_arch
+    };
     let (root_lock, root) = match automatic {
         Some(root) => {
             crate::commands::autoroot::report_root(
@@ -532,7 +558,7 @@ fn build_one(
         lock: root_lock.as_deref(),
         root: root.as_deref(),
         allow_host: args.unsafe_host_root,
-        arch,
+        arch: exec.as_str(),
         verify_digest,
     })?;
 
@@ -565,6 +591,10 @@ fn build_one(
         file: &bundle.root,
         output: &output,
         arch,
+        exec,
+        sysroot: sysroot.as_deref(),
+        cross: cross.as_ref(),
+        sysroot_packages: sysroot_packages.as_ref(),
         runner: &args.runner,
         policy,
         profile,

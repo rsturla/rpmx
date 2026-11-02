@@ -83,6 +83,22 @@ impl Arch {
         }
     }
 
+    /// Whether the architecture is big-endian. Meson and pkg-config need it.
+    pub const fn is_big_endian(self) -> bool {
+        matches!(self, Self::S390x)
+    }
+
+    /// The architecture name Go uses (`GOARCH`).
+    pub const fn go_arch(self) -> &'static str {
+        match self {
+            Self::X86_64 => "amd64",
+            Self::Aarch64 => "arm64",
+            Self::Ppc64le => "ppc64le",
+            Self::S390x => "s390x",
+            Self::I686 => "386",
+        }
+    }
+
     /// The ELF `e_machine` value for this architecture.
     ///
     /// Used to reject a payload that does not match the package's target
@@ -181,5 +197,9 @@ mod tests {
         assert_eq!(Arch::Ppc64le.triple(), "powerpc64le-linux-gnu");
         assert_eq!(Arch::Aarch64.elf_machine(), 183);
         assert_eq!(Arch::X86_64.elf_machine(), 62);
+        assert!(Arch::S390x.is_big_endian());
+        assert!(!Arch::Ppc64le.is_big_endian());
+        assert_eq!(Arch::Aarch64.go_arch(), "arm64");
+        assert_eq!(Arch::X86_64.go_arch(), "amd64");
     }
 }
