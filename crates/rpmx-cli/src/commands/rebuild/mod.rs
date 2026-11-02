@@ -289,7 +289,11 @@ pub fn execute(request: RebuildRequest<'_>) -> Result<RebuildOutput, Error> {
         sandbox.sync()?;
     }
 
-    if let Some(sysroot) = effective_sysroot {
+    // The link-closure check runs against whatever root the package was
+    // built and linked in: the sysroot for cross, the build root otherwise.
+    // A host root is not a reliable index, so it is skipped.
+    let link_root = effective_sysroot.or(assembled_root.as_deref());
+    if let Some(sysroot) = link_root {
         let missing = rpmx_core::elf::unresolved_needed(&stage, sysroot).map_err(|error| {
             Error::new(
                 codes::BUILD_009,
@@ -306,13 +310,13 @@ pub fn execute(request: RebuildRequest<'_>) -> Result<RebuildOutput, Error> {
             return Err(Error::new(
                 codes::BUILD_009,
                 format!(
-                    "the staged payload needs libraries that are not in the {arch} sysroot: {detail}"
+                    "the staged payload needs libraries that are not in the {arch} root: {detail}"
                 ),
             ));
         }
         rpmx_core::output::phase(
             "link",
-            format!("{arch} · every DT_NEEDED resolves inside the sysroot"),
+            format!("{arch} · every DT_NEEDED resolves inside the root"),
         );
     }
 
