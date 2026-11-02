@@ -79,6 +79,18 @@ pub(super) fn prepare(
         .as_ref()
         .map(|(_, arch)| arch.clone())
         .unwrap_or_else(|| request.arch.to_string());
+    // The SRPM header is what `rpm` thinks the package is; packaging it for a
+    // different architecture would silently mislabel it.
+    let header_arch = rpmx_rpm::package_arch(request.file)?;
+    if header_arch != "noarch" && header_arch != target_arch {
+        return Err(Error::new(
+            codes::SRPM_006,
+            format!(
+                "the SRPM is for {header_arch}, but the build target is {target_arch}; \
+                 rebuild without --arch or pick the matching architecture"
+            ),
+        ));
+    }
     let signature_timestamp = crate::commands::signature_timestamp(
         request.signing.signing_timestamp,
         extracted.source_date_epoch,
