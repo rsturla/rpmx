@@ -130,12 +130,15 @@ fn extract_cpio<R: Read>(payload: &mut R, dest: &Path, total: u64) -> Result<Vec
     let mut chunk = [0u8; 64 * 1024];
     let mut offset = 0u64;
     // First path seen for each cpio inode, so hardlink entries can be linked
-    // to it instead of materialising a second copy.
+    // to it instead of materialising a second copy. Paths are stored
+    // relative: an archive may still replace an ancestor with a symlink
+    // between entries, so a stored absolute path must never be used without
+    // re-resolving it under the destination.
     let mut links: std::collections::BTreeMap<usize, std::path::PathBuf> =
         std::collections::BTreeMap::new();
-    // Hardlink members whose data-bearing entry has not been seen yet. Real
-    // payloads do not always put it first.
-    let mut pending: std::collections::BTreeMap<usize, Vec<std::path::PathBuf>> =
+    // Hardlink members whose data-bearing entry has not been seen yet, with
+    // the mode to apply if the group turns out to be empty.
+    let mut pending: std::collections::BTreeMap<usize, Vec<(std::path::PathBuf, usize)>> =
         std::collections::BTreeMap::new();
 
     loop {
@@ -255,15 +258,19 @@ fn extract_cpio<R: Read>(payload: &mut R, dest: &Path, total: u64) -> Result<Vec
                     discard(payload, padding)?;
                     match links.get(&inode) {
                         Some(first) => {
+                            let first = entry_path(&dest, first)?;
                             remove_existing(&target)?;
-                            std::fs::hard_link(first, &target).map_err(|error| {
+                            std::fs::hard_link(&first, &target).map_err(|error| {
                                 Error::new(
                                     codes::EXTRACT_006,
                                     format!("cannot hardlink {}: {error}", target.display()),
                                 )
                             })?;
                         }
-                        None => pending.entry(inode).or_default().push(target.clone()),
+                        None => pending
+                            .entry(inode)
+                            .or_default()
+                            .push((Path::new(relative).to_path_buf(), mode)),
                     }
                     files.push(relative.to_string());
                     offset = padded_end;
@@ -289,7 +296,8 @@ fn extract_cpio<R: Read>(payload: &mut R, dest: &Path, total: u64) -> Result<Vec
                 set_mode(&target, mode)?;
                 if links_count > 1 {
                     if let Some(waiting) = pending.remove(&inode) {
-                        for path in waiting {
+                        for (relative, _) in waiting {
+                            let path = entry_path(&dest, &relative)?;
                             remove_existing(&path)?;
                             std::fs::hard_link(&target, &path).map_err(|error| {
                                 Error::new(
@@ -299,7 +307,7 @@ fn extract_cpio<R: Read>(payload: &mut R, dest: &Path, total: u64) -> Result<Vec
                             })?;
                         }
                     }
-                    links.insert(inode, target);
+                    links.insert(inode, Path::new(relative).to_path_buf());
                 }
             }
             _ => {
@@ -312,11 +320,31 @@ fn extract_cpio<R: Read>(payload: &mut R, dest: &Path, total: u64) -> Result<Vec
         offset = padded_end;
     }
 
-    if let Some((_, waiting)) = pending.into_iter().next() {
-        return Err(Error::new(
-            codes::EXTRACT_004,
-            format!("hardlink group has no data entry: {}", waiting[0].display()),
-        ));
+    // A hardlinked empty file has no data-bearing member: every entry carries
+    // size zero. Materialise the group instead of rejecting it.
+    for (_, waiting) in pending {
+        let Some(((first_relative, mode), rest)) = waiting.split_first() else {
+            continue;
+        };
+        let first = entry_path(&dest, first_relative)?;
+        remove_existing(&first)?;
+        std::fs::File::create(&first).map_err(|error| {
+            Error::new(
+                codes::EXTRACT_006,
+                format!("cannot create {}: {error}", first.display()),
+            )
+        })?;
+        set_mode(&first, *mode)?;
+        for (relative, _) in rest {
+            let path = entry_path(&dest, relative)?;
+            remove_existing(&path)?;
+            std::fs::hard_link(&first, &path).map_err(|error| {
+                Error::new(
+                    codes::EXTRACT_006,
+                    format!("cannot hardlink {}: {error}", path.display()),
+                )
+            })?;
+        }
     }
 
     Ok(files)
@@ -381,6 +409,22 @@ fn resolve_parent(dest: &Path, relative: &Path) -> Result<std::path::PathBuf> {
         }
     }
     Ok(current)
+}
+
+/// The confined path for a recorded relative entry.
+///
+/// Stored paths are never trusted as-is: an archive can replace an ancestor
+/// with a symlink after the entry was recorded, so the parent is resolved
+/// again against the current filesystem.
+fn entry_path(dest: &Path, relative: &Path) -> Result<std::path::PathBuf> {
+    let parent = resolve_parent(dest, relative.parent().unwrap_or_else(|| Path::new("")))?;
+    let name = relative.file_name().ok_or_else(|| {
+        Error::new(
+            codes::EXTRACT_005,
+            format!("unsafe stored path '{}'", relative.display()),
+        )
+    })?;
+    Ok(parent.join(name))
 }
 
 fn skip_data<R: Read>(payload: &mut R, mut bytes: u64) -> Result<()> {
@@ -758,5 +802,57 @@ mod tests {
             & 0o777;
         assert_eq!(mode, 0o700);
         assert_eq!(std::fs::read(dest.join("priv/file")).expect("file"), b"x");
+    }
+
+    #[test]
+    fn hardlinked_empty_files_are_materialised() {
+        use std::os::unix::fs::MetadataExt;
+
+        let root = tempfile::tempdir().expect("work");
+        let dest = root.path().join("dest");
+        let mut cpio = cpio_entry_with("usr/bin/e1", b"", 0, 0o100644, 7, 2);
+        cpio.extend(cpio_entry_with("usr/bin/e2", b"", 0, 0o100644, 7, 2));
+        cpio.extend(cpio_trailer());
+
+        super::extract_decoded(std::io::Cursor::new(cpio), &dest).expect("extract");
+        let a = dest.join("usr/bin/e1");
+        let b = dest.join("usr/bin/e2");
+        assert_eq!(std::fs::read(&a).expect("e1"), b"");
+        assert_eq!(std::fs::read(&b).expect("e2"), b"");
+        assert_eq!(
+            std::fs::metadata(&a).expect("a").ino(),
+            std::fs::metadata(&b).expect("b").ino()
+        );
+    }
+
+    #[test]
+    fn a_recorded_hardlink_path_is_re_resolved_before_use() {
+        let root = tempfile::tempdir().expect("work");
+        let dest = root.path().join("dest");
+        let outside = root.path().join("outside");
+        std::fs::create_dir_all(&outside).expect("outside");
+        let victim = outside.join("member");
+        std::fs::write(&victim, b"original").expect("victim");
+
+        // The member is recorded while `esc` is a real directory, then the
+        // archive swaps it for an escaping symlink before the data entry
+        // flushes the group.
+        let mut cpio = cpio_entry_with("esc/member", b"", 0, 0o100644, 42, 2);
+        let link = outside.to_str().expect("utf8");
+        cpio.extend(cpio_entry_with(
+            "esc",
+            link.as_bytes(),
+            link.len(),
+            0o120777,
+            9,
+            1,
+        ));
+        cpio.extend(cpio_entry_with("data", b"PWNED", 5, 0o100644, 42, 2));
+        cpio.extend(cpio_trailer());
+
+        let error = super::extract_decoded(std::io::Cursor::new(cpio), &dest)
+            .expect_err("a swapped parent must be rejected at use time");
+        assert_eq!(error.code, "RPMX-EXTRACT-005");
+        assert_eq!(std::fs::read(&victim).expect("victim"), b"original");
     }
 }
