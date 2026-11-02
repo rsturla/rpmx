@@ -280,6 +280,10 @@ pub struct StepsShowArgs {
 
 #[derive(Debug, clap::Args)]
 pub struct DoctorArgs {
+    /// Also report whether this recipe's build root and cross sysroot are
+    /// cached, so an offline build will work.
+    #[arg(long, value_name = "FILE")]
+    pub recipe: Option<PathBuf>,
     /// Exit non-zero when a check fails.
     #[arg(long)]
     pub strict: bool,

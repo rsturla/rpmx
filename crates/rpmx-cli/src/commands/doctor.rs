@@ -144,6 +144,10 @@ pub fn run(args: DoctorArgs) -> Result<(), rpmx_core::Error> {
         });
     }
 
+    if let Some(recipe) = &args.recipe {
+        checks.extend(recipe_checks(recipe)?);
+    }
+
     let failed = missing_core || checks.iter().any(|check| check.status == "fail");
 
     if rpmx_core::output::json() {
@@ -236,6 +240,75 @@ fn cache_dir() -> PathBuf {
         return PathBuf::from(home).join(".cache").join("rpmx");
     }
     PathBuf::from(".rpmx-cache")
+}
+
+/// Report whether the roots a recipe needs are already cached.
+///
+/// This is the offline-readiness question a cross build asks: both the host
+/// build root and the target sysroot must be assembled before `--offline`
+/// can work.
+fn recipe_checks(recipe: &std::path::Path) -> Result<Vec<Check>, rpmx_core::Error> {
+    use crate::commands::autoroot;
+
+    let bundle = rpmx_core::load_recipe_bundle(recipe)?;
+    let arch = autoroot::declared_arch(&bundle.recipe, &bundle.root, None)?
+        .unwrap_or_else(|| rpmx_core::arch::native_arch().to_string());
+    let policy = crate::commands::PlanPolicy {
+        dist_tag: None,
+        build_release: None,
+    };
+    let (_, plan) = crate::commands::load_plan(recipe, &arch, None, false, policy)?;
+    let Some(requirement) =
+        autoroot::requirement(&bundle.recipe, &plan, &bundle.root, None, &arch)?
+    else {
+        return Ok(vec![Check {
+            name: "build root",
+            status: "warn",
+            version: None,
+            detail: Some("the recipe declares no build.root".to_string()),
+        }]);
+    };
+
+    let mut checks = Vec::new();
+    let cached = autoroot::cached_lock_for_requirement(&requirement.digest).is_some();
+    checks.push(Check {
+        name: "build root",
+        status: if cached { "ok" } else { "warn" },
+        version: None,
+        detail: Some(format!(
+            "{} · {} · {}",
+            requirement.name,
+            requirement
+                .profile
+                .archs
+                .first()
+                .map(String::as_str)
+                .unwrap_or("?"),
+            if cached {
+                "cached"
+            } else {
+                "not cached; the first build resolves it"
+            }
+        )),
+    });
+    if let Some(sysroot) = &requirement.sysroot {
+        let cached = autoroot::cached_lock_for_requirement(&sysroot.digest).is_some();
+        checks.push(Check {
+            name: "cross sysroot",
+            status: if cached { "ok" } else { "warn" },
+            version: None,
+            detail: Some(format!(
+                "{} · {arch} · {}",
+                sysroot.name,
+                if cached {
+                    "cached"
+                } else {
+                    "not cached; the first build assembles it"
+                }
+            )),
+        });
+    }
+    Ok(checks)
 }
 
 #[cfg(test)]
