@@ -77,6 +77,12 @@ pub mod codes {
         BUILD_005 = "RPMX-BUILD-005",
         /// The build or rebuild staging and source directories or files cannot be created or written.
         BUILD_006 = "RPMX-BUILD-006",
+        /// A component inventory or bundled declaration cannot be read, parsed or written.
+        BUNDLED_001 = "RPMX-BUNDLED-001",
+        /// Two explicit bundled declarations disagree about a component's version.
+        BUNDLED_002 = "RPMX-BUNDLED-002",
+        /// A bundled declaration directory is malformed or targets an unknown output.
+        BUNDLED_003 = "RPMX-BUNDLED-003",
         /// Build-time test setup or execution failed (test root, stage, install, argv, or I/O).
         BUILD_007 = "RPMX-BUILD-007",
         /// A staged ELF object does not match the package target architecture.

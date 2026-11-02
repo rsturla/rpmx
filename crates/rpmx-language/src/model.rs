@@ -428,6 +428,22 @@ pub struct Matrix {
     pub release_suffix: Option<bool>,
 }
 
+/// One explicitly declared bundled component for an output.
+///
+/// Explicit declarations are always generic. Ecosystems with machine-readable
+/// vendor metadata are discovered by catalogers instead; a recipe cannot forge
+/// `golang(...)` or `crate(...)` evidence here.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct BundledDeclaration {
+    pub name: String,
+    #[serde(default)]
+    pub version: Option<String>,
+    /// SPDX license expression for the SBOM. It does not change the provide.
+    #[serde(default)]
+    pub license: Option<String>,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Output {
@@ -444,6 +460,8 @@ pub struct Output {
     pub files: Files,
     #[serde(default)]
     pub dependencies: OutputDependencies,
+    #[serde(default)]
+    pub bundled: Vec<BundledDeclaration>,
     #[serde(default)]
     pub generators: OutputGenerators,
     #[serde(default)]
@@ -482,6 +500,9 @@ pub struct OutputGenerators {
     /// `debuginfo(build-id)` provides.
     #[serde(default = "enabled")]
     pub debuginfo: bool,
+    /// `bundled(...)` provides from the component inventory.
+    #[serde(default = "enabled")]
+    pub bundled: bool,
     /// Generated dependencies to drop, by exact string.
     #[serde(default)]
     pub exclude: Vec<String>,
@@ -498,6 +519,7 @@ impl Default for OutputGenerators {
             desktop: true,
             metainfo: true,
             debuginfo: true,
+            bundled: true,
             exclude: Vec::new(),
         }
     }

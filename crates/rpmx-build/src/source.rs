@@ -93,6 +93,9 @@ pub fn assemble(options: SourceOptions<'_>) -> Result<PathBuf> {
         timeout: options.step_timeout,
     })?;
 
+    let cells = options.plan.cells.iter().collect::<Vec<_>>();
+    rpmx_components::prepare_output_dirs(options.workspace, &cells)?;
+
     apply_patches(
         &sandbox,
         options.recipe_dir,
@@ -115,6 +118,9 @@ pub fn assemble(options: SourceOptions<'_>) -> Result<PathBuf> {
             format!("cannot create {}: {error}", options.output.display()),
         )
     })?;
+    let inventory = rpmx_components::discover(options.workspace, &cells)?;
+    inventory.warn_declared();
+    inventory.write(&options.output.join(rpmx_components::INVENTORY_FILE))?;
     let snapshot = options.output.join("RPMX-SOURCE.tar.gz");
     pack_snapshot(options.workspace, &snapshot, options.source_date_epoch)?;
     Ok(snapshot)

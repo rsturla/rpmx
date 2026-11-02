@@ -157,6 +157,7 @@ pub(crate) fn expand_outputs(
             ));
         }
         validate_file_metadata(&output)?;
+        validate_bundled(&output)?;
         planned.push(PlannedOutput {
             name: output.name,
             summary: output.summary,
@@ -172,11 +173,62 @@ pub(crate) fn expand_outputs(
             directories: output.files.directories,
             attributes: output.files.attributes,
             dependencies: output.dependencies.to_set(),
+            bundled: output.bundled,
             generators: output.generators,
             scriptlets: output.scriptlets,
         });
     }
     Ok(planned)
+}
+
+fn validate_bundled(output: &Output) -> Result<()> {
+    let mut seen = BTreeSet::new();
+    for declaration in &output.bundled {
+        let name = declaration.name.trim();
+        let valid_name = name == declaration.name
+            && !name.is_empty()
+            && name
+                .chars()
+                .next()
+                .is_some_and(|ch| ch.is_ascii_alphanumeric())
+            && name
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '+' | '.' | '_' | '-'));
+        if !valid_name {
+            return Err(Error::new(
+                codes::OUTPUT_004,
+                format!(
+                    "output '{}' has invalid bundled name '{}'",
+                    output.name, declaration.name
+                ),
+            ));
+        }
+        if !seen.insert(name.to_string()) {
+            return Err(Error::new(
+                codes::OUTPUT_005,
+                format!(
+                    "output '{}' declares bundled component '{}' twice",
+                    output.name, name
+                ),
+            ));
+        }
+        if let Some(version) = &declaration.version {
+            if version.is_empty()
+                || version.chars().any(|ch| {
+                    ch.is_whitespace() || ch.is_control() || matches!(ch, '=' | '(' | ')' | '/')
+                })
+            {
+                return Err(Error::new(
+                    codes::OUTPUT_004,
+                    format!(
+                        "output '{}' has invalid version '{}' for bundled component '{}'",
+                        output.name, version, name
+                    ),
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn expand_tests(

@@ -106,11 +106,12 @@ diagnostics. `explain --json`, `test --install-dir --json`, `doctor --json` and
 | `<VAR>` named by `--signing-passphrase-env` / `--passphrase-env` | Signing key passphrase. |
 
 Steps see a fixed environment: `PATH`, `HOME`, `TMPDIR`, `LANG`, `LC_ALL`,
-`TZ`, `SOURCE_DATE_EPOCH`, `SRC`, `BUILD`, `STAGE`, `PREFIX`, `LIBDIR`,
-`JOBS`, `RPMX_HOST_ARCH`, `RPMX_EXEC_ARCH`, `RPMX_TARGET_ARCH`,
-`RPMX_CROSS`, `RPMX_EMULATED` and `RPMX_DEBUGINFO`. The host environment is
-not inherited. `SOURCE_DATE_EPOCH`, `SRC`, `BUILD`, `STAGE`, `PREFIX`,
-`LIBDIR` and `JOBS` are reserved and cannot be set by a step.
+`TZ`, `SOURCE_DATE_EPOCH`, `SRC`, `BUILD`, `STAGE`, `RPMX_BUNDLED_DIR`,
+`PREFIX`, `LIBDIR`, `JOBS`, `RPMX_HOST_ARCH`, `RPMX_EXEC_ARCH`,
+`RPMX_TARGET_ARCH`, `RPMX_CROSS` and `RPMX_EMULATED`. The host environment is
+not inherited. `SOURCE_DATE_EPOCH`, `SRC`, `BUILD`, `STAGE`,
+`RPMX_BUNDLED_DIR`, `PREFIX`, `LIBDIR` and `JOBS` are reserved and cannot be
+set by a step.
 
 `RPMX_CROSS=1` means the target is produced by a host-native cross toolchain.
 `RPMX_EMULATED=1` means the steps themselves are emulated (binfmt). A cross
@@ -151,8 +152,8 @@ A profile with a `cross` block also exports:
 - `stage: package` tests, ABI tests and reproducibility tests are not
   implemented.
 - Rich dependencies are not implemented; weak dependencies are.
-- Automatic `bundled(...)` provides and the component inventory are designed
-  but not implemented; see
+- Java, Conan and vcpkg component catalogers are not implemented. Go, Cargo,
+  npm, Yarn, pnpm, Python, Ruby, PHP and explicit C/C++ declarations are. See
   [`../contributing/19-bundled-provides.md`](../contributing/19-bundled-provides.md).
 - SELinux labels, `%ghost`, `%lang` and arbitrary xattrs are not implemented;
   file capabilities are.

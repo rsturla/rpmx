@@ -16,6 +16,7 @@ pub(super) struct RebuildState {
     pub(super) work: crate::commands::WorkDir,
     pub(super) extracted: rpmx_rpm::extract::ExtractedSrpm,
     pub(super) package_lock: rpmx_core::srpm::PackageLock,
+    pub(super) bundled: rpmx_core::components::Inventory,
     pub(super) recipe: rpmx_core::Recipe,
     pub(super) cell: rpmx_core::plan::PlannedCell,
     pub(super) build: PathBuf,
@@ -107,6 +108,9 @@ pub(super) fn prepare(
     if snapshot.exists() {
         rpmx_core::source::unpack_snapshot(&snapshot, &build)?;
     }
+    let bundled = rpmx_core::components::Inventory::read(
+        &work.path().join(rpmx_core::components::INVENTORY_FILE),
+    )?;
 
     let pipelines = work.path().join("pipelines");
     for (name, content) in &extracted.steps {
@@ -337,6 +341,7 @@ pub(super) fn prepare(
         work,
         extracted,
         package_lock,
+        bundled,
         recipe: bundle.recipe,
         cell: selected_cell,
         build,

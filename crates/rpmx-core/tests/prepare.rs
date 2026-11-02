@@ -75,6 +75,7 @@ fn source_package_contains_recipe_lock_manifest_and_sources() {
     assert!(files.contains(&"package.yaml"));
     assert!(files.contains(&"package.lock.json"));
     assert!(files.contains(&"RPMX-MANIFEST.json"));
+    assert!(files.contains(&"RPMX-BUNDLED.json"));
     assert!(files.contains(&"demo-1.0.tar.gz"));
 }
 
@@ -113,6 +114,7 @@ fn binary_package_prepares_one_package_per_output() {
         stage: stage.path(),
         arch: "x86_64",
         source_date_epoch: 1_700_000_000,
+        bundled: &rpmx_components::Inventory::empty(),
     })
     .expect("prepare RPMs");
 
@@ -218,6 +220,7 @@ outputs:
         stage: stage.path(),
         arch: "x86_64",
         source_date_epoch: 1_700_000_000,
+        bundled: &rpmx_components::Inventory::empty(),
     })
     .expect("prepare");
 
@@ -275,6 +278,7 @@ outputs:
         stage: stage.path(),
         arch: "x86_64",
         source_date_epoch: 1_700_000_000,
+        bundled: &rpmx_components::Inventory::empty(),
     })
     .expect("prepare");
 
@@ -426,6 +430,7 @@ outputs:
         stage: root,
         arch: "x86_64",
         source_date_epoch: 1_700_000_000,
+        bundled: &rpmx_components::Inventory::empty(),
     })
     .expect("prepare");
     let demo = packages
@@ -533,6 +538,7 @@ outputs:
         stage: root,
         arch: "x86_64",
         source_date_epoch: 1_700_000_000,
+        bundled: &rpmx_components::Inventory::empty(),
     })
     .expect("prepare");
     let dependencies = &packages[0].dependencies;
@@ -640,4 +646,174 @@ fn a_cross_source_package_embeds_the_sysroot_and_toolchain() {
         .files
         .iter()
         .all(|file| file.path != "sysroot.lock.json"));
+}
+
+#[test]
+fn explicit_and_discovered_components_become_bundled_provides() {
+    let (recipe, plan) = common::load(RECIPE);
+    let stage = common::stage();
+    let source = tempfile::tempdir().expect("source");
+    fs::create_dir_all(source.path().join(".rpmx/bundled/demo")).expect("bundled dir");
+    fs::write(
+        source.path().join(".rpmx/bundled/demo/zlib.list"),
+        "zlib=1.3.1\n",
+    )
+    .expect("manual list");
+    fs::create_dir_all(source.path().join("vendor")).expect("vendor");
+    fs::write(
+        source.path().join("vendor/modules.txt"),
+        "# github.com/spf13/cobra v1.8.1\n",
+    )
+    .expect("modules");
+
+    let inventory =
+        rpmx_core::components::discover(source.path(), &[&plan.cells[0]]).expect("inventory");
+    let packages = prepare_binary_packages(BinaryPackageOptions {
+        recipe: &recipe,
+        cell: &plan.cells[0],
+        stage: stage.path(),
+        arch: "x86_64",
+        source_date_epoch: 1_700_000_000,
+        bundled: &inventory,
+    })
+    .expect("prepare RPMs");
+
+    let provides = &packages[0].dependencies.provides;
+    assert!(
+        provides.contains(&"bundled(zlib) = 1.3.1".to_string()),
+        "{provides:?}"
+    );
+    assert!(
+        provides.contains(&"bundled(golang(github.com/spf13/cobra)) = 1.8.1".to_string()),
+        "{provides:?}"
+    );
+    // The doc output does not carry the component.
+    assert!(!packages[1]
+        .dependencies
+        .provides
+        .iter()
+        .any(|provide| provide.starts_with("bundled(")));
+}
+
+#[test]
+fn the_bundled_generator_can_be_disabled_per_output() {
+    let recipe = r#"
+schema: 1
+package:
+  name: demo
+  version: "1.0"
+  release: 1
+  summary: demo
+  license: MIT
+outputs:
+  - name: demo
+    files:
+      include: ["/usr/bin/**", "/usr/share/doc/**"]
+    generators:
+      bundled: false
+"#;
+    let (recipe, plan) = common::load(recipe);
+    let stage = common::stage();
+    let source = tempfile::tempdir().expect("source");
+    fs::create_dir_all(source.path().join("vendor")).expect("vendor");
+    fs::write(
+        source.path().join("vendor/modules.txt"),
+        "# github.com/spf13/cobra v1.8.1\n",
+    )
+    .expect("modules");
+
+    let inventory =
+        rpmx_core::components::discover(source.path(), &[&plan.cells[0]]).expect("inventory");
+    let packages = prepare_binary_packages(BinaryPackageOptions {
+        recipe: &recipe,
+        cell: &plan.cells[0],
+        stage: stage.path(),
+        arch: "x86_64",
+        source_date_epoch: 1_700_000_000,
+        bundled: &inventory,
+    })
+    .expect("prepare RPMs");
+
+    assert!(!packages[0]
+        .dependencies
+        .provides
+        .iter()
+        .any(|provide| provide.starts_with("bundled(")));
+}
+
+#[test]
+fn generators_exclude_drops_a_bundled_provide() {
+    let recipe = r#"
+schema: 1
+package:
+  name: demo
+  version: "1.0"
+  release: 1
+  summary: demo
+  license: MIT
+outputs:
+  - name: demo
+    files:
+      include: ["/usr/bin/**", "/usr/share/doc/**"]
+    generators:
+      exclude:
+        - "bundled(crate(serde)) = 1.0.203"
+"#;
+    let (recipe, plan) = common::load(recipe);
+    let stage = common::stage();
+    let source = tempfile::tempdir().expect("source");
+    fs::create_dir_all(source.path().join("vendor")).expect("vendor");
+    fs::write(
+        source.path().join("Cargo.lock"),
+        r#"version = 4
+
+[[package]]
+name = "serde"
+version = "1.0.203"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+"#,
+    )
+    .expect("cargo lock");
+
+    let inventory =
+        rpmx_core::components::discover(source.path(), &[&plan.cells[0]]).expect("inventory");
+    let packages = prepare_binary_packages(BinaryPackageOptions {
+        recipe: &recipe,
+        cell: &plan.cells[0],
+        stage: stage.path(),
+        arch: "x86_64",
+        source_date_epoch: 1_700_000_000,
+        bundled: &inventory,
+    })
+    .expect("prepare RPMs");
+
+    assert!(!packages[0]
+        .dependencies
+        .provides
+        .iter()
+        .any(|provide| provide == "bundled(crate(serde)) = 1.0.203"));
+}
+
+#[test]
+fn a_padded_bundled_name_is_rejected_at_plan_time() {
+    let error = common::try_load(
+        r#"
+schema: 1
+package:
+  name: demo
+  version: "1.0"
+  release: 1
+  summary: demo
+  license: MIT
+outputs:
+  - name: demo
+    files:
+      include: ["/usr/bin/**"]
+    bundled:
+      - name: "zlib "
+        version: "1.3.1"
+"#,
+    )
+    .expect_err("padded name");
+    assert_eq!(error.code, "RPMX-OUTPUT-004");
 }

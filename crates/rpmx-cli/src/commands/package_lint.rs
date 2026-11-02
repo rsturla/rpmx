@@ -21,6 +21,18 @@ pub struct Finding {
 pub fn check(packages: &[BinaryPackageSpec]) -> Vec<Finding> {
     let mut findings = Vec::new();
     for package in packages {
+        for require in &package.dependencies.requires {
+            if require.starts_with("bundled(") {
+                findings.push(Finding {
+                    path: package.name.clone(),
+                    severity: Severity::Error,
+                    message: format!(
+                        "package '{}' requires '{require}'; bundled() is a provide, not a dependency",
+                        package.name
+                    ),
+                });
+            }
+        }
         if package.files.is_empty() {
             continue;
         }
@@ -117,7 +129,35 @@ pub fn enforce(findings: &[Finding]) -> Result<(), Error> {
 
 #[cfg(test)]
 mod tests {
-    use super::{check_file, Severity};
+    use super::{check, check_file, Severity};
+    use rpmx_core::package_spec::BinaryPackageSpec;
+
+    #[test]
+    fn a_bundled_provide_must_not_be_required() {
+        let package = BinaryPackageSpec {
+            name: "demo".to_string(),
+            version: "1.0".to_string(),
+            release: "1".to_string(),
+            epoch: None,
+            arch: "x86_64".to_string(),
+            summary: "demo".to_string(),
+            license: "MIT".to_string(),
+            description: "demo".to_string(),
+            url: None,
+            source_rpm: "demo-1.0-1.src.rpm".to_string(),
+            source_date_epoch: 1,
+            files: Vec::new(),
+            directories: Vec::new(),
+            dependencies: rpmx_core::model::DependencySet {
+                requires: vec!["bundled(zlib)".to_string()],
+                ..Default::default()
+            },
+            scriptlets: Default::default(),
+        };
+        assert!(check(&[package])
+            .iter()
+            .any(|finding| finding.severity == Severity::Error));
+    }
 
     #[test]
     fn world_writable_and_setuid_files_fail() {

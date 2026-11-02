@@ -1,0 +1,18 @@
+[package]
+name = "rpmx-components"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Component inventory and bundled-provides discovery for rpmx."
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+rpmx-base = { path = "../rpmx-base" }
+rpmx-language = { path = "../rpmx-language" }
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml_ng.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

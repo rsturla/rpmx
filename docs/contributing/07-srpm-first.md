@@ -66,6 +66,7 @@ curl-8.11.1-1.src.rpm
 ├── package.lock.json           # lock
 ├── RPMX-MANIFEST.json          # digests, plan, toolchain, provenance
 ├── RPMX-STEPS.json             # resolved local step definitions
+├── RPMX-BUNDLED.json           # component inventory for bundled provides
 └── ...                         # additional flat source files
 ```
 
@@ -87,7 +88,11 @@ This is the bridge between the RPM world and the typed model:
   ],
   "steps": [
     { "name": "acme/strip", "digest": "sha512:..." }
-  ]
+  ],
+  "bundled": {
+    "path": "RPMX-BUNDLED.json",
+    "digest": "sha512:..."
+  }
 }
 ```
 
@@ -104,13 +109,14 @@ A native `rpmx` SRPM must contain exactly these classes of files. Anything else 
 | `package.lock.json` | yes | Lock. |
 | `RPMX-MANIFEST.json` | yes | Digests, source-date-epoch, generator version. |
 | `RPMX-STEPS.json` | if local steps | Map of step name to step definition, so the rebuild is offline. |
+| `RPMX-BUNDLED.json` | yes | Component inventory, including explicit C/C++ declarations. Empty when nothing is bundled. |
 
 Source files with a reserved name (`package.yaml`, `package.lock.json`,
-`RPMX-MANIFEST.json`, `RPMX-STEPS.json`) are rejected. The payload is flat
+`RPMX-MANIFEST.json`, `RPMX-STEPS.json`, `RPMX-BUNDLED.json`) are rejected. The payload is flat
 because stock `rpm2cpio`/`rpm2archive` mishandle relative subdirectories in a
 source package; source tarballs are flat in real SRPMs too.
 
-Vendored dependencies and deterministic generated sources are part of the source snapshot; they are not separate payload classes. The snapshot digest and generator versions are recorded in `RPMX-MANIFEST.json`.
+Vendored dependencies and deterministic generated sources are part of the source snapshot; they are not separate payload classes. The snapshot digest and generator versions are recorded in `RPMX-MANIFEST.json`. The derived component inventory is `RPMX-BUNDLED.json`; its schema, catalogers and manual declaration rules are in [`19-bundled-provides.md`](19-bundled-provides.md).
 
 Forbidden in the SRPM:
 

@@ -131,6 +131,7 @@ pub fn execute(request: RebuildRequest<'_>) -> Result<RebuildOutput, Error> {
         work,
         extracted,
         package_lock,
+        mut bundled,
         recipe,
         cell,
         build,
@@ -203,6 +204,22 @@ pub fn execute(request: RebuildRequest<'_>) -> Result<RebuildOutput, Error> {
         jobs,
         timeout: step_timeout,
     })?;
+
+    // The source snapshot carries declaration directories for every matrix
+    // cell. The SRPM inventory already includes their source-time components;
+    // only the selected cell's build-time declarations apply to this rebuild.
+    let declaration_root = build.join(rpmx_core::components::BUNDLED_DIR);
+    match std::fs::remove_dir_all(&declaration_root) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(Error::new(
+                codes::BUNDLED_003,
+                format!("cannot clear {}: {error}", declaration_root.display()),
+            ))
+        }
+    }
+    rpmx_core::components::prepare_output_dirs(&build, &[&cell])?;
 
     {
         let _phase = rpmx_core::output::enter_phase("build");
@@ -288,6 +305,10 @@ pub fn execute(request: RebuildRequest<'_>) -> Result<RebuildOutput, Error> {
         sandbox.sync()?;
     }
 
+    let build_inventory = rpmx_core::components::discover(&build, &[&cell])?;
+    bundled.merge(build_inventory)?;
+    bundled.warn_declared();
+
     // The link-closure check runs against whatever root the package was
     // built and linked in: the sysroot for cross, the build root otherwise.
     // A host root is not a reliable index, so it is skipped.
@@ -326,6 +347,7 @@ pub fn execute(request: RebuildRequest<'_>) -> Result<RebuildOutput, Error> {
         stage: &stage,
         arch,
         source_date_epoch: extracted.source_date_epoch,
+        bundled: &bundled,
     })?;
     rpmx_core::output::phase(
         "package",

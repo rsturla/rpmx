@@ -39,7 +39,21 @@ pub struct SourcePackageOptions<'a> {
 pub fn prepare_source_packages(
     options: SourcePackageOptions<'_>,
 ) -> Result<Vec<SourcePackageSpec>> {
-    let snapshot = srpm::snapshot_dir(options.sources)?;
+    let inventory_path = options.sources.join(rpmx_components::INVENTORY_FILE);
+    let inventory_text = if inventory_path.exists() {
+        let text = std::fs::read_to_string(&inventory_path).map_err(|error| {
+            Error::new(
+                codes::SRPM_006,
+                format!("cannot read {}: {error}", inventory_path.display()),
+            )
+        })?;
+        rpmx_components::Inventory::from_json(&text)?.to_json()?
+    } else {
+        rpmx_components::Inventory::empty().to_json()?
+    };
+    let inventory_digest = srpm::sha512_hex(inventory_text.as_bytes());
+    let mut snapshot = srpm::snapshot_dir(options.sources)?;
+    snapshot.retain(|source| source.path != rpmx_components::INVENTORY_FILE);
     for source in &snapshot {
         if matches!(
             source.path.as_str(),
@@ -139,6 +153,7 @@ pub fn prepare_source_packages(
         let manifest = srpm::manifest_json(
             &recipe_digest,
             &lock_digest,
+            &inventory_digest,
             options.source_date_epoch,
             &snapshot,
             &steps,
@@ -159,6 +174,11 @@ pub fn prepare_source_packages(
             SourcePackageFile {
                 path: "RPMX-MANIFEST.json".to_string(),
                 data: manifest.into_bytes(),
+                mode: 0o644,
+            },
+            SourcePackageFile {
+                path: rpmx_components::INVENTORY_FILE.to_string(),
+                data: inventory_text.as_bytes().to_vec(),
                 mode: 0o644,
             },
         ];

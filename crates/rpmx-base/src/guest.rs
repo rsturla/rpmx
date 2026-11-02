@@ -5,6 +5,8 @@
 
 pub const BUILD: &str = "/tmp/build";
 pub const STAGE: &str = "/tmp/stage";
+/// Root for explicit bundled declarations written by source/build steps.
+pub const BUNDLED_DIR: &str = "/tmp/build/.rpmx/bundled";
 pub const PREFIX: &str = "/usr";
 pub const LIBDIR: &str = "/usr/lib64";
 

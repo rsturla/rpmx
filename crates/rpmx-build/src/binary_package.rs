@@ -14,6 +14,7 @@ pub struct BinaryPackageOptions<'a> {
     pub stage: &'a Path,
     pub arch: &'a str,
     pub source_date_epoch: u32,
+    pub bundled: &'a rpmx_components::Inventory,
 }
 
 pub fn prepare_binary_packages(
@@ -81,6 +82,15 @@ pub fn prepare_binary_packages(
             generators::generate(&files, options.arch, &sonames, &planned.generators);
         let mut provides = planned.dependencies.provides.clone();
         provides.extend(generated_provides);
+        if planned.generators.bundled {
+            provides.extend(
+                options
+                    .bundled
+                    .provides_for(planned)
+                    .into_iter()
+                    .filter(|provide| !planned.generators.exclude.contains(provide)),
+            );
+        }
         let mut requires = planned.dependencies.requires.clone();
         requires.extend(generated_requires);
         let provides = sorted_unique(provides);
@@ -282,6 +292,7 @@ outputs:
             stage: stage.path(),
             arch: other.as_str(),
             source_date_epoch: 1,
+            bundled: &rpmx_components::Inventory::empty(),
         })
         .expect_err("a host binary must not be packaged as a foreign one");
         assert_eq!(error.code, "RPMX-BUILD-008");
@@ -295,6 +306,7 @@ outputs:
             stage: stage.path(),
             arch: host.as_str(),
             source_date_epoch: 1,
+            bundled: &rpmx_components::Inventory::empty(),
         })
         .expect("host payload");
     }

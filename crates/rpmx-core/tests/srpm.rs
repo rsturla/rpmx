@@ -78,6 +78,7 @@ fn lock_and_manifest_are_deterministic() {
     let manifest = manifest_json(
         "sha512:recipe",
         "sha512:lock",
+        "sha512:bundled",
         1_700_000_000,
         &files,
         &steps,

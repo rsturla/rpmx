@@ -1841,6 +1841,7 @@ dependencies = [
  "goblin",
  "liblzma",
  "rpmx-base",
+ "rpmx-components",
  "rpmx-language",
  "rpmx-root",
  "rpmx-runner",
@@ -1856,12 +1857,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "rpmx-components"
+version = "0.0.0"
+dependencies = [
+ "rpmx-base",
+ "rpmx-language",
+ "serde",
+ "serde_json",
+ "serde_yaml_ng",
+ "tempfile",
+]
+
+[[package]]
 name = "rpmx-core"
 version = "0.0.0"
 dependencies = [
  "flate2",
  "rpmx-base",
  "rpmx-build",
+ "rpmx-components",
  "rpmx-language",
  "rpmx-root",
  "rpmx-runner",

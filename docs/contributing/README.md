@@ -28,6 +28,7 @@ in [`../usage/`](../usage/). The short contribution checklist is
 | [`16-qemu-appliance.md`](16-qemu-appliance.md) | Separating the QEMU transport appliance from the build root: design and plan. |
 | [`17-ssh-runner.md`](17-ssh-runner.md) | Running locked-root builds on any SSH-reachable host, with podman, bubblewrap, chroot or explicit host execution as the adapter: design, decisions and tickets. |
 | [`18-multi-arch-and-binfmt.md`](18-multi-arch-and-binfmt.md) | Multi-architecture builds, bubblewrap + binfmt execution, the qemu VM path, parallel scheduling, lock schema 2 and per-arch logging: implementation plan. |
+| [`19-bundled-provides.md`](19-bundled-provides.md) | Bundled provides from a component inventory: catalogers, naming policy, output attribution, explicit C/C++ declarations and the SRPM inventory. |
 
 ## Working on the code
 

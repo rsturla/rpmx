@@ -296,12 +296,14 @@ fn package_stage(
     let mut written = Vec::new();
     for cell in &cells {
         let package_started = std::time::Instant::now();
+        let bundled = rpmx_core::components::Inventory::from_cells(&[*cell]);
         let packages = prepare_binary_packages(BinaryPackageOptions {
             recipe: &bundle.recipe,
             cell,
             stage,
             arch,
             source_date_epoch,
+            bundled: &bundled,
         })?;
         rpmx_core::output::phase(
             "package",

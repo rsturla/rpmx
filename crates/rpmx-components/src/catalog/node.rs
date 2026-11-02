@@ -1,0 +1,228 @@
+//! npm `package-lock.json` and installed `node_modules` catalogers.
+
+use std::collections::BTreeSet;
+use std::path::Path;
+
+use rpmx_base::error::{codes, Error, Result};
+use serde_json::Value;
+
+use crate::discover::{read_text, Cataloger, DiscoveryContext};
+use crate::model::{Component, Ecosystem, Scope, Source};
+
+pub(crate) struct NodeLock;
+
+impl Cataloger for NodeLock {
+    fn name(&self) -> &'static str {
+        "node/package-lock"
+    }
+
+    fn detect(&self, context: &DiscoveryContext<'_>) -> Result<Vec<Component>> {
+        let mut components = Vec::new();
+        for file in context.files() {
+            if file.file_name().and_then(|name| name.to_str()) != Some("package-lock.json") {
+                continue;
+            }
+            let root = file.parent();
+            let installed = root.is_some_and(|parent| parent.join("node_modules").is_dir());
+            let text = read_text(file)?;
+            components.extend(parse_lock(
+                &text,
+                &context.relative(file),
+                if installed {
+                    Scope::Installed
+                } else {
+                    Scope::Declared
+                },
+                context.auto_outputs(),
+                root,
+            )?);
+        }
+        Ok(components)
+    }
+}
+
+pub(crate) struct NodeInstalled;
+
+impl Cataloger for NodeInstalled {
+    fn name(&self) -> &'static str {
+        "node/installed"
+    }
+
+    fn detect(&self, context: &DiscoveryContext<'_>) -> Result<Vec<Component>> {
+        let mut components = Vec::new();
+        for directory in context.dirs().iter().filter(|directory| {
+            directory
+                .file_name()
+                .is_some_and(|name| name == "node_modules")
+        }) {
+            components.extend(parse_installed(
+                directory,
+                &context.relative(directory),
+                context.auto_outputs(),
+            )?);
+        }
+        Ok(components)
+    }
+}
+
+fn parse_lock(
+    text: &str,
+    evidence: &str,
+    scope: Scope,
+    outputs: &BTreeSet<String>,
+    root: Option<&Path>,
+) -> Result<Vec<Component>> {
+    let value: Value = serde_json::from_str(text).map_err(|error| {
+        Error::new(
+            codes::BUNDLED_001,
+            format!("invalid package-lock.json {evidence}: {error}"),
+        )
+    })?;
+    let mut packages = Vec::new();
+
+    if let Some(packages_value) = value.get("packages").and_then(Value::as_object) {
+        for (path, package) in packages_value {
+            if path.is_empty()
+                || package
+                    .get("link")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+                || package.get("dev").and_then(Value::as_bool).unwrap_or(false)
+            {
+                continue;
+            }
+            let Some(name) = path.rsplit_once("node_modules/").map(|(_, name)| name) else {
+                continue;
+            };
+            if name.is_empty() {
+                continue;
+            }
+            let Some(version) = package.get("version").and_then(Value::as_str) else {
+                continue;
+            };
+            if scope == Scope::Installed && root.is_some_and(|root| !root.join(path).is_dir()) {
+                continue;
+            }
+            packages.push(
+                Component::new(
+                    Ecosystem::Npm,
+                    name,
+                    Some(version.to_string()),
+                    Source::Auto,
+                    scope,
+                    outputs.iter().cloned(),
+                )
+                .with_evidence("node/package-lock", evidence),
+            );
+        }
+    } else if let Some(dependencies) = value.get("dependencies").and_then(Value::as_object) {
+        parse_v1(dependencies, evidence, scope, outputs, root, &mut packages);
+    }
+
+    Ok(packages)
+}
+
+fn parse_v1(
+    dependencies: &serde_json::Map<String, Value>,
+    evidence: &str,
+    scope: Scope,
+    outputs: &BTreeSet<String>,
+    root: Option<&Path>,
+    packages: &mut Vec<Component>,
+) {
+    for (name, package) in dependencies {
+        if package.get("dev").and_then(Value::as_bool).unwrap_or(false) {
+            continue;
+        }
+        let installed = scope != Scope::Installed
+            || root.is_none_or(|root| root.join("node_modules").join(name).is_dir());
+        if installed {
+            if let Some(version) = package.get("version").and_then(Value::as_str) {
+                packages.push(
+                    Component::new(
+                        Ecosystem::Npm,
+                        name,
+                        Some(version.to_string()),
+                        Source::Auto,
+                        scope,
+                        outputs.iter().cloned(),
+                    )
+                    .with_evidence("node/package-lock", evidence),
+                );
+            }
+        }
+        if let Some(nested) = package.get("dependencies").and_then(Value::as_object) {
+            parse_v1(nested, evidence, scope, outputs, root, packages);
+        }
+    }
+}
+
+fn parse_installed(
+    node_modules: &Path,
+    evidence: &str,
+    outputs: &BTreeSet<String>,
+) -> Result<Vec<Component>> {
+    let mut components = Vec::new();
+    for entry in rpmx_base::io::sorted_entries(node_modules, codes::BUNDLED_003)? {
+        let path = entry.path();
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if !entry.file_type().is_ok_and(|kind| kind.is_dir()) || name == ".bin" {
+            continue;
+        }
+        if name.starts_with('@') {
+            for scoped in rpmx_base::io::sorted_entries(&path, codes::BUNDLED_003)? {
+                if scoped.file_type().is_ok_and(|kind| kind.is_dir()) {
+                    read_package(&scoped.path(), evidence, outputs, &mut components)?;
+                }
+            }
+        } else {
+            read_package(&path, evidence, outputs, &mut components)?;
+        }
+    }
+    Ok(components)
+}
+
+fn read_package(
+    directory: &Path,
+    evidence: &str,
+    outputs: &BTreeSet<String>,
+    components: &mut Vec<Component>,
+) -> Result<()> {
+    let manifest = directory.join("package.json");
+    if !manifest.exists() {
+        return Ok(());
+    }
+    let text = read_text(&manifest)?;
+    let value: Value = serde_json::from_str(&text).map_err(|error| {
+        Error::new(
+            codes::BUNDLED_001,
+            format!("invalid {}: {error}", manifest.display()),
+        )
+    })?;
+    let Some(name) = value.get("name").and_then(Value::as_str) else {
+        return Ok(());
+    };
+    let Some(version) = value.get("version").and_then(Value::as_str) else {
+        return Ok(());
+    };
+    let relative = format!(
+        "{evidence}/{}/package.json",
+        directory
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("package")
+    );
+    components.push(
+        Component::new(
+            Ecosystem::Npm,
+            name,
+            Some(version.to_string()),
+            Source::Auto,
+            Scope::Installed,
+            outputs.iter().cloned(),
+        )
+        .with_evidence("node/installed", &relative),
+    );
+    Ok(())
+}

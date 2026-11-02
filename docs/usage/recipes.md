@@ -192,8 +192,65 @@ outputs:
 ```
 
 The keys are `elf`, `pkgconfig`, `script`, `python`, `perl`, `desktop`,
-`metainfo` and `debuginfo`; all default to `true`. `elf` also controls the
-`.so` symlink requirement.
+`metainfo`, `debuginfo` and `bundled`; all default to `true`. `elf` also
+controls the `.so` symlink requirement.
+
+#### 5.3.2 Bundled components
+
+`bundled(...)` provides describe code that is vendored into the package. They
+are discovered from vendor metadata, not from the payload:
+
+| Evidence | Generated |
+|---|---|
+| `vendor/modules.txt` | `bundled(golang(<module>)) = <version>` |
+| `Cargo.lock` with a `vendor/` directory | `bundled(crate(<crate>)) = <version>` |
+| `package-lock.json` with `node_modules/` | `bundled(nodejs-<module>) = <version>` |
+| `yarn.lock` (classic or Berry) with an installed tree or cache | `bundled(nodejs-<module>) = <version>` |
+| `pnpm-lock.yaml` with `node_modules/` | `bundled(nodejs-<module>) = <version>` |
+| Python `.dist-info`/`.egg-info` metadata, or `vendored.txt` | `bundled(python3dist(<name>)) = <version>` |
+| Ruby `Gemfile.lock` with `vendor/bundle`, or a vendored gemspec | `bundled(rubygem-<name>) = <version>` |
+| PHP `composer.lock` with `vendor/`, or `vendor/composer/installed.json` | `bundled(php-composer(<vendor>/<name>)) = <version>` |
+
+Java, Conan and vcpkg catalogers are planned; their evidence is described in
+the contributor document.
+
+A lockfile without its vendor tree is only a declaration, not evidence that the
+code is bundled, so it does not produce a provide.
+
+C and C++ have no reliable vendor manifest. Declare them explicitly when the
+version is known in the recipe:
+
+```yaml
+outputs:
+  - name: libfoo
+    bundled:
+      - name: zlib
+        version: "1.3.1"
+        license: Zlib
+      - name: libpng
+        version: "1.6.43"
+```
+
+When the version is computed during the build, write a declaration file. The
+engine creates the per-output directory and exports `RPMX_BUNDLED_DIR`:
+
+```yaml
+build:
+  pipeline:
+    - name: declare-bundled-zlib
+      runs: |
+        version=$(sed -n 's/^#define ZLIB_VERSION "\(.*\)"/\1/p' \
+          third_party/zlib/zlib.h)
+        printf 'zlib=%s\n' "$version" \
+          > "$RPMX_BUNDLED_DIR/libfoo/zlib.list"
+```
+
+Each line is `name` or `name=version`; blank lines and `#` comments are
+ignored. A manually declared generic component may have only one version per
+output, and a version that conflicts with a discovered component is an error.
+
+The full policy, including output attribution and conflict handling, is in
+[`../contributing/19-bundled-provides.md`](../contributing/19-bundled-provides.md).
 
 ### 5.4 Sources
 

@@ -334,6 +334,7 @@ pub struct SourceManifest {
     pub lock: SourceManifestLock,
     pub sources: Vec<SourceManifestSource>,
     pub steps: Vec<LockStep>,
+    pub bundled: SourceManifestLock,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub root_lock: Option<LockRoot>,
 }
@@ -399,6 +400,7 @@ pub fn load_lock_file(path: &Path) -> Result<PackageLock> {
 pub fn manifest_json(
     recipe_digest: &str,
     lock_digest: &str,
+    bundled_digest: &str,
     source_date_epoch: u32,
     sources: &[SnapshotFile],
     steps: &[LockStep],
@@ -431,6 +433,10 @@ pub fn manifest_json(
                 digest: step.digest.clone(),
             })
             .collect(),
+        bundled: SourceManifestLock {
+            path: "RPMX-BUNDLED.json".to_string(),
+            digest: bundled_digest.to_string(),
+        },
         root_lock: root_lock.cloned(),
     };
     json(value)

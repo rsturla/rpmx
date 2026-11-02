@@ -5,6 +5,18 @@ does not promise a stable schema or CLI yet.
 
 ## Unreleased
 
+- Bundled components are discovered from vendor metadata and emitted as
+  `bundled(...)` provides. Go reads `vendor/modules.txt`, Cargo reads
+  `Cargo.lock` when a `vendor/` tree exists, and Node projects read
+  `package-lock.json`, `yarn.lock` (classic and Berry) or `pnpm-lock.yaml`
+  plus their installed tree/cache. Python reads `.dist-info`/`.egg-info`
+  metadata and `vendored.txt`, Ruby reads `Gemfile.lock` and vendored
+  gemspecs, and PHP reads `composer.lock` or `vendor/composer/installed.json`.
+  Locks without a vendor tree or installed payload are warnings, not provides.
+  C and C++ declare components with `outputs[].bundled` or a build-time
+  `$RPMX_BUNDLED_DIR/<output>/*.list`; the engine creates the per-output
+  directories and rejects conflicting versions. The inventory is embedded in
+  the SRPM as `RPMX-BUNDLED.json` and covered by `RPMX-MANIFEST.json`.
 - Debug information is opt-in per recipe, as in melange: `uses: debuginfo`
   replaces `strip`, keeps debug sections under `$PREFIX/lib/debug`, and the
   recipe declares the output that claims them. The step fails when no staged

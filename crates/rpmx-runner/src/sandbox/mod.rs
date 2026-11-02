@@ -21,6 +21,7 @@ const RESERVED_ENV: &[&str] = &[
     "SRC",
     "BUILD",
     "STAGE",
+    "RPMX_BUNDLED_DIR",
     "PREFIX",
     "LIBDIR",
     "JOBS",
@@ -350,6 +351,10 @@ pub fn environment(config: &SandboxConfig<'_>) -> Vec<(&'static str, String)> {
         ("SRC", rpmx_base::guest::BUILD.to_string()),
         ("BUILD", rpmx_base::guest::BUILD.to_string()),
         ("STAGE", rpmx_base::guest::STAGE.to_string()),
+        (
+            "RPMX_BUNDLED_DIR",
+            rpmx_base::guest::BUNDLED_DIR.to_string(),
+        ),
         ("PREFIX", config.prefix.to_string()),
         ("LIBDIR", config.libdir.to_string()),
         ("JOBS", config.jobs.to_string()),
@@ -571,6 +576,7 @@ fn expand(value: &str, sandbox: &Sandbox<'_>) -> String {
     value
         .replace("${source.dir}", rpmx_base::guest::BUILD)
         .replace("${build.dir}", rpmx_base::guest::BUILD)
+        .replace("${bundled.dir}", rpmx_base::guest::BUNDLED_DIR)
         .replace("${stage}", rpmx_base::guest::STAGE)
         .replace("${prefix}", sandbox.config.prefix)
         .replace("${libdir}", sandbox.config.libdir)

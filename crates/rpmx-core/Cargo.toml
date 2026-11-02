@@ -10,6 +10,7 @@ authors.workspace = true
 [dependencies]
 rpmx-base = { path = "../rpmx-base" }
 rpmx-language = { path = "../rpmx-language" }
+rpmx-components = { path = "../rpmx-components" }
 rpmx-store = { path = "../rpmx-store" }
 rpmx-runner = { path = "../rpmx-runner" }
 rpmx-root = { path = "../rpmx-root" }
