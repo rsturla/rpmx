@@ -180,6 +180,12 @@ pub fn execute(request: RebuildRequest<'_>) -> Result<RebuildOutput, Error> {
         let mut available = locked_packages.clone();
         if let Some(sysroot) = request.sysroot_packages {
             available.extend(sysroot.iter().cloned());
+            // The sysroot lock records resolved package names, not virtual
+            // provides, so a name such as `zlib-devel` may resolve to
+            // `zlib-ng-compat-devel`. Resolution already proved the declared
+            // dependency exists; the link-closure check proves the library
+            // does, which is the stronger claim.
+            available.extend(cell.host.iter().chain(cell.target.iter()).cloned());
         }
         check_build_tools(
             &sandbox,

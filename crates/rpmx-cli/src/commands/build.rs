@@ -67,7 +67,13 @@ fn resolve_arches(args: &BuildArgs) -> Result<Vec<String>, Error> {
     let mut expanded = Vec::new();
     let mut all = false;
     if args.arch.is_empty() {
-        expanded.push(rpmx_core::arch::native_arch().to_string());
+        // A profile that declares exactly one target is explicit about what
+        // this recipe builds; a cross profile must not silently fall back to
+        // the host architecture.
+        match profile_arches(args)? {
+            Some(allowed) if allowed.len() == 1 => expanded.extend(allowed),
+            _ => expanded.push(rpmx_core::arch::native_arch().to_string()),
+        }
     } else {
         for value in &args.arch {
             if value == "all" {

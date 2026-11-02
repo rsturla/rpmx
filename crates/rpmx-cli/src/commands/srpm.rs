@@ -21,6 +21,8 @@ pub struct SrpmRequest<'a> {
     pub source_date_epoch: Option<u32>,
     pub cell: Option<&'a str>,
     pub root_lock: Option<&'a Path>,
+    /// Where the build steps will run: the host for a cross build.
+    pub exec: rpmx_core::arch::Arch,
     pub signing: &'a OptionalSigningArgs,
     pub quiet: bool,
     pub pipeline_dir: Option<&'a Path>,
@@ -82,6 +84,7 @@ pub fn run(args: SrpmArgs, pipeline_dir: Option<&Path>) -> Result<Vec<PathBuf>, 
         source_date_epoch: args.source_date_epoch,
         cell: args.cell.as_deref(),
         root_lock: args.root_lock.as_deref(),
+        exec: rpmx_core::arch::Arch::parse(&args.arch)?,
         signing: &args.signing,
         quiet: args.quiet,
         pipeline_dir,
@@ -97,7 +100,7 @@ pub fn execute(request: SrpmRequest<'_>) -> Result<Vec<PathBuf>, Error> {
     let root_lock = match request.root_lock {
         Some(path) => {
             let lock = load_lock(path)?;
-            lock.require_target(request.arch)?;
+            lock.require_target(request.exec.as_str())?;
             lock.require_digest().map_err(|error| {
                 Error::new(error.code, format!("{}: {}", path.display(), error.message))
             })?;

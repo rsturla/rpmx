@@ -146,7 +146,8 @@ pub fn execute(request: SourceRequest<'_>) -> Result<PathBuf, Error> {
         lock: root_lock,
         root,
         allow_host: request.unsafe_host_root,
-        arch: request.arch,
+        // The root is where steps run: the build root for a cross build.
+        arch: request.exec.as_str(),
         verify_digest,
     })?;
     let selected = match &root_request {

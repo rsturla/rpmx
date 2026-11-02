@@ -190,17 +190,20 @@ pub(super) fn prepare(
             }
         }
         let runner_kind = request.runner.parse::<rpmx_core::runner::RunnerKind>()?;
+        // The root is where steps run: a cross build resolves and verifies a
+        // host-architecture build root, not the target root.
+        let exec = request.exec.as_str();
         let needs_appliance = rpmx_core::appliance::Policy::Auto.should_resolve(
             rpmx_core::Arch::current()?,
-            rpmx_core::Arch::parse(request.arch)?,
+            request.exec,
             runner_kind,
         );
         let path = match request.root {
             Some(root_path) if request.verify_root => {
-                RootSelection::verify(lock, root_path, request.arch)?.path
+                RootSelection::verify(lock, root_path, exec)?.path
             }
             Some(root_path) => {
-                lock.require_target(request.arch)?;
+                lock.require_target(exec)?;
                 lock.require_digest()?;
                 std::fs::canonicalize(root_path).map_err(|error| {
                     Error::new(
@@ -214,7 +217,7 @@ pub(super) fn prepare(
                     lock,
                     request.cache,
                     request.offline,
-                    request.arch,
+                    exec,
                     needs_appliance,
                     request.runner_asset_root,
                     allow_appliance_resolve,

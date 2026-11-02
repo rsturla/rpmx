@@ -116,6 +116,7 @@ impl BuildPipeline<'_> {
                 source_date_epoch: self.source_date_epoch,
                 cell: Some(&planned.id),
                 root_lock: self.root_lock,
+                exec: self.exec,
                 signing: self.signing,
                 quiet: true,
                 pipeline_dir: self.pipeline_dir,
