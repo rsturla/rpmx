@@ -50,6 +50,10 @@ rpmx test --install-dir packages/x86_64 --json --junit report.xml
 Test roots are disposable and use real dependency checking. If the test root
 cannot install its packages, add the missing runtime packages to
 `build.dependencies.tests` or pass `--test-root-lock` on `build`/`rebuild`.
+The one exception is a package that deliberately replaces what the test root
+already has, such as a distribution default implementation: that install is
+retried without dependency checking and a warning names the replacement. A
+genuinely missing requirement still fails the build.
 
 ### Ship a test root
 

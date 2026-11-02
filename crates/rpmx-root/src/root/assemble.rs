@@ -361,6 +361,7 @@ pub(crate) fn verify_installed(
         root,
         image,
         target,
+        nodeps: false,
         mode: super::container::OfflineRootMode::Query,
     })?;
     if !output.status.success() {

@@ -122,13 +122,27 @@ pub fn prepare(options: TestRootOptions<'_>) -> Result<PreparedTestRoot> {
             format!("cannot resolve {}: {error}", rpms_dir.display()),
         )
     })?;
-    let output =
+    let install = |nodeps: bool| {
         crate::root::container::run_offline_root(crate::root::container::OfflineRootCommand {
             root: &root_path,
             image,
             target,
+            nodeps,
             mode: crate::root::container::OfflineRootMode::Install { rpms: &rpms_dir },
-        })?;
+        })
+    };
+    let mut output = install(false)?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        if is_replacement_conflict(&stderr) {
+            rpmx_base::output::warning(
+                "test-root",
+                "the package under test conflicts with a package the test root \
+                 already has; replacing it for the test run",
+            );
+            output = install(true)?;
+        }
+    }
     if !output.status.success() {
         return Err(Error::new(
             codes::BUILD_007,
@@ -164,6 +178,20 @@ pub fn prepare(options: TestRootOptions<'_>) -> Result<PreparedTestRoot> {
 /// (`zlib` resolves to `zlib-ng-compat`), which the lock records under the
 /// provider's name. Only the fixed base environment is checked by name, so a
 /// pinned root stays usable without guessing provider names.
+/// Whether an install failure is a replacement conflict rather than a missing
+/// requirement.
+///
+/// A package under test may deliberately replace what the test root already
+/// has, for example a package that provides the same library as the
+/// distribution's default implementation. rpm reports that as a conflict, and
+/// installing with `--nodeps` resolves it. A genuine missing requirement must
+/// stay an error, so a failure that mentions one never takes the retry.
+fn is_replacement_conflict(stderr: &str) -> bool {
+    let conflict = stderr.contains("conflicts with");
+    let missing = stderr.contains("is needed by") || stderr.contains("Requires:");
+    conflict && !missing
+}
+
 fn check_lock(path: &Path, lock: &RootLock, _required: &[String], archs: &[String]) -> Result<()> {
     let arch = archs
         .first()
@@ -193,4 +221,33 @@ fn check_lock(path: &Path, lock: &RootLock, _required: &[String], archs: &[Strin
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_replacement_conflict;
+
+    #[test]
+    fn a_replacement_conflict_takes_the_retry_but_a_missing_requirement_does_not() {
+        // The zlib example: the test root's gcc pulls zlib-ng-compat, which
+        // the package under test replaces.
+        assert!(is_replacement_conflict(
+            "error: Failed dependencies:\n\
+             \tzlib(x86-64) conflicts with (installed) zlib-ng-compat-2.3.3-3.fc44.x86_64"
+        ));
+
+        assert!(!is_replacement_conflict(
+            "error: Failed dependencies:\n\
+             \tlibc.so.6()(64bit) is needed by zlib-1.3.1-1.fc44.x86_64"
+        ));
+
+        // Both in one report: the missing dependency is the real problem.
+        assert!(!is_replacement_conflict(
+            "error: Failed dependencies:\n\
+             \tzlib(x86-64) conflicts with (installed) zlib-ng-compat\n\
+             \tlibc.so.6()(64bit) is needed by zlib-1.3.1-1.fc44.x86_64"
+        ));
+
+        assert!(!is_replacement_conflict(""));
+    }
 }

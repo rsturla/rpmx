@@ -190,6 +190,8 @@ pub struct OfflineRootCommand<'a> {
     pub root: &'a Path,
     pub image: &'a str,
     pub target: rpmx_base::arch::Arch,
+    /// Skip dependency and conflict checks when installing.
+    pub nodeps: bool,
     pub mode: OfflineRootMode<'a>,
 }
 
@@ -210,6 +212,7 @@ pub fn run_offline_root(command: OfflineRootCommand<'_>) -> Result<std::process:
         .arg(format!("{}:/root:Z", command.root.display()));
     match &command.mode {
         OfflineRootMode::Install { rpms } => {
+            let nodeps = if command.nodeps { " --nodeps" } else { "" };
             process
                 .arg("--cap-add=CHOWN,DAC_OVERRIDE,FOWNER,FSETID,SETGID,SETUID,SYS_CHROOT")
                 .arg("-v")
@@ -218,7 +221,10 @@ pub fn run_offline_root(command: OfflineRootCommand<'_>) -> Result<std::process:
                 .args([
                     "sh",
                     "-c",
-                    "rpm --root /root -i --replacefiles --replacepkgs --oldpackage --noscripts /rpms/*.rpm",
+                    &format!(
+                        "rpm --root /root -i --replacefiles --replacepkgs \
+                         --oldpackage --noscripts{nodeps} /rpms/*.rpm"
+                    ),
                 ]);
         }
         OfflineRootMode::Query => {

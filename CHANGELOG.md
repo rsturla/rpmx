@@ -8,6 +8,11 @@ does not promise a stable schema or CLI yet.
 - `rpmx build` and `rpmx rebuild` run the recipe's tests by default, so a green
   build means tested. `--no-tests` opts out and `--skip-installed` runs only
   build-stage tests; `--run-tests` remains as an explicit no-op.
+- A test root that cannot install the built RPMs only because the package
+  under test conflicts with something already installed (for example a
+  distribution default implementation) is retried without dependency
+  checking, with a warning naming the replacement. A missing requirement still
+  fails.
 - Cross-compilation: a profile with a `cross` block builds a target
   architecture with a host-native toolchain against a target sysroot, with no
   emulation. `packages.install` is the sysroot; `cross.packages` is the build
