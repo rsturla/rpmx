@@ -135,8 +135,24 @@ pub fn run(args: LockArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
         .clone()
         .unwrap_or_else(|| default_path(&args.file));
 
+    let unpinned = lock
+        .root
+        .as_ref()
+        .is_some_and(|root| root.root_digest.is_none())
+        || lock
+            .sysroot
+            .as_ref()
+            .is_some_and(|root| root.root_digest.is_none());
+    if unpinned {
+        rpmx_core::output::warning(
+            "lock",
+            "a root is not assembled yet, so its digest is not pinned; \
+             run a build and `rpmx lock` again to pin it",
+        );
+    }
     if args.check {
-        let existing = read(&path)?;
+        let mut existing = read(&path)?;
+        adopt_unpinned(&mut existing, &lock);
         if existing != lock {
             return Err(Error::new(
                 codes::LOCK_002,
@@ -207,7 +223,11 @@ pub fn verify(
         .at(path.display().to_string()));
     }
     let unchanged = if check_root {
-        existing == actual
+        let mut expected = existing.clone();
+        {
+            adopt_unpinned(&mut expected, &actual);
+        }
+        expected == actual
     } else {
         let mut expected = existing.clone();
         let mut observed = actual.clone();
@@ -414,6 +434,29 @@ fn write(path: &Path, lock: &PackageLock) -> Result<(), Error> {
     })
 }
 
+/// Copy digests into a lock that never recorded them.
+///
+/// `rpmx lock` on a machine with a cold cache can only pin the requirement,
+/// not the closure. Comparing that `null` against a resolved digest would
+/// report drift for a root that never claimed one, so the missing side adopts
+/// the resolved value; a genuinely different digest still differs.
+fn adopt_unpinned(expected: &mut PackageLock, observed: &PackageLock) {
+    for (expected, observed) in [
+        (&mut expected.root, observed.root.as_ref()),
+        (&mut expected.sysroot, observed.sysroot.as_ref()),
+    ] {
+        let (Some(expected), Some(observed)) = (expected.as_mut(), observed) else {
+            continue;
+        };
+        if expected.closure_digest.is_none() {
+            expected.closure_digest = observed.closure_digest.clone();
+        }
+        if expected.root_digest.is_none() {
+            expected.root_digest = observed.root_digest.clone();
+        }
+    }
+}
+
 fn differences(old: &PackageLock, new: &PackageLock) -> String {
     let mut fields = Vec::new();
     if old.recipe_digest != new.recipe_digest {
@@ -456,7 +499,7 @@ fn encode(error: serde_json::Error) -> Error {
 
 #[cfg(test)]
 mod tests {
-    use super::{build, PackageLock, SCHEMA};
+    use super::{adopt_unpinned, build, LockedRoot, PackageLock, SCHEMA};
     use crate::commands::PlanPolicy;
     use std::fs;
 
@@ -509,6 +552,40 @@ outputs:
             None,
         )
         .expect("lock")
+    }
+
+    #[test]
+    fn an_unpinned_root_digest_is_adopted_and_a_real_difference_is_not() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let mut lock = fixture(&directory.path().join("package.yaml"));
+        let root = |arch: &str| LockedRoot {
+            profile: format!("{arch}-root"),
+            requirement: format!("sha512:{arch}"),
+            arch: Some(arch.to_string()),
+            closure_digest: Some("sha512:closure".to_string()),
+            root_digest: Some("sha512:root".to_string()),
+        };
+        lock.root = Some(root("x86_64"));
+        lock.sysroot = Some(root("aarch64"));
+
+        // A lock written with a cold cache has the requirement but no digest.
+        let mut unpinned = lock.clone();
+        for entry in [unpinned.root.as_mut(), unpinned.sysroot.as_mut()]
+            .into_iter()
+            .flatten()
+        {
+            entry.closure_digest = None;
+            entry.root_digest = None;
+        }
+        adopt_unpinned(&mut unpinned, &lock);
+        assert_eq!(unpinned, lock, "missing digests are not drift");
+
+        // A digest that was recorded and differs is still drift.
+        let mut drifted = lock.clone();
+        drifted.root.as_mut().expect("root").root_digest = Some("sha512:other".to_string());
+        let mut adopted = drifted.clone();
+        adopt_unpinned(&mut adopted, &lock);
+        assert_ne!(adopted, lock);
     }
 
     #[test]
