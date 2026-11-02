@@ -1,0 +1,71 @@
+# yaml-language-server: $schema=https://example.org/rpmx/package.schema.json
+#
+# A cgo fixture cross-compiled for aarch64. It proves that Go's cgo path works
+# with a cross toolchain: the cgo stubs are compiled by the target gcc against
+# the sysroot, and the final binary is dynamically linked to libz and libc.
+#
+# The build root gets `go` from the go/build step's needs.tools, so the profile
+# does not have to list it.
+
+schema: 1
+
+package:
+  name: hello-go-cgo
+  version: "1.0"
+  release: 1
+  summary: A cgo fixture cross-compiled for the target architecture
+  license: MIT
+  source-date-epoch: 1704067200
+
+source-assembly:
+  pipeline:
+    - runs: |
+        cat > main.go <<'COMPILE'
+        package main
+
+        /*
+        #cgo LDFLAGS: -lz
+        #include <zlib.h>
+        #include <string.h>
+        #include <stdlib.h>
+
+        static unsigned long compressed_size(const char *text) {
+            unsigned char out[256];
+            uLongf length = sizeof out;
+            if (compress2(out, &length, (const Bytef *)text, strlen(text) + 1, 9) != Z_OK) {
+                return 0;
+            }
+            return (unsigned long)length;
+        }
+        */
+        import "C"
+        import "fmt"
+        import "unsafe"
+
+        func main() {
+            text := C.CString("hello from cgo on a cross build")
+            defer C.free(unsafe.Pointer(text))
+            fmt.Printf("cgo ok, %d compressed bytes\n", C.compressed_size(text))
+        }
+        COMPILE
+        cat > go.mod <<'MOD'
+        module example.invalid/hello-go-cgo
+
+        go 1.21
+        MOD
+
+build:
+  root:
+    profile: ../fedora-44-cross.profile.yaml
+  dependencies:
+    host: [zlib-devel]
+  pipeline:
+    - uses: go/build
+      with:
+        output: /usr/bin/hello-go-cgo
+    - uses: strip
+
+outputs:
+  - name: hello-go-cgo
+    files:
+      include: ["/usr/bin/hello-go-cgo"]

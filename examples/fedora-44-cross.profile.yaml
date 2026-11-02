@@ -23,6 +23,7 @@ cross:
   # Fedora's gcc links -latomic_asneeded, a shim its native gcc provides and
   # the cross package does not. A toolchain quirk belongs in the profile.
   cflags: [-fno-link-libatomic]
+  ldflags: [-fno-link-libatomic]
 debuginfo: false
 sbom: true
 options:

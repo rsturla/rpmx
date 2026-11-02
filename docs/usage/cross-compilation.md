@@ -63,6 +63,11 @@ it does not discover the toolchain:
 | `PKG_CONFIG_SYSROOT_DIR`, `PKG_CONFIG_LIBDIR` | pkg-config aimed at the sysroot. |
 | `RPMX_CMAKE_TOOLCHAIN_FILE`, `RPMX_MESON_CROSS_FILE` | Generated toolchain files. |
 
+Go needs no special step: `GOOS`/`GOARCH`/`CGO_ENABLED` and the `CGO_*` flags
+make both a pure-Go and a cgo build produce a target binary. A cgo build links
+the sysroot's libraries and is checked by the link-closure rule like any other
+ELF object.
+
 The built-in configure steps already use them: autotools adds
 `--host=$RPMX_TARGET_TRIPLE`, CMake adds the toolchain file, Meson adds the
 cross file, and `strip` uses `$STRIP`/`$OBJCOPY`. A custom step only needs the

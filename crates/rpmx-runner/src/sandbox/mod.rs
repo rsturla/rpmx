@@ -365,6 +365,22 @@ fn environment(config: &SandboxConfig<'_>) -> Vec<(&'static str, String)> {
     }
     if let (Some(toolchain), Some(_sysroot)) = (config.cross, config.sysroot) {
         env.extend(cross_env(config, toolchain));
+        // cgo reads CGO_CFLAGS/CGO_LDFLAGS, which default to `-O2 -g` and do
+        // not inherit CFLAGS/LDFLAGS. Without them the cgo stubs are compiled
+        // without the sysroot and cannot find a single header.
+        let derived: Vec<(&'static str, String)> = [
+            ("CGO_CFLAGS", "CFLAGS"),
+            ("CGO_LDFLAGS", "LDFLAGS"),
+            ("CGO_CXXFLAGS", "CXXFLAGS"),
+        ]
+        .into_iter()
+        .filter_map(|(target, source)| {
+            env.iter()
+                .find(|(key, _)| *key == source)
+                .map(|(_, value)| (target, value.clone()))
+        })
+        .collect();
+        env.extend(derived);
     }
     env
 }
