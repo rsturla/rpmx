@@ -32,6 +32,8 @@ pub(super) struct TestRunOptions<'a> {
     pub(super) jobs: NonZeroU32,
     pub(super) timeout: NonZeroU64,
     pub(super) debuginfo: bool,
+    /// Skip installed-stage tests, which execute target binaries.
+    pub(super) skip_installed: bool,
     pub(super) filter: &'a [String],
     pub(super) junit: Option<&'a Path>,
 }
@@ -42,6 +44,7 @@ pub(super) fn run(options: TestRunOptions<'_>) -> Result<Option<PathBuf>, Error>
         .cell
         .tests
         .iter()
+        .filter(|test| !options.skip_installed || test.stage != "installed")
         .filter(|test| options.filter.is_empty() || options.filter.contains(&test.name))
         .cloned()
         .collect();

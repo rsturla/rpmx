@@ -96,6 +96,9 @@ pub struct BuildArgs {
     /// Run build-stage and installed-stage tests.
     #[arg(long)]
     pub run_tests: bool,
+    /// With tests, skip installed-stage tests (they execute target binaries).
+    #[arg(long)]
+    pub skip_installed: bool,
     /// Do not write repository metadata after the build.
     #[arg(long)]
     pub no_index: bool,
@@ -157,6 +160,9 @@ pub struct RebuildArgs {
     /// Run build-stage tests after the build.
     #[arg(long)]
     pub run_tests: bool,
+    /// With tests, skip installed-stage tests (they execute target binaries).
+    #[arg(long)]
+    pub skip_installed: bool,
     /// Do not write repository metadata after the build.
     #[arg(long)]
     pub no_index: bool,
@@ -311,6 +317,9 @@ pub struct TestArgs {
     /// Test RPMs in this directory instead of building the recipe.
     #[arg(long, value_name = "DIR")]
     pub install_dir: Option<PathBuf>,
+    /// Skip installed-stage tests (they execute target binaries).
+    #[arg(long)]
+    pub skip_installed: bool,
     /// Write a JUnit XML report.
     #[arg(long)]
     pub junit: Option<PathBuf>,

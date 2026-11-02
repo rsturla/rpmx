@@ -61,6 +61,12 @@ pub fn run(args: TestArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
             "this recipe declares no tests; add a tests: block",
         ));
     }
+    if args.install_dir.is_some() && args.skip_installed {
+        return Err(Error::new(
+            codes::TEST_004,
+            "--install-dir runs installed-stage tests, which --skip-installed excludes",
+        ));
+    }
     // Validate everything local before resolving a root: a missing RPM or a
     // build-stage test must not cost a network resolution first.
     let installed = match args.install_dir.as_deref() {
@@ -197,6 +203,7 @@ pub fn run(args: TestArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
         jobs: args.runtime.jobs,
         step_timeout: args.runtime.step_timeout,
         run_tests: true,
+        skip_installed: args.skip_installed,
         test_filter: &args.selected,
         junit: args.junit.as_deref(),
         no_lint: false,

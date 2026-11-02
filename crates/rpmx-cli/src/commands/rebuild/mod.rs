@@ -47,6 +47,8 @@ pub struct RebuildRequest<'a> {
     /// resolved or cached the root passes false.
     pub verify_root: bool,
     pub run_tests: bool,
+    /// Skip installed-stage tests, which execute target binaries.
+    pub skip_installed: bool,
     pub test_filter: &'a [String],
     pub no_index: bool,
     pub no_lint: bool,
@@ -102,6 +104,7 @@ pub fn run(args: RebuildArgs) -> Result<Vec<PathBuf>, Error> {
         offline: args.offline,
         verify_root: true,
         run_tests: args.run_tests || !args.test.is_empty(),
+        skip_installed: args.skip_installed,
         test_filter: &args.test,
         no_index: args.no_index,
         no_lint: args.no_lint,
@@ -408,6 +411,7 @@ pub fn execute(request: RebuildRequest<'_>) -> Result<RebuildOutput, Error> {
             jobs,
             timeout: step_timeout,
             debuginfo,
+            skip_installed: request.skip_installed,
             filter: request.test_filter,
             junit: request.junit,
         })? {

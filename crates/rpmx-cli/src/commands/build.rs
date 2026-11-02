@@ -643,6 +643,7 @@ fn build_one(
         jobs,
         step_timeout: args.runtime.step_timeout,
         run_tests,
+        skip_installed: args.skip_installed,
         test_filter: &args.test,
         junit: args.junit.as_deref(),
         no_lint: args.no_lint,

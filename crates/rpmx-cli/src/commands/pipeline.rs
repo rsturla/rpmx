@@ -43,6 +43,8 @@ pub struct BuildPipeline<'a> {
     pub jobs: NonZeroU32,
     pub step_timeout: NonZeroU64,
     pub run_tests: bool,
+    /// Skip installed-stage tests, which execute target binaries.
+    pub skip_installed: bool,
     pub test_filter: &'a [String],
     pub junit: Option<&'a Path>,
     pub no_lint: bool,
@@ -149,6 +151,7 @@ impl BuildPipeline<'_> {
                     offline: self.offline,
                     verify_root: false,
                     run_tests: self.run_tests,
+                    skip_installed: self.skip_installed,
                     test_filter: self.test_filter,
                     no_index: true,
                     no_lint: self.no_lint,
