@@ -73,6 +73,7 @@ pub fn prepare(options: TestRootOptions<'_>) -> Result<PreparedTestRoot> {
             install: install.clone(),
             reinstall: Vec::new(),
         },
+        cross: None,
         modules: Default::default(),
         options: lock.options.clone(),
         paths: crate::profile::Paths {

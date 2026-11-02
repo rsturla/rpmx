@@ -69,9 +69,10 @@ impl Arch {
     /// The GNU target triple a cross toolchain is named after.
     ///
     /// This is the compiler's name for the architecture, not the RPM name:
-    /// `ppc64le` is `powerpc64le` to GCC, and Fedora ships the toolchain as
-    /// `gcc-<triple>`. Keep this in step with [`Arch::as_str`]; a wrong triple
-    /// silently selects a host compiler instead of failing.
+    /// `ppc64le` is `powerpc64le` to GCC. A distribution that names its
+    /// toolchain differently overrides `cross.triple` in the profile; this is
+    /// only the default. A wrong triple silently selects a host compiler
+    /// instead of failing, so keep it in step with [`Arch::as_str`].
     pub const fn triple(self) -> &'static str {
         match self {
             Self::X86_64 => "x86_64-linux-gnu",

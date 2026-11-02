@@ -97,6 +97,7 @@ pub fn profile_for(profile: &Profile, name: &str) -> Profile {
                 .collect(),
             reinstall: Vec::new(),
         },
+        cross: None,
         modules: Default::default(),
         options: ResolveOptions {
             weak_deps: false,
@@ -134,6 +135,7 @@ pub fn profile_from_lock(lock: &RootLock) -> Result<Profile> {
             install: Vec::new(),
             reinstall: Vec::new(),
         },
+        cross: None,
         modules: Default::default(),
         options: lock.options.clone(),
         paths: Paths {
@@ -302,6 +304,7 @@ mod tests {
                 install: vec!["gcc".to_string()],
                 reinstall: Vec::new(),
             },
+            cross: None,
             modules: Default::default(),
             options: ResolveOptions {
                 weak_deps: true,

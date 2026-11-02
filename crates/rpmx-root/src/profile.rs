@@ -28,6 +28,10 @@ pub struct Profile {
     pub builder: Builder,
     pub repositories: Vec<Repository>,
     pub packages: Packages,
+    /// Cross-compilation toolchain. When present, `packages.install` is the
+    /// target sysroot and `cross.packages` is the host build root.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cross: Option<Cross>,
     #[serde(default)]
     pub modules: Modules,
     #[serde(default)]
@@ -117,6 +121,35 @@ pub struct Packages {
     pub install: Vec<String>,
     #[serde(default)]
     pub reinstall: Vec<String>,
+}
+
+/// A cross-compilation toolchain.
+///
+/// With a `cross` block the profile describes two roots: a **build root** that
+/// runs on the host and holds the compiler, and a **sysroot** for the target
+/// that holds the headers and libraries the output links against. Steps run
+/// natively on the host; nothing is emulated.
+///
+/// `packages.install` remains the sysroot. `cross.packages` is the build root,
+/// because a target `-devel` package cannot be installed into a host root.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Cross {
+    /// Architecture of the build root. It must be the host running rpmx.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
+    /// GNU triple naming the toolchain commands, such as `aarch64-linux-gnu`.
+    /// Defaults to the target architecture's triple.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub triple: Option<String>,
+    /// Packages installed in the build root: the compiler, linker, make and any
+    /// generator tools the distribution provides. Never target libraries.
+    pub packages: Vec<String>,
+    /// Extra packages appended to the sysroot, in addition to
+    /// `packages.install`. Usually headers and development files that the build
+    /// needs but the runtime closure does not.
+    #[serde(default)]
+    pub sysroot_packages: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -265,6 +298,7 @@ impl Profile {
                 "profile must install at least one package",
             ));
         }
+        self.validate_cross()?;
         if !self.packages.reinstall.is_empty() {
             return Err(Error::new(
                 codes::ROOT_006,
@@ -331,6 +365,123 @@ impl Profile {
         }
         profile.archs = vec![target.to_string()];
         Ok(profile)
+    }
+
+    /// The cross toolchain, if this profile builds for a foreign target.
+    pub fn cross(&self) -> Option<&Cross> {
+        self.cross.as_ref()
+    }
+
+    /// The GNU triple naming the cross toolchain commands.
+    ///
+    /// Fails when the profile does not cross-compile, so callers cannot use a
+    /// triple without a build root that provides those commands.
+    pub fn triple(&self) -> Result<&str> {
+        let cross = self
+            .cross
+            .as_ref()
+            .ok_or_else(|| Error::new(codes::ROOT_006, "profile is not cross-compiling"))?;
+        match cross.triple.as_deref() {
+            Some(triple) => Ok(triple),
+            None => Ok(rpmx_base::arch::Arch::parse(self.arch())?.triple()),
+        }
+    }
+
+    /// The profile that resolves the host-architecture build root.
+    ///
+    /// It holds `cross.packages` and no `cross` block, so resolving it is an
+    /// ordinary native root resolution.
+    pub fn build_root_profile(&self) -> Result<Profile> {
+        let cross = self
+            .cross
+            .as_ref()
+            .ok_or_else(|| Error::new(codes::ROOT_006, "profile is not cross-compiling"))?;
+        let host = match &cross.host {
+            Some(host) => normalize_arch(host)?,
+            None => rpmx_base::arch::Arch::current()?.as_str(),
+        };
+        let mut profile = self.clone();
+        profile.name = Some(format!("{}-build", self.name("profile")));
+        profile.archs = vec![host.to_string()];
+        profile.packages.install = cross.packages.clone();
+        profile.packages.reinstall.clear();
+        profile.cross = None;
+        Ok(profile)
+    }
+
+    /// The profile that resolves the target sysroot.
+    ///
+    /// It is `packages.install` plus the extra `-devel` packages, with no
+    /// `cross` block so it resolves like any target root.
+    pub fn sysroot_profile(&self) -> Result<Profile> {
+        let cross = self
+            .cross
+            .as_ref()
+            .ok_or_else(|| Error::new(codes::ROOT_006, "profile is not cross-compiling"))?;
+        let mut packages: std::collections::BTreeSet<String> =
+            self.packages.install.iter().cloned().collect();
+        packages.extend(cross.sysroot_packages.iter().cloned());
+        let mut profile = self.clone();
+        profile.name = Some(format!("{}-sysroot", self.name("profile")));
+        profile.archs = vec![self.arch().to_string()];
+        profile.packages.install = packages.into_iter().collect();
+        profile.packages.reinstall.clear();
+        profile.cross = None;
+        Ok(profile)
+    }
+
+    fn validate_cross(&self) -> Result<()> {
+        let Some(cross) = &self.cross else {
+            return Ok(());
+        };
+        if cross.packages.is_empty() {
+            return Err(Error::new(
+                codes::ROOT_006,
+                "cross.packages must list the build-root packages: the compiler, linker and make",
+            ));
+        }
+        for package in cross.packages.iter().chain(cross.sysroot_packages.iter()) {
+            if package.trim().is_empty() {
+                return Err(Error::new(
+                    codes::ROOT_006,
+                    "cross package names must not be empty",
+                ));
+            }
+        }
+        if let Some(triple) = &cross.triple {
+            if triple.trim().is_empty() || triple.contains(char::is_whitespace) {
+                return Err(Error::new(
+                    codes::ROOT_006,
+                    "cross.triple must be a GNU triple such as aarch64-linux-gnu",
+                ));
+            }
+        }
+        let native = rpmx_base::arch::Arch::current()?;
+        let host = match &cross.host {
+            Some(host) => normalize_arch(host)?,
+            None => native.as_str(),
+        };
+        if host != native.as_str() {
+            return Err(Error::new(
+                codes::ROOT_006,
+                format!(
+                    "cross build root is {host}, but rpmx is running on {native}; \
+                     only a native build root is supported"
+                ),
+            ));
+        }
+        for arch in &self.archs {
+            if normalize_arch(arch)? == host {
+                return Err(Error::new(
+                    codes::ROOT_006,
+                    format!(
+                        "cross target {host} equals the build-root architecture; \
+                         remove the cross block and build natively"
+                    ),
+                ));
+            }
+        }
+        Ok(())
     }
 
     pub fn builder_image(&self) -> String {
@@ -607,5 +758,116 @@ packages:
                 "prefix={prefix} libdir={libdir}"
             );
         }
+    }
+
+    fn cross_profile(target: &str, cross: &str) -> String {
+        format!(
+            r#"
+document: rpmx-profile
+version: 1
+releasever: "44"
+archs: [{target}]
+repositories:
+  - id: base
+    baseurl: https://example.invalid/fedora
+packages:
+  install: [bash, zlib-devel]
+cross:
+{cross}
+"#
+        )
+    }
+
+    fn other_arch() -> &'static str {
+        if rpmx_base::arch::Arch::current().expect("host") == rpmx_base::arch::Arch::X86_64 {
+            "aarch64"
+        } else {
+            "x86_64"
+        }
+    }
+
+    #[test]
+    fn a_cross_profile_splits_the_toolchain_from_the_sysroot() {
+        let target = other_arch();
+        let text = cross_profile(
+            target,
+            "  packages: [toolchain-cc, toolchain-binutils]\n  sysroot_packages: [libc-devel]",
+        );
+        let profile = parse_profile(&text).expect("valid cross profile");
+
+        assert_eq!(
+            profile.triple().expect("triple"),
+            rpmx_base::arch::Arch::parse(target).unwrap().triple()
+        );
+
+        let build = profile.build_root_profile().expect("build root");
+        let native = rpmx_base::arch::Arch::current().unwrap();
+        assert_eq!(build.archs, vec![native.as_str().to_string()]);
+        assert_eq!(
+            build.packages.install,
+            vec!["toolchain-cc".to_string(), "toolchain-binutils".to_string()]
+        );
+        assert!(build.cross.is_none(), "derived profiles must not re-cross");
+
+        let sysroot = profile.sysroot_profile().expect("sysroot");
+        assert_eq!(sysroot.archs, vec![target.to_string()]);
+        assert_eq!(
+            sysroot.packages.install,
+            vec![
+                "bash".to_string(),
+                "libc-devel".to_string(),
+                "zlib-devel".to_string()
+            ]
+        );
+        assert!(sysroot.cross.is_none());
+    }
+
+    #[test]
+    fn a_cross_triple_can_be_overridden() {
+        let target = other_arch();
+        let text = cross_profile(
+            target,
+            "  triple: \"aarch64-redhat-linux-gnu\"\n  packages: [toolchain-cc]",
+        );
+        let profile = parse_profile(&text).expect("valid cross profile");
+        assert_eq!(profile.triple().unwrap(), "aarch64-redhat-linux-gnu");
+    }
+
+    #[test]
+    fn a_cross_build_root_must_be_the_native_architecture() {
+        let target = other_arch();
+        let text = cross_profile(
+            target,
+            &format!("  host: {target}\n  packages: [toolchain-cc]"),
+        );
+        let error = parse_profile(&text).expect_err("foreign build root");
+        assert_eq!(error.code, codes::ROOT_006);
+        assert!(error.message.contains("running on"), "{}", error.message);
+    }
+
+    #[test]
+    fn a_cross_target_must_differ_from_the_build_root() {
+        let native = rpmx_base::arch::Arch::current().unwrap().as_str();
+        let text = cross_profile(native, "  packages: [toolchain-cc]");
+        let error = parse_profile(&text).expect_err("same architecture");
+        assert_eq!(error.code, codes::ROOT_006);
+        assert!(
+            error.message.contains("build natively"),
+            "{}",
+            error.message
+        );
+    }
+
+    #[test]
+    fn cross_requires_the_build_root_packages() {
+        let target = other_arch();
+        let text = cross_profile(target, "  packages: []");
+        let error = parse_profile(&text).expect_err("no toolchain");
+        assert_eq!(error.code, codes::ROOT_006);
+        assert!(
+            error.message.contains("cross.packages"),
+            "{}",
+            error.message
+        );
     }
 }
