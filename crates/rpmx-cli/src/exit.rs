@@ -18,8 +18,8 @@ pub const INTERNAL: u8 = 9;
 
 /// Return the process exit code for a diagnostic.
 pub fn code_for(code: Code) -> u8 {
-    if code == codes::CLI_001 {
-        // Invalid command-line value, such as --arch or --arch-jobs.
+    if code == codes::CLI_001 || code == codes::CLI_007 {
+        // Invalid command-line value, such as --arch, --arch-jobs or --source.
         return RECIPE;
     }
     if code == codes::BUILD_007 {
@@ -46,7 +46,7 @@ pub fn code_for(code: Code) -> u8 {
         "POLICY" | "SIGN" => POLICY,
         "SBOM" | "EXTRACT" => EVIDENCE,
         "YAML" | "SCHEMA" | "PLAN" | "OUTPUT" | "STEP" | "TEMPLATE" | "MATRIX" | "TOOL"
-        | "INCLUDE" | "ASSEMBLY" | "SOURCE" | "STAGE" | "LINT" | "INIT" => RECIPE,
+        | "INCLUDE" | "ASSEMBLY" | "SOURCE" | "STAGE" | "LINT" | "INIT" | "BUNDLED" => RECIPE,
         _ => INTERNAL,
     }
 }
@@ -84,6 +84,8 @@ mod tests {
     #[test]
     fn stage_specific_overrides_win_over_the_domain() {
         assert_eq!(code_for(codes::CLI_001), 2);
+        assert_eq!(code_for(codes::CLI_007), 2);
+        assert_eq!(code_for(codes::BUNDLED_003), 2);
         assert_eq!(code_for(codes::BUILD_007), 6);
         assert_eq!(code_for(codes::SRPM_011), 3);
         assert_eq!(code_for(codes::SRPM_012), 3);

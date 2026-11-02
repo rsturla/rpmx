@@ -264,11 +264,15 @@ pub struct ShellArgs {
 #[derive(Debug, clap::Args)]
 pub struct ExplainArgs {
     /// What to explain.
-    #[arg(value_parser = ["policy", "root", "steps", "matrix", "requires", "files"])]
+    #[arg(value_parser = ["policy", "root", "steps", "matrix", "requires", "files", "components"])]
     pub topic: String,
     /// Recipe to explain (default: ./package.yaml).
     #[arg(default_value = "package.yaml")]
     pub file: PathBuf,
+    /// Source workspace to inspect for `components`. Without it, only
+    /// declarations from the recipe are shown.
+    #[arg(long, value_name = "DIR")]
+    pub source: Option<PathBuf>,
     /// Target architecture used for templates. Defaults to the single target
     /// the recipe's profile declares, or the host architecture.
     #[arg(long)]

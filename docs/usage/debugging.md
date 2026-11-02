@@ -11,6 +11,7 @@ rpmx explain steps
 rpmx explain matrix
 rpmx explain requires
 rpmx explain files
+rpmx explain components --source /path/to/assembled/source
 rpmx explain root --json
 rpmx steps list
 rpmx steps show cmake/configure
@@ -24,6 +25,10 @@ needs.
 `explain policy` shows the effective dist tag (including one from
 `build.root.profile`), build release, profile, release and source date epoch.
 `explain root` shows the merged package set and requirement digest.
+`explain components` shows the component inventory, evidence, scope and final
+`bundled(...)` provides per output. Pass `--source` with an assembled source
+workspace to discover vendor metadata; without it, only `outputs[].bundled`
+declarations from the recipe are shown.
 
 On failure:
 

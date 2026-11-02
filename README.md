@@ -174,7 +174,7 @@ Autotools packages, Lua, jq, a noarch Python wheel, and a systemd service.
 | `rpmx build [FILE]` | Resolve the root, build, package and index. |
 | `rpmx test [FILE]` | Run tests; `--test` selects and `--install-dir DIR` tests existing RPMs. |
 | `rpmx rebuild SRPM` | Rebuild binaries from an SRPM, assembling its root. |
-| `rpmx explain TOPIC` | Explain policy, root, steps, matrix, requires or files. |
+| `rpmx explain TOPIC` | Explain policy, root, steps, matrix, requires, files or components. |
 | `rpmx shell` | Enter the recipe's build sandbox with the build mount layout. |
 | `rpmx steps list\|show` | Browse the built-in step library. |
 | `rpmx doctor` | Check host tools, runners, cache and cached QEMU appliances. |

@@ -113,7 +113,7 @@ guest output, go to stderr.
 | `rpmx test [FILE]` | Run tests, building first when needed. |
 | `rpmx rebuild SRPM` | Rebuild a source RPM, assembling its embedded root. |
 | `rpmx lock [FILE]` | Write or check `package.lock.json`. |
-| `rpmx explain TOPIC` | Explain policy, root, steps, matrix, requires or files. |
+| `rpmx explain TOPIC` | Explain policy, root, steps, matrix, requires, files or components. |
 | `rpmx bump VERSION [FILE]` | Update version, source URLs and digests. |
 | `rpmx repo` | Write repodata for a directory of RPMs. |
 | `rpmx shell` | Open a shell with the build mounts. |

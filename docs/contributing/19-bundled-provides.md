@@ -2,7 +2,7 @@
 
 Status: phase 1 implemented, 2026-11-02. Go, Cargo, npm, Yarn, pnpm, Python,
 Ruby, PHP and explicit C/C++ declarations are live. Java, Conan, vcpkg, SBOM
-projection, `explain components` and `bundled/declare` remain planned.
+projection and `bundled/declare` remain planned.
 
 ## 1. Goals
 
@@ -461,8 +461,7 @@ Integration tests:
 3. npm cataloger and `bundled(nodejs-<name>)` provides. **Done.**
 4. Yarn, pnpm, Python, Ruby and PHP catalogers. **Done.**
 5. Java embedded-jar cataloger. Java uses a reject-by-default policy.
-6. SBOM projection, `explain components`, Conan, vcpkg, optional SPDX input and
-   optional Syft.
+6. SBOM projection, Conan, vcpkg, optional SPDX input and optional Syft.
 
 Each phase must add fixtures and an end-to-end assertion. A cataloger without a
 test that can fail is not done.

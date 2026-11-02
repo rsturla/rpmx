@@ -320,6 +320,15 @@ impl Inventory {
         Ok(())
     }
 
+    pub fn components_for<'a>(
+        &'a self,
+        output: &'a PlannedOutput,
+    ) -> impl Iterator<Item = &'a Component> + 'a {
+        self.components
+            .iter()
+            .filter(move |component| component.outputs.contains(&output.name))
+    }
+
     /// Provides for one output. The caller decides whether the generator is
     /// enabled; this only filters evidence and formats names.
     pub fn provides_for(&self, output: &PlannedOutput) -> Vec<String> {

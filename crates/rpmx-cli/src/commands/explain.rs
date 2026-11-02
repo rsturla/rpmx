@@ -91,6 +91,66 @@ pub fn run(args: ExplainArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> 
                 "exclude": output.exclude,
             }))).collect::<Vec<_>>(),
         }),
+        "components" => {
+            let inventory = match &args.source {
+                Some(source) => {
+                    if !source.is_dir() {
+                        return Err(Error::new(
+                            codes::CLI_007,
+                            format!("source workspace {} is not a directory", source.display()),
+                        ));
+                    }
+                    let cells = plan.cells.iter().collect::<Vec<_>>();
+                    rpmx_core::components::discover(source, &cells)?
+                }
+                None => rpmx_core::components::Inventory::from_plan(&plan),
+            };
+            let outputs = plan
+                .cells
+                .iter()
+                .flat_map(|cell| {
+                    cell.outputs.iter().map(|output| {
+                        let provides = if output.generators.bundled {
+                            inventory
+                                .provides_for(output)
+                                .into_iter()
+                                .filter(|provide| !output.generators.exclude.contains(provide))
+                                .collect()
+                        } else {
+                            Vec::new()
+                        };
+                        let components = inventory
+                            .components_for(output)
+                            .map(|component| {
+                                serde_json::json!({
+                                    "ecosystem": component.ecosystem,
+                                    "name": component.name,
+                                    "version": component.version,
+                                    "purl": component.purl,
+                                    "license": component.license,
+                                    "scope": component.scope,
+                                    "confidence": component.confidence,
+                                    "source": component.source,
+                                    "evidence": component.evidence,
+                                    "provide": component.provide(),
+                                })
+                            })
+                            .collect::<Vec<_>>();
+                        serde_json::json!({
+                            "cell": cell.id,
+                            "name": output.name,
+                            "bundled": output.generators.bundled,
+                            "provides": provides,
+                            "components": components,
+                        })
+                    })
+                })
+                .collect::<Vec<_>>();
+            serde_json::json!({
+                "source": args.source.as_ref().map(|path| path.display().to_string()),
+                "outputs": outputs,
+            })
+        }
         other => {
             return Err(Error::new(
                 codes::CLI_006,

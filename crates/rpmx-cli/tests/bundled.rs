@@ -181,3 +181,187 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
     ]);
     assert!(output.status.success(), "{output:?}");
 }
+
+const EXPLAIN_RECIPE: &str = r#"
+schema: 1
+package:
+  name: explain-components
+  version: "1.0"
+  release: 1
+  summary: Explain component inventory
+  license: MIT
+  source-date-epoch: 1700000000
+outputs:
+  - name: explain-components
+    files:
+      include: ["/usr/bin/app"]
+"#;
+
+#[test]
+fn explain_components_shows_discovery_evidence() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let recipe = directory.path().join("package.yaml");
+    fs::write(&recipe, EXPLAIN_RECIPE).expect("recipe");
+    let source = directory.path().join("source");
+    fs::create_dir_all(source.join("vendor")).expect("vendor");
+    fs::write(
+        source.join("vendor/modules.txt"),
+        "# github.com/spf13/cobra v1.8.1\n",
+    )
+    .expect("modules");
+
+    let output = rpmx(&[
+        "explain",
+        "components",
+        "--source",
+        source.to_str().unwrap(),
+        "--json",
+        recipe.to_str().unwrap(),
+    ]);
+    assert!(output.status.success(), "{output:?}");
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("one JSON document");
+    assert_eq!(value["ok"], true);
+    assert_eq!(value["source"], source.to_str().unwrap());
+    let output = &value["outputs"][0];
+    assert_eq!(output["name"], "explain-components");
+    assert_eq!(
+        output["provides"],
+        serde_json::json!(["bundled(golang(github.com/spf13/cobra)) = 1.8.1"])
+    );
+    assert_eq!(
+        output["components"][0]["evidence"][0]["path"],
+        "vendor/modules.txt"
+    );
+    assert_eq!(output["components"][0]["scope"], "vendored");
+}
+
+#[test]
+fn explain_components_without_source_shows_recipe_declarations() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let recipe = directory.path().join("package.yaml");
+    fs::write(
+        &recipe,
+        r#"schema: 1
+package:
+  name: explain-declared
+  version: "1.0"
+  release: 1
+  summary: Explain declared components
+  license: MIT
+  source-date-epoch: 1700000000
+outputs:
+  - name: explain-declared
+    files:
+      include: ["/usr/bin/app"]
+    bundled:
+      - name: zlib
+        version: "1.3.1"
+"#,
+    )
+    .expect("recipe");
+    let output = rpmx(&["explain", "components", "--json", recipe.to_str().unwrap()]);
+    assert!(output.status.success(), "{output:?}");
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("one JSON document");
+    assert_eq!(value["source"], serde_json::Value::Null);
+    assert_eq!(
+        value["outputs"][0]["provides"],
+        serde_json::json!(["bundled(zlib) = 1.3.1"])
+    );
+    assert_eq!(value["outputs"][0]["components"][0]["source"], "recipe");
+}
+
+#[test]
+fn explain_components_applies_generator_exclusions() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let recipe = directory.path().join("package.yaml");
+    fs::write(
+        &recipe,
+        r#"schema: 1
+package:
+  name: explain-excluded
+  version: "1.0"
+  release: 1
+  summary: Explain excluded components
+  license: MIT
+  source-date-epoch: 1700000000
+outputs:
+  - name: explain-excluded
+    files:
+      include: ["/usr/bin/app"]
+    bundled:
+      - name: zlib
+        version: "1.3.1"
+    generators:
+      exclude:
+        - "bundled(zlib) = 1.3.1"
+"#,
+    )
+    .expect("recipe");
+    let output = rpmx(&["explain", "components", "--json", recipe.to_str().unwrap()]);
+    assert!(output.status.success(), "{output:?}");
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("one JSON document");
+    assert_eq!(value["outputs"][0]["provides"], serde_json::json!([]));
+    assert_eq!(
+        value["outputs"][0]["components"][0]["provide"],
+        "bundled(zlib) = 1.3.1"
+    );
+}
+
+#[test]
+fn explain_components_rejects_a_non_directory_source() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let recipe = directory.path().join("package.yaml");
+    fs::write(&recipe, EXPLAIN_RECIPE).expect("recipe");
+    let source = directory.path().join("not-a-directory");
+    fs::write(&source, "file").expect("file");
+    let output = rpmx(&[
+        "explain",
+        "components",
+        "--source",
+        source.to_str().unwrap(),
+        "--json",
+        recipe.to_str().unwrap(),
+    ]);
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("one JSON document");
+    assert_eq!(value["diagnostics"][0]["code"], "RPMX-CLI-007");
+}
+
+#[test]
+fn explain_components_shows_components_when_the_generator_is_disabled() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let recipe = directory.path().join("package.yaml");
+    fs::write(
+        &recipe,
+        r#"schema: 1
+package:
+  name: explain-disabled
+  version: "1.0"
+  release: 1
+  summary: Explain disabled components
+  license: MIT
+  source-date-epoch: 1700000000
+outputs:
+  - name: explain-disabled
+    files:
+      include: ["/usr/bin/app"]
+    bundled:
+      - name: zlib
+        version: "1.3.1"
+    generators:
+      bundled: false
+"#,
+    )
+    .expect("recipe");
+    let output = rpmx(&["explain", "components", "--json", recipe.to_str().unwrap()]);
+    assert!(output.status.success(), "{output:?}");
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("one JSON document");
+    assert_eq!(value["outputs"][0]["provides"], serde_json::json!([]));
+    assert_eq!(value["outputs"][0]["bundled"], false);
+    assert_eq!(value["outputs"][0]["components"][0]["name"], "zlib");
+}

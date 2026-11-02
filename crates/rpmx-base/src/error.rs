@@ -105,6 +105,8 @@ pub mod codes {
         CLI_005 = "RPMX-CLI-005",
         /// A command could not serialise its machine-readable output (JSON or YAML).
         CLI_006 = "RPMX-CLI-006",
+        /// A command-line argument has an invalid value or path.
+        CLI_007 = "RPMX-CLI-007",
         /// An RPM or SRPM file cannot be opened as an RPM package.
         EXTRACT_001 = "RPMX-EXTRACT-001",
         /// The RPM payload format cannot be read, or its compression is unsupported.
