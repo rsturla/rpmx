@@ -5,6 +5,27 @@ does not promise a stable schema or CLI yet.
 
 ## Unreleased
 
+- Cross-compilation: a profile with a `cross` block builds a target
+  architecture with a host-native toolchain against a target sysroot, with no
+  emulation. `packages.install` is the sysroot; `cross.packages` is the build
+  root; `needs.tools` and `needs.host` route to the right one. The sandbox
+  exports the triple, `CC`/`CXX`/`AR`/`LD`/`STRIP`/`OBJCOPY`, sysroot-aware
+  pkg-config, derived `CGO_*` flags and generated CMake/Meson toolchain files.
+  Two checks catch a wrong build: every staged ELF must match the target
+  machine, and every `DT_NEEDED` must exist in the sysroot.
+- A cross SRPM embeds its sysroot lock and toolchain, so `rpmx rebuild` needs
+  no profile. `rpmx lock` records both the build root and the sysroot, and
+  `--locked` reports `changed: sysroot` on drift. Installed-stage tests run in
+  a target test root; `--skip-installed` runs only build-stage tests.
+- `rpmx shell` exports the same environment a build step sees.
+- `go/build` and `go/test` accept `cgo: false`; the default stays on for a
+  distribution package.
+- The pre-build dependency check trusts an automatic root's resolution, so a
+  declared dependency that resolves to a virtual provider (`zlib-devel` ->
+  `zlib-ng-compat-devel`) no longer fails.
+- A foreign target without a cross profile warns that steps are emulated, and
+  `--unsafe-host-root` refuses a cross build.
+
 - Foreign builds default to bubblewrap + host binfmt. `auto` and `--runner
   bwrap` run native steps directly and foreign steps through an enabled
   `F`-flag qemu-user handler; `--runner qemu` remains the explicit full-VM

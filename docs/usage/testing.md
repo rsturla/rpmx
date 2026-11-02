@@ -15,6 +15,10 @@ This builds (source, SRPM, RPMs) with tests enabled, then runs the selected
 tests with the workspace and the produced RPMs available. `--json` lists the
 produced RPMs; use `--junit` for per-test results.
 
+`--skip-installed` runs only build-stage tests. That is the useful split for a
+cross build: build-stage tests run natively in the build sandbox, while
+installed-stage tests need the target architecture to be executable.
+
 ### Test existing RPMs
 
 ```console

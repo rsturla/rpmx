@@ -64,7 +64,8 @@ it does not discover the toolchain:
 | `RPMX_CMAKE_TOOLCHAIN_FILE`, `RPMX_MESON_CROSS_FILE` | Generated toolchain files. |
 
 Go needs no special step: `GOOS`/`GOARCH`/`CGO_ENABLED` and the `CGO_*` flags
-make both a pure-Go and a cgo build produce a target binary. A cgo build links
+make both a pure-Go and a cgo build produce a target binary. `go/build` accepts
+`cgo: false` for a package that must be static; the default stays on. A cgo build links
 the sysroot's libraries and is checked by the link-closure rule like any other
 ELF object.
 
@@ -129,7 +130,8 @@ sysroot's architecture. Without `--arch`, the output goes to
 ### Building and testing separately
 
 `rpmx build` runs no tests unless `--run-tests` is passed, so a fast host can
-produce packages and a capable machine can test them:
+produce packages and a capable machine can test them. `--skip-installed` keeps
+the native build-stage tests while leaving installed-stage tests to the target:
 
 ```console
 # build host: no installed tests, no binfmt
