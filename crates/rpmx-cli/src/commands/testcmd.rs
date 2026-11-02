@@ -61,10 +61,28 @@ pub fn run(args: TestArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
             "this recipe declares no tests; add a tests: block",
         ));
     }
+    if args.save_test_root.is_some()
+        && !plan.cells.iter().any(|cell| {
+            cell.tests
+                .iter()
+                .any(|test| test.stage == "installed" && !args.skip_installed)
+        })
+    {
+        return Err(Error::new(
+            codes::TEST_005,
+            "--save-test-root needs an installed-stage test; there is no test root to keep",
+        ));
+    }
     if args.install_dir.is_some() && args.test_root.is_some() {
         return Err(Error::new(
             codes::TEST_004,
             "--install-dir installs packages into a root; --test-root runs one that is already prepared",
+        ));
+    }
+    if args.test_root.is_some() && args.skip_installed {
+        return Err(Error::new(
+            codes::TEST_004,
+            "--test-root runs installed-stage tests, which --skip-installed excludes",
         ));
     }
     if args.save_test_root.is_some() && args.skip_installed {

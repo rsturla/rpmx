@@ -357,6 +357,7 @@ fn build_from_recipe(
             ("--test-root-lock", args.test_root_lock.is_some()),
             ("--junit", args.junit.is_some()),
             ("--sbom", args.sbom.is_some()),
+            ("--save-test-root", args.save_test_root.is_some()),
             ("--locked", args.locked),
         ] {
             if set {
@@ -475,6 +476,18 @@ fn build_one(
     let build_started = std::time::Instant::now();
     let run_tests = args.run_tests || !args.test.is_empty();
     let (bundle, plan) = load_plan(&args.file, arch, pipeline_dir, false, true, policy)?;
+    if args.save_test_root.is_some()
+        && !plan.cells.iter().any(|cell| {
+            cell.tests
+                .iter()
+                .any(|test| test.stage == "installed" && !args.skip_installed)
+        })
+    {
+        return Err(Error::new(
+            codes::TEST_005,
+            "--save-test-root needs an installed-stage test; there is no test root to keep",
+        ));
+    }
     if !args.test.is_empty() {
         let known: std::collections::BTreeSet<_> = plan
             .cells
@@ -503,9 +516,10 @@ fn build_one(
             false,
         )?;
     }
-    // A cross profile needs an assembled build root so the target sysroot can
-    // be mounted; the host root cannot provide that.
-    if args.unsafe_host_root {
+    // A cross profile needs both an assembled host build root and its target
+    // sysroot; no single explicit root can provide that, and the host root
+    // certainly cannot.
+    if args.unsafe_host_root || args.root.is_some() || args.root_lock.is_some() {
         if let Some(requirement) = crate::commands::autoroot::requirement(
             &bundle.recipe,
             &plan,
@@ -514,11 +528,18 @@ fn build_one(
             arch,
         )? {
             if requirement.sysroot.is_some() {
+                let flag = if args.unsafe_host_root {
+                    "--unsafe-host-root"
+                } else {
+                    "--root/--root-lock"
+                };
                 return Err(Error::new(
                     codes::ROOT_016,
-                    "--unsafe-host-root cannot run a cross build: the build root \
-                     must be an assembled host root so the target sysroot can be \
-                     mounted; drop the flag or remove the cross block",
+                    format!(
+                        "{flag} cannot supply a cross build: it needs an assembled \
+                         host build root plus its target sysroot; drop the flag and \
+                         let the profile resolve both"
+                    ),
                 ));
             }
         }
