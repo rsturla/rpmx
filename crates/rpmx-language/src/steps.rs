@@ -63,6 +63,11 @@ pub struct ResolvedStep {
     pub args: Vec<String>,
     pub cwd: Option<String>,
     pub env: BTreeMap<String, String>,
+    /// Build-root tools, from `needs.tools`.
+    pub needs_tools: Vec<String>,
+    /// Target libraries, from `needs.host`.
+    pub needs_host: Vec<String>,
+    /// Union of both, for callers that do not distinguish the two roots.
     pub needs: Vec<String>,
     pub digest: String,
     pub builtin: bool,
@@ -266,8 +271,10 @@ pub fn resolve(
         env.insert(key.clone(), template::expand_inputs(value, &scope)?);
     }
 
-    let mut needs = file.needs.tools.clone();
-    needs.extend(file.needs.host);
+    let needs_tools = file.needs.tools.clone();
+    let needs_host = file.needs.host.clone();
+    let mut needs = needs_tools.clone();
+    needs.extend(needs_host.iter().cloned());
 
     let (input, input_file) = match file.render.as_deref() {
         None => (None, None),
@@ -291,6 +298,8 @@ pub fn resolve(
         args,
         cwd,
         env,
+        needs_tools,
+        needs_host,
         needs,
         digest,
         builtin,

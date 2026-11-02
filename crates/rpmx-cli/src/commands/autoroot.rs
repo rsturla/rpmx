@@ -40,11 +40,24 @@ pub struct AutomaticRoot {
     pub profile: String,
     pub packages: usize,
     pub cached: bool,
+    /// The target sysroot, when the profile cross-compiles.
+    pub sysroot: Option<Box<AutomaticRoot>>,
 }
 
 /// The merged root requirement for a recipe: profile, name and digest.
 #[derive(Debug)]
 pub struct Requirement {
+    /// The root the steps run in: the build root for a cross profile.
+    pub profile: Profile,
+    pub name: String,
+    pub digest: String,
+    /// The target sysroot, when the profile cross-compiles.
+    pub sysroot: Option<SysrootRequirement>,
+}
+
+/// The target half of a cross build: a second closure with its own identity.
+#[derive(Debug)]
+pub struct SysrootRequirement {
     pub profile: Profile,
     pub name: String,
     pub digest: String,
@@ -115,26 +128,67 @@ pub fn requirement(
     };
 
     let required = required_packages(plan);
-    let mut packages: BTreeSet<String> = profile.packages.install.iter().cloned().collect();
-    packages.extend(required.iter().cloned());
-    profile.packages.install = packages.into_iter().collect();
+    let crossing = profile.cross.is_some();
+    if crossing {
+        // The build root takes the tools; the target keeps its libraries.
+        for package in &required.target {
+            push_unique(&mut profile.packages.install, package);
+        }
+        if let Some(cross) = profile.cross.as_mut() {
+            for package in &required.build {
+                push_unique(&mut cross.packages, package);
+            }
+            cross.packages.sort();
+        }
+    } else {
+        for package in required.build.iter().chain(required.target.iter()) {
+            push_unique(&mut profile.packages.install, package);
+        }
+    }
     // Inline roots never pass through `load_profile`; validate the assembled
     // profile before anything derives an architecture or a root path from it.
     profile.validate()?;
     // `archs` is an allowed set. A root is resolved for exactly one target.
     let profile = profile.for_target(arch)?;
 
+    let (primary, sysroot) = if crossing {
+        let sysroot = profile.sysroot_profile()?;
+        (profile.build_root_profile()?, Some(sysroot))
+    } else {
+        (profile, None)
+    };
+
     let fallback = format!("{}-root", recipe.package.name);
-    let name = profile.name(&fallback);
-    let bytes = serde_json::to_vec(&profile)
-        .map_err(|error| Error::new(codes::ROOT_006, error.to_string()))?;
+    let name = primary.name(&fallback);
+    let digest = digest_profile(&primary)?;
+    let sysroot = match sysroot {
+        Some(sysroot) => Some(SysrootRequirement {
+            name: sysroot.name(&fallback),
+            digest: digest_profile(&sysroot)?,
+            profile: sysroot,
+        }),
+        None => None,
+    };
     // The build-root requirement is runner-independent. The QEMU appliance is
     // a runner asset, resolved and cached separately from this identity.
     Ok(Some(Requirement {
-        profile,
+        profile: primary,
         name,
-        digest: sha512_hex(&bytes),
+        digest,
+        sysroot,
     }))
+}
+
+fn digest_profile(profile: &Profile) -> Result<String, Error> {
+    let bytes = serde_json::to_vec(profile)
+        .map_err(|error| Error::new(codes::ROOT_006, error.to_string()))?;
+    Ok(sha512_hex(&bytes))
+}
+
+fn push_unique(packages: &mut Vec<String>, package: &String) {
+    if !packages.contains(package) {
+        packages.push(package.clone());
+    }
 }
 
 /// Resolve the automatic root for a recipe, if it declares one.
@@ -155,10 +209,67 @@ pub fn ensure(
     let Some(requirement) = requirement(recipe, plan, recipe_path, profile, arch)? else {
         return Ok(None);
     };
-    let profile = requirement.profile;
-    let name = requirement.name;
-    let digest = requirement.digest;
+    let mut root = ensure_root(
+        &requirement.profile,
+        &requirement.name,
+        &requirement.digest,
+        cache,
+        offline,
+        refresh,
+        arch,
+        Assembly::Install,
+    )?;
+    if let Some(sysroot) = &requirement.sysroot {
+        let mut assembled = ensure_root(
+            &sysroot.profile,
+            &sysroot.name,
+            &sysroot.digest,
+            cache,
+            offline,
+            refresh,
+            arch,
+            Assembly::Extract,
+        )?;
+        // The build root stays read-only at run time, so the sysroot mount
+        // point has to exist before the sandbox starts.
+        let mount = root.root.join("sysroot");
+        std::fs::create_dir_all(&mount).map_err(|error| {
+            Error::new(
+                codes::ROOT_004,
+                format!("cannot create {}: {error}", mount.display()),
+            )
+        })?;
+        {
+            let _ = &mut assembled;
+        }
+        root.sysroot = Some(Box::new(assembled));
+    }
+    Ok(Some(root))
+}
 
+/// How a resolved closure becomes a directory.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Assembly {
+    /// Run the package scripts and record a package database (a build root).
+    Install,
+    /// Unpack the payload only (a cross sysroot).
+    Extract,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn ensure_root(
+    profile: &Profile,
+    name: &str,
+    digest: &str,
+    cache: Option<&Path>,
+    offline: bool,
+    refresh: bool,
+    arch: &str,
+    assembly: Assembly,
+) -> Result<AutomaticRoot, Error> {
+    let profile = profile.clone();
+    let name = name.to_string();
+    let digest = digest.to_string();
     let cas = match cache {
         Some(path) => path.to_path_buf(),
         None => default_cache()?,
@@ -171,7 +282,10 @@ pub fn ensure(
 
     if !refresh {
         match load_cached(&lock_path, &root_path, arch) {
-            Ok(Some(root)) => return Ok(Some(root)),
+            Ok(Some(mut root)) => {
+                root.sysroot = None;
+                return Ok(root);
+            }
             Ok(None) => {}
             Err(error) if offline => {
                 return Err(Error::new(
@@ -207,8 +321,9 @@ pub fn ensure(
     // delete each other's half-built root.
     let _publishing = CacheLock::acquire(&roots, key)?;
     if !refresh {
-        if let Ok(Some(root)) = load_cached(&lock_path, &root_path, arch) {
-            return Ok(Some(root));
+        if let Ok(Some(mut root)) = load_cached(&lock_path, &root_path, arch) {
+            root.sysroot = None;
+            return Ok(root);
         }
     }
     if directory.exists() {
@@ -235,27 +350,38 @@ pub fn ensure(
     let mut document = resolve_profile(&profile, &name, work.path(), &cas)?;
     // The final root is a sibling of the scratch directory: assembly refuses
     // a root inside its own work tree.
-    let assembled = assemble(
-        &document,
-        AssembleOptions {
-            cache: &cas,
-            work: work.path(),
-            root: &root_path,
-        },
-    )?;
+    let assembled = match assembly {
+        Assembly::Install => assemble(
+            &document,
+            AssembleOptions {
+                cache: &cas,
+                work: work.path(),
+                root: &root_path,
+            },
+        )?,
+        Assembly::Extract => rpmx_core::root::assemble_sysroot(
+            &document,
+            AssembleOptions {
+                cache: &cas,
+                work: work.path(),
+                root: &root_path,
+            },
+        )?,
+    };
     document.root_digest = Some(digest_root(&assembled)?);
     // The lock is written last: a concurrent reader sees either a complete
     // root and lock, or no lock and rebuilds.
     write_lock(&lock_path, &document)?;
     let packages = count_packages(&document);
-    Ok(Some(AutomaticRoot {
+    Ok(AutomaticRoot {
         lock: lock_path,
         root: root_path,
         document,
         profile: name,
         packages,
         cached: false,
-    }))
+        sysroot: None,
+    })
 }
 
 /// Assemble a root described by an SRPM-embedded lock, reusing the cache.
@@ -610,6 +736,7 @@ fn load_cached(
         profile: document.profile.clone(),
         document,
         cached: true,
+        sysroot: None,
     }))
 }
 
@@ -807,29 +934,63 @@ fn path_is_under(path: &Path, root: &Path) -> bool {
     path.starts_with(root)
 }
 
-/// Every package the plan needs in the root.
-fn required_packages(plan: &Plan) -> BTreeSet<String> {
-    let mut packages = BTreeSet::new();
+/// Packages the plan needs, split by the root that owns them.
+struct RequiredPackages {
+    /// Build-root tools: the compiler, generators, `make`.
+    build: BTreeSet<String>,
+    /// Target headers and libraries, plus everything a test root needs.
+    target: BTreeSet<String>,
+}
+
+fn required_packages(plan: &Plan) -> RequiredPackages {
+    let mut build = BTreeSet::new();
+    let mut target = BTreeSet::new();
     if let Some(source) = &plan.source_assembly {
         for step in &source.steps {
-            packages.extend(step.needs.iter().cloned());
+            split_needs(step, false, &mut build, &mut target);
         }
     }
     for cell in &plan.cells {
-        packages.extend(cell.tools.iter().cloned());
-        packages.extend(cell.host.iter().cloned());
-        packages.extend(cell.target.iter().cloned());
-        packages.extend(cell.test_tools.iter().cloned());
+        build.extend(cell.tools.iter().cloned());
+        target.extend(cell.host.iter().cloned());
+        target.extend(cell.target.iter().cloned());
+        target.extend(cell.test_tools.iter().cloned());
         for step in &cell.pipeline {
-            packages.extend(step.needs.iter().cloned());
+            split_needs(step, false, &mut build, &mut target);
         }
         for test in &cell.tests {
             for step in &test.pipeline {
-                packages.extend(step.needs.iter().cloned());
+                // Tests run in a target test root.
+                split_needs(step, true, &mut build, &mut target);
             }
         }
     }
-    packages
+    RequiredPackages { build, target }
+}
+
+fn split_needs(
+    step: &rpmx_core::plan::PlannedStep,
+    target_only: bool,
+    build: &mut BTreeSet<String>,
+    target: &mut BTreeSet<String>,
+) {
+    if step.needs_tools.is_empty() && step.needs_host.is_empty() {
+        // A step that only carries the union still has to be installed
+        // somewhere. Built-in steps always fill both lists.
+        if target_only {
+            target.extend(step.needs.iter().cloned());
+        } else {
+            build.extend(step.needs.iter().cloned());
+            target.extend(step.needs.iter().cloned());
+        }
+        return;
+    }
+    if target_only {
+        target.extend(step.needs_tools.iter().cloned());
+    } else {
+        build.extend(step.needs_tools.iter().cloned());
+    }
+    target.extend(step.needs_host.iter().cloned());
 }
 
 fn count_packages(lock: &RootLock) -> usize {
@@ -980,6 +1141,103 @@ outputs:
         assert_eq!(x86.profile.archs, vec!["x86_64".to_string()]);
         assert_eq!(arm.profile.archs, vec!["aarch64".to_string()]);
         assert_ne!(x86.digest, arm.digest);
+    }
+
+    #[test]
+    fn a_cross_profile_resolves_a_build_root_and_a_sysroot() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let native = rpmx_core::Arch::current().expect("host").as_str();
+        let target = if native == "x86_64" {
+            "aarch64"
+        } else {
+            "x86_64"
+        };
+        let profile_path = directory.path().join("cross.yaml");
+        std::fs::write(
+            &profile_path,
+            format!(
+                r#"
+document: rpmx-profile
+version: 1
+name: cross
+releasever: "44"
+archs: [{target}]
+repositories:
+  - id: base
+    baseurl: https://example.invalid/fedora
+packages:
+  install: [bash]
+cross:
+  packages: [toolchain-cc]
+"#
+            ),
+        )
+        .expect("profile");
+
+        let recipe = recipe(
+            r#"
+schema: 1
+package:
+  name: p
+  version: "1"
+  release: 1
+  summary: p
+  license: MIT
+build:
+  dependencies:
+    tools: [make]
+    host: [zlib-devel]
+  pipeline:
+    - uses: strip
+outputs:
+  - name: p
+    metapackage: true
+"#,
+        );
+        let plan = plan(&recipe);
+        let path = directory.path().join("package.yaml");
+        let requirement = super::requirement(&recipe, &plan, &path, Some(&profile_path), target)
+            .expect("requirement")
+            .expect("root");
+
+        // The root the steps run in is native and holds the toolchain.
+        assert_eq!(requirement.profile.archs, vec![native.to_string()]);
+        assert!(requirement
+            .profile
+            .packages
+            .install
+            .contains(&"toolchain-cc".to_string()));
+        assert!(requirement
+            .profile
+            .packages
+            .install
+            .contains(&"make".to_string()));
+        assert!(
+            !requirement
+                .profile
+                .packages
+                .install
+                .contains(&"zlib-devel".to_string()),
+            "a target library cannot live in the host root"
+        );
+
+        // The sysroot is the target closure with its libraries.
+        let sysroot = requirement.sysroot.expect("sysroot");
+        assert_eq!(sysroot.profile.archs, vec![target.to_string()]);
+        assert!(sysroot
+            .profile
+            .packages
+            .install
+            .contains(&"zlib-devel".to_string()));
+        assert!(sysroot
+            .profile
+            .packages
+            .install
+            .contains(&"bash".to_string()));
+        assert_ne!(
+            requirement.digest, sysroot.digest,
+            "the two roots need distinct cache identities"
+        );
     }
 
     #[test]
@@ -1333,11 +1591,14 @@ outputs:
         )
         .expect("plan");
         let packages = required_packages(&plan);
-        assert!(packages.contains("gcc"));
-        assert!(packages.contains("zlib-devel"));
-        assert!(packages.contains("pytest"));
-        // A built-in step contributes its own needs.
-        assert!(packages.contains("binutils"));
-        assert!(packages.contains("findutils"));
+        // Tools belong to the build root; libraries and test tools to the
+        // target sysroot.
+        assert!(packages.build.contains("gcc"));
+        assert!(!packages.target.contains("gcc"));
+        assert!(packages.target.contains("zlib-devel"));
+        assert!(packages.target.contains("pytest"));
+        // A built-in step contributes its tools to the build root.
+        assert!(packages.build.contains("binutils"));
+        assert!(packages.build.contains("findutils"));
     }
 }

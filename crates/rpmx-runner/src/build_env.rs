@@ -72,6 +72,8 @@ pub fn check_build_tools(
         cwd: None,
         env: BTreeMap::new(),
         needs: Vec::new(),
+        needs_tools: Vec::new(),
+        needs_host: Vec::new(),
         tool_digest: None,
         step_digest: None,
         builtin: false,

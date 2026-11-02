@@ -155,6 +155,79 @@ pub fn assemble(lock: &RootLock, options: AssembleOptions<'_>) -> Result<std::pa
     Ok(options.root.to_path_buf())
 }
 
+/// Unpack a locked closure into a link-time sysroot.
+///
+/// Unlike [`assemble`], nothing in the payload is executed: no scriptlets, no
+/// `dnf`, no target binary. A cross sysroot is headers and libraries that the
+/// host compiler reads; it is never booted and its package database is not
+/// needed. This is what lets a cross build run on a host with no qemu-user
+/// handler at all.
+pub fn assemble_sysroot(
+    lock: &RootLock,
+    options: AssembleOptions<'_>,
+) -> Result<std::path::PathBuf> {
+    prepare_assembly(options.work, options.root)?;
+    let rpms = options.work.join("rpms");
+    std::fs::create_dir_all(options.root).map_err(|error| {
+        Error::new(
+            codes::ROOT_012,
+            format!("cannot create {}: {error}", options.root.display()),
+        )
+    })?;
+
+    let mut extracted = 0usize;
+    for (package_arch, entries) in &lock.packages {
+        for package in entries {
+            if !safe_staging_component(package_arch)
+                || !safe_staging_component(&package.name)
+                || !safe_staging_component(&package.evr)
+            {
+                return Err(Error::new(
+                    codes::ROOT_012,
+                    "the lock contains a package name, EVR, or architecture that cannot be staged safely",
+                ));
+            }
+            let filename = format!(
+                "{}-{}.{package_arch}.rpm",
+                package.name,
+                package.evr.replace(':', "_")
+            );
+            let path = rpms.join(&filename);
+            let bytes = cas::load(options.cache, &package.checksum)?;
+            std::fs::write(&path, &bytes).map_err(|error| {
+                Error::new(
+                    codes::ROOT_012,
+                    format!("cannot stage {}: {error}", filename),
+                )
+            })?;
+            let payload = rpm::Package::open(&path).map_err(|error| {
+                Error::new(
+                    codes::ROOT_012,
+                    format!("cannot read {}: {error}", filename),
+                )
+            })?;
+            rpmx_payload::extract_payload(&payload, options.root).map_err(|error| {
+                Error::new(
+                    codes::ROOT_012,
+                    format!("cannot unpack {}: {error}", filename),
+                )
+            })?;
+            rpmx_base::output::installing(format!(
+                "{}-{}.{package_arch}",
+                package.name, package.evr
+            ));
+            extracted += 1;
+        }
+    }
+    if extracted == 0 {
+        return Err(Error::new(
+            codes::ROOT_015,
+            "the lock contains no packages to extract",
+        ));
+    }
+    Ok(options.root.to_path_buf())
+}
+
 fn prepare_assembly(work: &Path, root: &Path) -> Result<()> {
     if root.starts_with(work) {
         return Err(Error::new(

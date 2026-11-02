@@ -173,6 +173,8 @@ pub fn apply_patches(
             cwd: None,
             env: std::collections::BTreeMap::new(),
             needs: Vec::new(),
+            needs_tools: Vec::new(),
+            needs_host: Vec::new(),
             tool_digest: None,
             step_digest: None,
             builtin: false,

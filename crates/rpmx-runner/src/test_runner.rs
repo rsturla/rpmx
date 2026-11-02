@@ -107,6 +107,8 @@ fn run_one_test(sandbox: &Sandbox<'_>, test: &rpmx_language::plan::PlannedTest) 
             cwd: None,
             env: BTreeMap::new(),
             needs: Vec::new(),
+            needs_tools: Vec::new(),
+            needs_host: Vec::new(),
             tool_digest: None,
             step_digest: None,
             builtin: false,
