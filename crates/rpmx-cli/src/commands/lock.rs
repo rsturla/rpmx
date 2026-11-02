@@ -32,6 +32,10 @@ pub struct PackageLock {
     pub policy: LockedPolicy,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub root: Option<LockedRoot>,
+    /// Target sysroot for a cross build. Without it `--locked` would pin only
+    /// half of what the build linked against.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sysroot: Option<LockedRoot>,
     pub sources: Vec<LockedSource>,
     pub cells: Vec<LockedCell>,
 }
@@ -101,19 +105,30 @@ pub fn run(args: LockArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
         build_release: args.policy.build_release,
     })?;
     let policy = resolved.plan_policy();
-    let (bundle, plan) = load_plan(&args.file, &args.arch, pipeline_dir, false, policy)?;
+    let declared = rpmx_core::load_recipe_bundle(&args.file)?;
+    let arch = match &args.arch {
+        Some(arch) => arch.clone(),
+        None => crate::commands::autoroot::declared_arch(
+            &declared.recipe,
+            &declared.root,
+            args.policy.profile.as_deref(),
+        )?
+        .unwrap_or_else(|| rpmx_core::arch::native_arch().to_string()),
+    };
+    let (bundle, plan) = load_plan(&args.file, &arch, pipeline_dir, false, policy)?;
     let lock = build(
         &bundle,
         &plan,
         policy,
         args.policy.profile.as_deref(),
-        &args.arch,
+        &arch,
         None,
         args.root_lock
             .as_deref()
             .map(rpmx_core::root::load_lock)
             .transpose()?
             .as_ref(),
+        None,
     )?;
     let path = args
         .output
@@ -156,6 +171,7 @@ pub fn verify(
     arch: &str,
     explicit_source_date_epoch: Option<u32>,
     active_root: Option<&rpmx_core::root::RootLock>,
+    active_sysroot: Option<&rpmx_core::root::RootLock>,
     check_root: bool,
 ) -> Result<(), Error> {
     let path = default_path(&bundle.root);
@@ -178,6 +194,7 @@ pub fn verify(
         arch,
         explicit_source_date_epoch,
         if check_root { active_root } else { None },
+        if check_root { active_sysroot } else { None },
     )?;
     if check_root && existing.root.is_some() && active_root.is_none() {
         return Err(Error::new(
@@ -221,30 +238,48 @@ pub fn build(
     arch: &str,
     explicit_source_date_epoch: Option<u32>,
     active_root: Option<&rpmx_core::root::RootLock>,
+    active_sysroot: Option<&rpmx_core::root::RootLock>,
 ) -> Result<PackageLock, Error> {
-    let root = match autoroot::requirement(&bundle.recipe, plan, &bundle.root, profile, arch)? {
-        Some(root) => {
-            let resolved = active_root
-                .cloned()
-                .or_else(|| autoroot::cached_lock_for_requirement(&root.digest));
-            Some(LockedRoot {
-                profile: root.name,
-                requirement: root.digest,
-                arch: Some(arch.to_string()),
-                closure_digest: resolved.as_ref().map(|lock| lock.closure_digest.clone()),
-                root_digest: resolved.as_ref().and_then(|lock| lock.root_digest.clone()),
-            })
-        }
-        // An explicitly supplied root is a lock input even when the recipe
-        // does not describe one.
-        None => active_root.map(|lock| LockedRoot {
-            profile: lock.profile.clone(),
-            requirement: String::new(),
-            arch: Some(arch.to_string()),
-            closure_digest: Some(lock.closure_digest.clone()),
-            root_digest: lock.root_digest.clone(),
-        }),
-    };
+    let (root, sysroot) =
+        match autoroot::requirement(&bundle.recipe, plan, &bundle.root, profile, arch)? {
+            Some(requirement) => {
+                let resolved = active_root
+                    .cloned()
+                    .or_else(|| autoroot::cached_lock_for_requirement(&requirement.digest));
+                let root = LockedRoot {
+                    profile: requirement.name.clone(),
+                    requirement: requirement.digest.clone(),
+                    arch: Some(arch.to_string()),
+                    closure_digest: resolved.as_ref().map(|lock| lock.closure_digest.clone()),
+                    root_digest: resolved.as_ref().and_then(|lock| lock.root_digest.clone()),
+                };
+                let sysroot = requirement.sysroot.as_ref().map(|sysroot| {
+                    let resolved = active_sysroot
+                        .cloned()
+                        .or_else(|| autoroot::cached_lock_for_requirement(&sysroot.digest));
+                    LockedRoot {
+                        profile: sysroot.name.clone(),
+                        requirement: sysroot.digest.clone(),
+                        arch: Some(arch.to_string()),
+                        closure_digest: resolved.as_ref().map(|lock| lock.closure_digest.clone()),
+                        root_digest: resolved.as_ref().and_then(|lock| lock.root_digest.clone()),
+                    }
+                });
+                (Some(root), sysroot)
+            }
+            // An explicitly supplied root is a lock input even when the recipe
+            // does not describe one.
+            None => (
+                active_root.map(|lock| LockedRoot {
+                    profile: lock.profile.clone(),
+                    requirement: String::new(),
+                    arch: Some(arch.to_string()),
+                    closure_digest: Some(lock.closure_digest.clone()),
+                    root_digest: lock.root_digest.clone(),
+                }),
+                None,
+            ),
+        };
     let cells = plan
         .cells
         .iter()
@@ -304,6 +339,7 @@ pub fn build(
             build_release: policy.build_release,
         },
         root,
+        sysroot,
         sources: bundle
             .recipe
             .sources
@@ -398,6 +434,9 @@ fn differences(old: &PackageLock, new: &PackageLock) -> String {
     if old.root != new.root {
         fields.push("root");
     }
+    if old.sysroot != new.sysroot {
+        fields.push("sysroot");
+    }
     if old.sources != new.sources {
         fields.push("sources");
     }
@@ -467,6 +506,7 @@ outputs:
             "x86_64",
             None,
             None,
+            None,
         )
         .expect("lock")
     }
@@ -527,6 +567,7 @@ outputs:
             "x86_64",
             None,
             None,
+            None,
         )
         .expect("lock");
         assert_eq!(first, second);
@@ -572,6 +613,7 @@ outputs:
             PlanPolicy::default(),
             None,
             "x86_64",
+            None,
             None,
             None,
         )

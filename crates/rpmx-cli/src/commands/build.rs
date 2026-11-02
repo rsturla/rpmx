@@ -224,6 +224,7 @@ fn package_stage(
             arch,
             args.source_date_epoch,
             None,
+            None,
             false,
         )?;
     }
@@ -485,6 +486,7 @@ fn build_one(
             arch,
             args.source_date_epoch,
             None,
+            None,
             false,
         )?;
     }
@@ -561,6 +563,7 @@ fn build_one(
             arch,
             args.source_date_epoch,
             active_lock.as_ref(),
+            sysroot_lock.as_ref(),
             true,
         )?;
     }

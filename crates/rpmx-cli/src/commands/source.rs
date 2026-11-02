@@ -147,6 +147,10 @@ pub fn execute(request: SourceRequest<'_>) -> Result<PathBuf, Error> {
     let root = request.root.or(automatic_root);
     if request.locked {
         let active_lock = root_lock.map(rpmx_core::root::load_lock).transpose()?;
+        let active_sysroot = automatic
+            .as_ref()
+            .and_then(|root| root.sysroot.as_ref())
+            .map(|sysroot| &sysroot.document);
         crate::commands::lock::verify(
             &bundle,
             &plan,
@@ -155,6 +159,7 @@ pub fn execute(request: SourceRequest<'_>) -> Result<PathBuf, Error> {
             request.arch,
             request.source_date_epoch,
             active_lock.as_ref(),
+            active_sysroot,
             true,
         )?;
     }
