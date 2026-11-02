@@ -37,7 +37,8 @@ pub fn prepare_binary_packages(
             return Err(Error::new(
                 codes::OUTPUT_012,
                 "debuginfo requested but the stage contains no /usr/lib/debug files; \
-                 add `uses: strip` and pass --debuginfo",
+                 add `uses: strip` to the build pipeline (the strip step keeps debug \
+                 sections when the profile sets debuginfo: true)",
             ));
         }
         outputs.push(rpmx_language::plan::PlannedOutput {
