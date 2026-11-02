@@ -18,6 +18,13 @@ does not promise a stable schema or CLI yet.
   `--locked` reports `changed: sysroot` on drift. Installed-stage tests run in
   a target test root; `--skip-installed` runs only build-stage tests.
 - `rpmx shell` exports the same environment a build step sees.
+- `rpmx build --save-test-root DIR` keeps a prepared installed-stage test root
+  (with the package under test) and writes its lock beside it;
+  `rpmx test --test-root DIR` runs against it with no build root, profile,
+  cache or network. `rpmx doctor --recipe` reports whether both roots are
+  cached.
+- The `DT_NEEDED` link-closure check runs for every assembled root, so native
+  and emulated builds catch a missing library too.
 - `go/build` and `go/test` accept `cgo: false`; the default stays on for a
   distribution package.
 - The pre-build dependency check trusts an automatic root's resolution, so a

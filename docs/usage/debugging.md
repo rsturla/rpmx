@@ -17,6 +17,10 @@ rpmx steps show cmake/configure
 rpmx doctor
 ```
 
+`doctor --recipe package.yaml` also reports whether that recipe's build root
+and cross sysroot are already cached, which is exactly what an offline build
+needs.
+
 `explain policy` shows the effective dist tag (including one from
 `build.root.profile`), build release, profile, release and source date epoch.
 `explain root` shows the merged package set and requirement digest.

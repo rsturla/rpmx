@@ -82,6 +82,9 @@ pipeline:
 
 ## What is checked
 
+The link check runs for every assembled root, not just a cross sysroot, so a
+native build that links something absent from its root fails the same way.
+
 Two checks make a broken cross build fail instead of shipping:
 
 - **ELF machine.** Every staged ELF object must match the target architecture.
@@ -91,6 +94,19 @@ Two checks make a broken cross build fail instead of shipping:
   the sysroot. This is the closest thing to `ldd` for a target that cannot run,
   and it catches both a missing dependency and a host library linked by
   mistake.
+
+## One profile, one build strategy
+
+A `cross` block describes how one profile builds its target. A profile whose
+`archs` include the host cannot also build the host: deriving a build root for
+it fails with a message naming the profile. Build the host with a native
+profile and each foreign target with a cross profile; `--arch all` on a cross
+profile therefore selects that profile's targets only.
+
+The sysroot is a link-time artefact. Its payloads are unpacked without running
+scriptlets, so it has no `ld.so.cache` or alternatives database; that is fine
+for a compiler and wrong for anything that has to boot. Installed tests use a
+real, scriptlet-installed test root instead.
 
 ## Locking both closures
 
@@ -150,7 +166,17 @@ rpmx test package.yaml --install-dir DIR --test-root-lock DIR/pkg.test-root.lock
 ```
 
 The pinned form still needs the test root's packages in the local cache and the
-builder image available, because it assembles the root from the lock.
+builder image available, because it assembles the root from the lock. To move
+the root itself instead, save it and ship the directory:
+
+```console
+rpmx build package.yaml --run-tests --save-test-root ./test-root
+# on the machine that will run the tests:
+rpmx test package.yaml --test-root ./test-root --test installed
+```
+
+`--test-root` needs no build root, profile, cache or network: the directory
+contains the package under test and its lock sits beside it.
 
 ## Limitations
 
