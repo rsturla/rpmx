@@ -30,6 +30,10 @@ pub struct CrossToolchain {
     pub strip: String,
     pub objcopy: String,
     pub pkg_config: String,
+    /// Distribution-specific flags appended to every command.
+    pub cflags: Vec<String>,
+    pub cxxflags: Vec<String>,
+    pub ldflags: Vec<String>,
 }
 
 impl CrossToolchain {
@@ -44,6 +48,9 @@ impl CrossToolchain {
             strip: format!("{triple}-strip"),
             objcopy: format!("{triple}-objcopy"),
             pkg_config: "pkg-config".to_string(),
+            cflags: Vec::new(),
+            cxxflags: Vec::new(),
+            ldflags: Vec::new(),
         }
     }
 }

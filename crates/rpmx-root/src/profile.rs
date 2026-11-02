@@ -150,6 +150,15 @@ pub struct Cross {
     /// needs but the runtime closure does not.
     #[serde(default)]
     pub sysroot_packages: Vec<String>,
+    /// Compiler flags every step sees. A toolchain quirk belongs here, in the
+    /// distribution's profile, never in the executor.
+    #[serde(default)]
+    pub cflags: Vec<String>,
+    #[serde(default)]
+    pub cxxflags: Vec<String>,
+    /// Linker flags every step sees.
+    #[serde(default)]
+    pub ldflags: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -445,6 +454,19 @@ impl Profile {
                 return Err(Error::new(
                     codes::ROOT_006,
                     "cross package names must not be empty",
+                ));
+            }
+        }
+        for flag in cross
+            .cflags
+            .iter()
+            .chain(cross.cxxflags.iter())
+            .chain(cross.ldflags.iter())
+        {
+            if flag.trim().is_empty() {
+                return Err(Error::new(
+                    codes::ROOT_006,
+                    "cross toolchain flags must not be empty",
                 ));
             }
         }

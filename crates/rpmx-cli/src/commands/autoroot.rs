@@ -155,7 +155,12 @@ pub fn requirement(
     // `archs` is an allowed set. A root is resolved for exactly one target.
     let profile = profile.for_target(arch)?;
     let cross = if crossing {
-        Some(rpmx_core::guest::CrossToolchain::new(profile.triple()?))
+        let declared = profile.cross().expect("crossing implies a cross block");
+        let mut toolchain = rpmx_core::guest::CrossToolchain::new(profile.triple()?);
+        toolchain.cflags = declared.cflags.clone();
+        toolchain.cxxflags = declared.cxxflags.clone();
+        toolchain.ldflags = declared.ldflags.clone();
+        Some(toolchain)
     } else {
         None
     };

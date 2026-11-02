@@ -335,19 +335,33 @@ fn environment(config: &SandboxConfig<'_>) -> Vec<(&'static str, String)> {
             if config.debuginfo { "1" } else { "0" }.to_string(),
         ),
     ];
-    let mut flags = String::new();
+    let mut cflags = String::new();
+    let mut cxxflags = String::new();
     if config.debuginfo {
-        flags.push_str("-g");
+        cflags.push_str("-g");
+        cxxflags.push_str("-g");
     }
-    if config.cross.is_some() && config.sysroot.is_some() {
-        if !flags.is_empty() {
-            flags.push(' ');
+    if let (Some(toolchain), Some(_)) = (config.cross, config.sysroot) {
+        let sysroot = rpmx_base::guest::SYSROOT;
+        for (flags, extra) in [
+            (&mut cflags, &toolchain.cflags),
+            (&mut cxxflags, &toolchain.cxxflags),
+        ] {
+            if !flags.is_empty() {
+                flags.push(' ');
+            }
+            flags.push_str(&format!("--sysroot={sysroot}"));
+            for flag in extra {
+                flags.push(' ');
+                flags.push_str(flag);
+            }
         }
-        flags.push_str(&format!("--sysroot={}", rpmx_base::guest::SYSROOT));
     }
-    if !flags.is_empty() {
-        env.push(("CFLAGS", flags.clone()));
-        env.push(("CXXFLAGS", flags));
+    if !cflags.is_empty() {
+        env.push(("CFLAGS", cflags));
+    }
+    if !cxxflags.is_empty() {
+        env.push(("CXXFLAGS", cxxflags));
     }
     if let (Some(toolchain), Some(_sysroot)) = (config.cross, config.sysroot) {
         env.extend(cross_env(config, toolchain));
@@ -475,10 +489,14 @@ fn cross_env(
         ("PKG_CONFIG", toolchain.pkg_config.clone()),
         ("PKG_CONFIG_SYSROOT_DIR", sysroot.to_string()),
         ("PKG_CONFIG_LIBDIR", pkgconfig),
-        (
-            "LDFLAGS",
-            format!("--sysroot={sysroot} -Wl,-rpath-link,{sysroot}{libdir}"),
-        ),
+        ("LDFLAGS", {
+            let mut value = format!("--sysroot={sysroot} -Wl,-rpath-link,{sysroot}{libdir}");
+            for flag in &toolchain.ldflags {
+                value.push(' ');
+                value.push_str(flag);
+            }
+            value
+        }),
         (
             "RPMX_CMAKE_TOOLCHAIN_FILE",
             format!("{}/.rpmx/toolchain.cmake", rpmx_base::guest::BUILD),
