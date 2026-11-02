@@ -91,6 +91,25 @@ Two checks make a broken cross build fail instead of shipping:
   and it catches both a missing dependency and a host library linked by
   mistake.
 
+## Locking both closures
+
+`rpmx lock` records two roots for a cross recipe: the host build root and the
+target sysroot, each with its requirement, closure digest and root digest.
+`rpmx build --locked` fails with `changed: sysroot` if the target half drifts,
+not just the build root.
+
+## Emulation is announced
+
+A profile without a `cross` block still builds a foreign target by executing
+target binaries through qemu-user. That is a valid choice, but it now prints a
+warning naming the alternative, because the difference is roughly 15x. A cross
+profile never emulates, and `--unsafe-host-root` is refused for a cross build
+because there is no assembled root to mount a sysroot into.
+
+A cross profile is portable data: it can be loaded on another machine (for
+example the target, to run tests) and only fails when a *build root* is derived
+for a host that is not the current one.
+
 ## Rebuilding
 
 A cross SRPM carries `sysroot.lock.json` and a `cross` block naming it, the
