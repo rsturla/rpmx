@@ -17,7 +17,6 @@ packages:
     pkgconf-pkg-config,
     cmake, ninja-build, meson, ncurses-devel, zlib-devel, oniguruma-devel,
     python3-devel, python3-pip, python3-setuptools, python3-wheel, python3-build]
-debuginfo: false
 sbom: true
 options:
   weak_deps: false

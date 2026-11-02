@@ -256,8 +256,8 @@ module set), but that is a schema change, not a user-visible one.
 The appliance root is assembled with the same offline path as a build root:
 
 1. Synthesize a profile from the build profile: same `releasever`, `builder`,
-   `repositories`; `options.weak_deps = false`, `options.docs = false`;
-   `debuginfo = false`, `sbom = false`; `packages.install = APPLIANCE_PACKAGES`.
+   `repositories`; `options.weak_deps = false`, `options.docs = false`; `sbom = false`;
+   `packages.install = APPLIANCE_PACKAGES`.
 2. Resolve it with dnf into an `ApplianceLock`.
 3. Assemble it offline from the CAS and verify the installed NEVRA set.
 4. Cache it under `$XDG_CACHE_HOME/rpmx/appliances/<identity>/root`.

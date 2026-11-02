@@ -164,7 +164,6 @@ pub fn execute(request: SrpmRequest<'_>) -> Result<Vec<PathBuf>, Error> {
         })
         .collect();
     let root = step_root(request.pipeline_dir, &bundle.root);
-    let debuginfo = root_lock.as_ref().is_some_and(|lock| lock.debuginfo);
     let sbom = root_lock.as_ref().map(|lock| lock.sbom).unwrap_or(true);
     let packages = prepare_source_packages(SourcePackageOptions {
         recipe: &bundle.recipe,
@@ -178,7 +177,6 @@ pub fn execute(request: SrpmRequest<'_>) -> Result<Vec<PathBuf>, Error> {
         root_lock: root_lock.as_ref(),
         sysroot_lock: request.sysroot_lock,
         cross: request.cross,
-        debuginfo,
         sbom,
     })?;
 

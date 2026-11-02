@@ -125,6 +125,7 @@ const BUILTINS: &[(&str, &str)] = &[
         include_str!("../pipelines/autotools/install.yaml"),
     ),
     ("strip", include_str!("../pipelines/strip.yaml")),
+    ("debuginfo", include_str!("../pipelines/debuginfo.yaml")),
     ("make", include_str!("../pipelines/make.yaml")),
     ("make/build", include_str!("../pipelines/make/build.yaml")),
     ("make/check", include_str!("../pipelines/make/check.yaml")),

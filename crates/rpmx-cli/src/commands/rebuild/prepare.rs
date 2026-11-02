@@ -215,7 +215,6 @@ pub(super) fn prepare(
     if let (Some(requested), Some(embedded)) = (&requested_lock, &embedded_lock) {
         if requested.closure_digest != embedded.closure_digest
             || requested.root_digest != embedded.root_digest
-            || requested.debuginfo != embedded.debuginfo
         {
             return Err(Error::new(
                 codes::ROOT_016,

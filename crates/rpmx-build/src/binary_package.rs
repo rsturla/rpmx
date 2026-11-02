@@ -14,7 +14,6 @@ pub struct BinaryPackageOptions<'a> {
     pub stage: &'a Path,
     pub arch: &'a str,
     pub source_date_epoch: u32,
-    pub debuginfo: bool,
 }
 
 pub fn prepare_binary_packages(
@@ -27,49 +26,7 @@ pub fn prepare_binary_packages(
             crate::elf::require_machine(&file.path, &info, target)?;
         }
     }
-    let mut outputs = options.cell.outputs.clone();
-    let debug_name = format!("{}-debuginfo", options.recipe.package.name);
-    if options.debuginfo {
-        if !staged
-            .iter()
-            .any(|file| file.path.starts_with("/usr/lib/debug/"))
-        {
-            return Err(Error::new(
-                codes::OUTPUT_012,
-                "debuginfo requested but the stage contains no /usr/lib/debug files; \
-                 add `uses: strip` to the build pipeline (the strip step keeps debug \
-                 sections when the profile sets debuginfo: true)",
-            ));
-        }
-        outputs.push(rpmx_language::plan::PlannedOutput {
-            name: debug_name.clone(),
-            summary: Some(format!(
-                "Debug information for {}",
-                options.recipe.package.name
-            )),
-            description: None,
-            arch: Some(options.arch.to_string()),
-            metapackage: false,
-            files: vec!["/usr/lib/debug/**".to_string()],
-            exclude: Vec::new(),
-            license: Vec::new(),
-            doc: Vec::new(),
-            config: Vec::new(),
-            noreplace: Vec::new(),
-            directories: Vec::new(),
-            attributes: Vec::new(),
-            dependencies: rpmx_language::model::DependencySet {
-                requires: vec![format!(
-                    "{} = {}-{}",
-                    options.cell.package, options.cell.version, options.cell.release
-                )],
-                provides: Vec::new(),
-                ..Default::default()
-            },
-            generators: Default::default(),
-            scriptlets: Default::default(),
-        });
-    }
+    let outputs = options.cell.outputs.clone();
     let specs = outputs
         .iter()
         .map(|output| OutputSpec {
@@ -119,36 +76,6 @@ pub fn prepare_binary_packages(
             })
             .collect();
         let directories = apply_file_metadata(planned, &mut files)?;
-
-        if planned.name == debug_name {
-            packages.push(BinaryPackageSpec {
-                name: planned.name.clone(),
-                version: options.cell.version.clone(),
-                release: options.cell.release.clone(),
-                epoch: options.recipe.package.epoch,
-                arch: options.arch.to_string(),
-                summary: planned
-                    .summary
-                    .clone()
-                    .unwrap_or_else(|| options.recipe.package.summary.clone()),
-                license: options.recipe.package.license.clone(),
-                description: planned
-                    .summary
-                    .clone()
-                    .unwrap_or_else(|| options.recipe.package.summary.clone()),
-                url: None,
-                source_rpm: format!(
-                    "{}-{}-{}.src.rpm",
-                    options.cell.package, options.cell.version, options.cell.release
-                ),
-                source_date_epoch: options.source_date_epoch,
-                files,
-                directories,
-                dependencies: planned.dependencies.clone(),
-                scriptlets: planned.scriptlets.clone(),
-            });
-            continue;
-        }
 
         let (generated_provides, generated_requires) =
             generators::generate(&files, options.arch, &sonames, &planned.generators);
@@ -355,7 +282,6 @@ outputs:
             stage: stage.path(),
             arch: other.as_str(),
             source_date_epoch: 1,
-            debuginfo: false,
         })
         .expect_err("a host binary must not be packaged as a foreign one");
         assert_eq!(error.code, "RPMX-BUILD-008");
@@ -369,7 +295,6 @@ outputs:
             stage: stage.path(),
             arch: host.as_str(),
             source_date_epoch: 1,
-            debuginfo: false,
         })
         .expect("host payload");
     }

@@ -55,7 +55,6 @@ pub struct SandboxConfig<'a> {
     pub source_date_epoch: u32,
     pub jobs: NonZeroU32,
     pub timeout: NonZeroU64,
-    pub debuginfo: bool,
 }
 
 impl<'a> SandboxConfig<'a> {
@@ -163,13 +162,15 @@ impl<'a> Sandbox<'a> {
         }
         let cwd = expand(step.cwd.as_deref().unwrap_or("${source.dir}"), self);
 
-        let mut env = BTreeMap::new();
-        for (key, value) in base_env(self) {
-            env.insert(key.to_string(), value);
-        }
-        for (key, value) in &step.env {
-            env.insert(key.clone(), expand(value, self));
-        }
+        let env = merge_step_env(
+            base_env(self)
+                .into_iter()
+                .map(|(key, value)| (key.to_string(), value)),
+            step.env
+                .iter()
+                .map(|(key, value)| (key.clone(), expand(value, self))),
+            self.config.sysroot.is_some(),
+        );
 
         let label = if step.label.is_empty() {
             step.uses.clone()
@@ -260,6 +261,35 @@ impl<'a> Sandbox<'a> {
     }
 }
 
+/// Merge a step's environment over the sandbox's.
+///
+/// A recipe's flags extend the toolchain's instead of replacing them. In a
+/// cross build the base `CFLAGS`/`CXXFLAGS`/`LDFLAGS` carry `--sysroot` and
+/// the sysroot library path; a recipe that only wanted to add `-g` would
+/// otherwise silently drop the toolchain.
+fn merge_step_env(
+    base: impl IntoIterator<Item = (String, String)>,
+    step: impl IntoIterator<Item = (String, String)>,
+    cross: bool,
+) -> BTreeMap<String, String> {
+    let mut env: BTreeMap<String, String> = base.into_iter().collect();
+    for (key, value) in step {
+        let extends_toolchain = cross && matches!(key.as_str(), "CFLAGS" | "CXXFLAGS" | "LDFLAGS");
+        match env.get_mut(&key) {
+            Some(base) if extends_toolchain => {
+                if !base.is_empty() && !value.is_empty() {
+                    base.push(' ');
+                }
+                base.push_str(&value);
+            }
+            _ => {
+                env.insert(key, value);
+            }
+        }
+    }
+    env
+}
+
 /// The user-facing name of a step, without the phase prefix the planner adds.
 ///
 /// Unnamed `runs:` steps become `runs#1`; the ordinal is already in the
@@ -334,17 +364,9 @@ pub fn environment(config: &SandboxConfig<'_>) -> Vec<(&'static str, String)> {
             "RPMX_CROSS",
             if config.sysroot.is_some() { "1" } else { "0" }.to_string(),
         ),
-        (
-            "RPMX_DEBUGINFO",
-            if config.debuginfo { "1" } else { "0" }.to_string(),
-        ),
     ];
     let mut cflags = String::new();
     let mut cxxflags = String::new();
-    if config.debuginfo {
-        cflags.push_str("-g");
-        cxxflags.push_str("-g");
-    }
     if let (Some(toolchain), Some(_)) = (config.cross, config.sysroot) {
         let sysroot = rpmx_base::guest::SYSROOT;
         for (flags, extra) in [
@@ -588,7 +610,6 @@ mod tests {
             source_date_epoch: 1,
             jobs: NonZeroU32::new(1).expect("jobs"),
             timeout: NonZeroU64::new(1).expect("timeout"),
-            debuginfo: true,
         };
         let env: std::collections::BTreeMap<_, _> =
             super::environment(&config).into_iter().collect();
@@ -606,11 +627,42 @@ mod tests {
             "{}",
             env["CFLAGS"]
         );
-        assert!(env["CFLAGS"].contains("-g"), "{}", env["CFLAGS"]);
         assert!(env["LDFLAGS"].contains("-rpath-link,/sysroot/usr/lib64"));
         assert_eq!(env["RPMX_CROSS"], "1");
         assert_eq!(env["RPMX_EMULATED"], "0");
         assert_eq!(env["RPMX_EXEC_ARCH"], "x86_64");
+    }
+
+    #[test]
+    fn a_recipe_flag_extends_the_cross_toolchain_instead_of_replacing_it() {
+        let base = [
+            ("CFLAGS".to_string(), "--sysroot=/sysroot".to_string()),
+            (
+                "LDFLAGS".to_string(),
+                "--sysroot=/sysroot -Wl,-rpath-link,/sysroot/usr/lib64".to_string(),
+            ),
+        ];
+        let step = [
+            ("CFLAGS".to_string(), "-g -O2".to_string()),
+            ("LDFLAGS".to_string(), "-Wl,-z,now".to_string()),
+            ("MAKEFLAGS".to_string(), "-j2".to_string()),
+        ];
+        let env = super::merge_step_env(base, step, true);
+        assert_eq!(env["CFLAGS"], "--sysroot=/sysroot -g -O2");
+        assert!(
+            env["LDFLAGS"].starts_with("--sysroot=/sysroot"),
+            "{}",
+            env["LDFLAGS"]
+        );
+        assert!(env["LDFLAGS"].ends_with("-Wl,-z,now"), "{}", env["LDFLAGS"]);
+        assert_eq!(env["MAKEFLAGS"], "-j2");
+    }
+
+    #[test]
+    fn a_step_still_replaces_variables_outside_the_toolchain_flags() {
+        let base = [("MAKEFLAGS".to_string(), "-j1".to_string())];
+        let step = [("MAKEFLAGS".to_string(), "-j4".to_string())];
+        assert_eq!(super::merge_step_env(base, step, true)["MAKEFLAGS"], "-j4");
     }
 
     #[test]
@@ -636,7 +688,6 @@ mod tests {
             source_date_epoch: 1,
             jobs: NonZeroU32::new(1).expect("jobs"),
             timeout: NonZeroU64::new(1).expect("timeout"),
-            debuginfo: false,
         };
         super::prepare_cross_files(&config).expect("toolchain files");
 
@@ -678,7 +729,6 @@ mod tests {
             source_date_epoch: 1,
             jobs: NonZeroU32::new(1).expect("jobs"),
             timeout: NonZeroU64::new(3600).expect("timeout"),
-            debuginfo: false,
         };
         let error = match Sandbox::new(config) {
             Ok(_) => panic!("root and image must be mutually exclusive"),

@@ -211,7 +211,7 @@ pub mod codes {
         OUTPUT_010 = "RPMX-OUTPUT-010",
         /// A staged file is claimed by more than one output.
         OUTPUT_011 = "RPMX-OUTPUT-011",
-        /// An output matches no staged files, or debuginfo was requested with no debug files.
+        /// An output matches no staged files.
         OUTPUT_012 = "RPMX-OUTPUT-012",
         /// An output file selector is not a valid glob pattern.
         OUTPUT_013 = "RPMX-OUTPUT-013",

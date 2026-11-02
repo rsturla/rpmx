@@ -18,7 +18,6 @@ struct ShellRoot {
     cross: Option<rpmx_core::guest::CrossToolchain>,
     prefix: String,
     libdir: String,
-    debuginfo: bool,
 }
 
 pub fn run(args: ShellArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
@@ -44,7 +43,6 @@ pub fn run(args: ShellArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
             cross: None,
             prefix: rpmx_core::guest::PREFIX.to_string(),
             libdir: rpmx_core::guest::LIBDIR.to_string(),
-            debuginfo: false,
         },
         None => resolve_root(&args, &arch, pipeline_dir)?,
     };
@@ -53,7 +51,6 @@ pub fn run(args: ShellArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
     let cross = shell_root.cross;
     let prefix = shell_root.prefix;
     let libdir = shell_root.libdir;
-    let debuginfo = shell_root.debuginfo;
     let workspace = match args.workspace.clone() {
         Some(workspace) => workspace,
         None => std::env::current_dir().map_err(|error| {
@@ -143,7 +140,6 @@ pub fn run(args: ShellArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
         source_date_epoch: 0,
         jobs: crate::commands::default_jobs(),
         timeout: std::num::NonZeroU64::new(3600).expect("timeout"),
-        debuginfo,
     };
     for (key, value) in rpmx_core::sandbox::environment(&config) {
         bwrap.arg("--setenv").arg(key).arg(value);
@@ -207,7 +203,6 @@ fn resolve_root(
             cross: root.cross.clone(),
             prefix: root.document.prefix.clone(),
             libdir: root.document.libdir.clone(),
-            debuginfo: root.document.debuginfo,
             root: root.root,
         })
         .ok_or_else(|| {

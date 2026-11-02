@@ -30,6 +30,5 @@ features:
 policy:
   unowned-files: error
   require-tests: true
-  debuginfo: false
   sbom: true
   forbid-shell-actions: true

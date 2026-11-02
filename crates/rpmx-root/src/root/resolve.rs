@@ -126,7 +126,6 @@ pub fn resolve_profile(
         options: profile.options.clone(),
         prefix: profile.paths.prefix.clone(),
         libdir: profile.paths.libdir.clone(),
-        debuginfo: profile.debuginfo,
         sbom: profile.sbom,
         repositories,
         packages,

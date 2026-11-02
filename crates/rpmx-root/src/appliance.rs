@@ -104,7 +104,6 @@ pub fn profile_for(profile: &Profile, name: &str) -> Profile {
             docs: false,
         },
         paths: profile.paths.clone(),
-        debuginfo: false,
         sbom: false,
     }
 }
@@ -142,7 +141,6 @@ pub fn profile_from_lock(lock: &RootLock) -> Result<Profile> {
             prefix: lock.prefix.clone(),
             libdir: lock.libdir.clone(),
         },
-        debuginfo: false,
         sbom: false,
     })
 }
@@ -311,7 +309,6 @@ mod tests {
                 docs: true,
             },
             paths: Default::default(),
-            debuginfo: true,
             sbom: true,
         }
     }
@@ -393,7 +390,6 @@ mod tests {
         );
         assert!(!profile.options.weak_deps);
         assert!(!profile.options.docs);
-        assert!(!profile.debuginfo);
         assert!(!profile.sbom);
         assert_eq!(profile.dist_tag, None);
     }

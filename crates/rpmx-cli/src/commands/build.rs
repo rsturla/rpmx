@@ -302,7 +302,6 @@ fn package_stage(
             stage,
             arch,
             source_date_epoch,
-            debuginfo: false,
         })?;
         rpmx_core::output::phase(
             "package",

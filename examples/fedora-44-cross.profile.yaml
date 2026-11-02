@@ -24,7 +24,6 @@ cross:
   # the cross package does not. A toolchain quirk belongs in the profile.
   cflags: [-fno-link-libatomic]
   ldflags: [-fno-link-libatomic]
-debuginfo: false
 sbom: true
 options:
   weak_deps: false

@@ -22,7 +22,6 @@ repositories:
     metalink: https://mirrors.fedoraproject.org/metalink?repo=updates-released-f$releasever&arch=$basearch
 packages:
   install: [bash, coreutils, findutils, gcc, make]
-debuginfo: false
 sbom: true
 options:
   weak_deps: false

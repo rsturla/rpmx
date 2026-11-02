@@ -26,7 +26,6 @@ fn config<'a>(workspace: &'a std::path::Path, stage: &'a std::path::Path) -> San
         source_date_epoch: 1_700_000_000,
         jobs: NonZeroU32::new(1).expect("jobs"),
         timeout: NonZeroU64::new(3600).expect("timeout"),
-        debuginfo: false,
     }
 }
 

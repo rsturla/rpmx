@@ -18,7 +18,6 @@ fn root_lock(arch: &str) -> rpmx_core::root::RootLock {
         options: Default::default(),
         prefix: "/usr".to_string(),
         libdir: "/usr/lib64".to_string(),
-        debuginfo: false,
         sbom: true,
         repositories: Vec::new(),
         packages: std::collections::BTreeMap::new(),
@@ -63,7 +62,6 @@ fn source_package_contains_recipe_lock_manifest_and_sources() {
         root_lock: None,
         sysroot_lock: None,
         cross: None,
-        debuginfo: false,
         sbom: true,
     })
     .expect("prepare SRPM");
@@ -98,7 +96,6 @@ fn source_package_rejects_reserved_source_names() {
         root_lock: None,
         sysroot_lock: None,
         cross: None,
-        debuginfo: false,
         sbom: true,
     })
     .expect_err("reserved name is rejected");
@@ -116,7 +113,6 @@ fn binary_package_prepares_one_package_per_output() {
         stage: stage.path(),
         arch: "x86_64",
         source_date_epoch: 1_700_000_000,
-        debuginfo: false,
     })
     .expect("prepare RPMs");
 
@@ -165,7 +161,6 @@ outputs:
         root_lock: None,
         sysroot_lock: None,
         cross: None,
-        debuginfo: false,
         sbom: true,
     })
     .expect("prepare SRPM");
@@ -223,7 +218,6 @@ outputs:
         stage: stage.path(),
         arch: "x86_64",
         source_date_epoch: 1_700_000_000,
-        debuginfo: false,
     })
     .expect("prepare");
 
@@ -281,7 +275,6 @@ outputs:
         stage: stage.path(),
         arch: "x86_64",
         source_date_epoch: 1_700_000_000,
-        debuginfo: false,
     })
     .expect("prepare");
 
@@ -325,7 +318,6 @@ fn source_package_embeds_included_recipe_fragments() {
         root_lock: None,
         sysroot_lock: None,
         cross: None,
-        debuginfo: false,
         sbom: true,
     })
     .expect("prepare SRPM");
@@ -434,7 +426,6 @@ outputs:
         stage: root,
         arch: "x86_64",
         source_date_epoch: 1_700_000_000,
-        debuginfo: false,
     })
     .expect("prepare");
     let demo = packages
@@ -542,7 +533,6 @@ outputs:
         stage: root,
         arch: "x86_64",
         source_date_epoch: 1_700_000_000,
-        debuginfo: false,
     })
     .expect("prepare");
     let dependencies = &packages[0].dependencies;
@@ -596,7 +586,6 @@ fn a_cross_source_package_embeds_the_sysroot_and_toolchain() {
         root_lock: Some(&build_root),
         sysroot_lock: Some(&sysroot),
         cross: Some(&toolchain),
-        debuginfo: false,
         sbom: true,
     })
     .expect("prepare cross SRPM");
@@ -634,7 +623,6 @@ fn a_cross_source_package_embeds_the_sysroot_and_toolchain() {
         root_lock: Some(&build_root),
         sysroot_lock: None,
         cross: None,
-        debuginfo: false,
         sbom: true,
     })
     .expect("prepare native SRPM");

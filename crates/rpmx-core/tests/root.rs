@@ -50,7 +50,6 @@ fn lock() -> RootLock {
         options: options(),
         prefix: "/usr".to_string(),
         libdir: "/usr/lib64".to_string(),
-        debuginfo: false,
         sbom: true,
         repositories,
         packages,

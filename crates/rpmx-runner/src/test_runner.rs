@@ -21,7 +21,6 @@ pub struct TestSandboxConfig<'a> {
     pub timeout: NonZeroU64,
     pub prefix: &'a str,
     pub libdir: &'a str,
-    pub debuginfo: bool,
 }
 
 /// Run build-stage tests in the build sandbox, then installed-stage tests in a
@@ -79,7 +78,6 @@ pub fn run_planned_tests(
         timeout: settings.timeout,
         prefix: settings.prefix,
         libdir: settings.libdir,
-        debuginfo: settings.debuginfo,
     })?;
     for test in installed_tests {
         run_one_test(&test_sandbox, test)?;

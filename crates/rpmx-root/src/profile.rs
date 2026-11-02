@@ -39,9 +39,6 @@ pub struct Profile {
     /// Install layout used by every step in this build.
     #[serde(default)]
     pub paths: Paths,
-    /// Package debug sections into a `-debuginfo` output.
-    #[serde(default)]
-    pub debuginfo: bool,
     /// Emit SPDX SBOMs (per package and build-level) with each build.
     #[serde(default = "default_sbom")]
     pub sbom: bool,

@@ -180,6 +180,7 @@ Unpacking is not a step. The verified source snapshot is already extracted when 
 | `${source.dir}` | Extracted primary source directory. |
 | `${build.dir}` | Build directory. |
 | `${stage}` | Staging root, the future package root. |
+| `${bundled.dir}` | Root for build-time bundled declarations; `${build.dir}/.rpmx/bundled`. |
 | `${prefix}` | Install prefix from the profile. |
 | `${libdir}` | Library directory from the profile. |
 | `${jobs}` | Parallelism, or `auto`. |
@@ -195,13 +196,23 @@ Unpacking is not a step. The verified source snapshot is already extracted when 
 `${stage}` is also exported as the runtime environment variable `STAGE`. Recipes may use either form for `DESTDIR`.
 
 Every executor path has an environment equivalent: `SRC`/`BUILD` for
-`${source.dir}`/`${build.dir}`, `STAGE` for `${stage}`, `PREFIX`/`LIBDIR` for
-`${prefix}`/`${libdir}`, and `JOBS` for `${jobs}`. A step's `runs` script uses
+`${source.dir}`/`${build.dir}`, `STAGE` for `${stage}`, `RPMX_BUNDLED_DIR` for
+`${bundled.dir}`, `PREFIX`/`LIBDIR` for `${prefix}`/`${libdir}`, and `JOBS` for
+`${jobs}`. A step's `runs` script uses
 the variable form (`"$STAGE"`, `--prefix="$PREFIX"`); `cwd`, `argv` and `env`
 use the `${...}` form because they are not shell. Built-in steps contain no
 literal guest path and no hardcoded `/usr`; both come from the executor. The
 staging root is the only tree that is packaged; output `files.include` patterns
 are matched relative to it.
+
+Steps that vendor C or C++ code may declare the bundled components and their
+versions under `${RPMX_BUNDLED_DIR}/<output>/*.list`. The engine creates the
+root and one directory per planned output before the source-assembly and build
+pipelines start, so steps do not create them. The step writes declaration data,
+not RPM strings: the build engine reads it after the step list finishes and
+turns it into `bundled(...)` provides. Source-assembly declarations are captured
+in the source snapshot. The format and conflict rules are in
+[`19-bundled-provides.md`](19-bundled-provides.md).
 
 Patches declared at the top level of the recipe are applied in order after the
 source archives are materialised and before the source-assembly pipeline runs.
@@ -219,12 +230,13 @@ assembles a pinned lock offline and rejects drift from the recipe's test tools.
 `--sbom FILE` overrides the build-level SPDX path; per-package documents are
 embedded in the RPMs.
 
-`strip` is a reusable step (`uses: strip`). When the profile sets
-`debuginfo: true`, the sandbox sets `RPMX_DEBUGINFO=1` and injects
-`CFLAGS=-g`/`CXXFLAGS=-g`; the step extracts debug sections to
-`/usr/lib/debug/<path>.debug`, strips the binary and adds `.gnu_debuglink`.
-`prepare_binary_packages` then creates a `<name>-debuginfo` output that requires
-the main package. `-debugsource` is not generated. The policy is recorded in the
+`strip` (`uses: strip`) removes debug sections. Debug information is opt-in per
+recipe: `uses: debuginfo` replaces `strip`, extracts each ELF's debug sections
+to `$PREFIX/lib/debug/<path>.debug`, strips the binary and adds
+`.gnu_debuglink`. The recipe compiles with `-g` and declares an output that
+claims `/usr/lib/debug/**`; the engine generates no debug subpackage and the
+profile has no debuginfo field. The step fails when nothing contains DWARF.
+`-debugsource` is not generated. The policy is recorded in the
 root lock and the SRPM, so a rebuild reproduces it.
 
 The profile's `sbom: true` (the default) emits SPDX 2.3. Every binary RPM

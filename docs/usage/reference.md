@@ -151,9 +151,13 @@ A profile with a `cross` block also exports:
 - `stage: package` tests, ABI tests and reproducibility tests are not
   implemented.
 - Rich dependencies are not implemented; weak dependencies are.
+- Automatic `bundled(...)` provides and the component inventory are designed
+  but not implemented; see
+  [`../contributing/19-bundled-provides.md`](../contributing/19-bundled-provides.md).
 - SELinux labels, `%ghost`, `%lang` and arbitrary xattrs are not implemented;
   file capabilities are.
-- `-debugsource` and per-subpackage debuginfo are not implemented.
+- Debug information is opt-in per recipe (`uses: debuginfo` plus an output that
+  claims `/usr/lib/debug/**`). `-debugsource` is not generated.
 - Step-level `timeout` is parsed but not enforced individually; use
   `--step-timeout`.
 - Local `file://` repository paths are host-specific and not portable.

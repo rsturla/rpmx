@@ -160,7 +160,6 @@ pub fn execute(request: RebuildRequest<'_>) -> Result<RebuildOutput, Error> {
     let host_arch = rpmx_core::arch::Arch::current()?;
     let target_arch = rpmx_core::arch::Arch::parse(arch)?;
     let runner_kind = runner.parse::<RunnerKind>()?;
-    let debuginfo = active_lock.as_ref().is_some_and(|lock| lock.debuginfo);
     let sbom_enabled = active_lock.as_ref().map(|lock| lock.sbom).unwrap_or(true);
     let prefix = active_lock
         .as_ref()
@@ -203,7 +202,6 @@ pub fn execute(request: RebuildRequest<'_>) -> Result<RebuildOutput, Error> {
         source_date_epoch: extracted.source_date_epoch,
         jobs,
         timeout: step_timeout,
-        debuginfo,
     })?;
 
     {
@@ -328,7 +326,6 @@ pub fn execute(request: RebuildRequest<'_>) -> Result<RebuildOutput, Error> {
         stage: &stage,
         arch,
         source_date_epoch: extracted.source_date_epoch,
-        debuginfo,
     })?;
     rpmx_core::output::phase(
         "package",
@@ -428,7 +425,6 @@ pub fn execute(request: RebuildRequest<'_>) -> Result<RebuildOutput, Error> {
             source_date_epoch: extracted.source_date_epoch,
             jobs,
             timeout: step_timeout,
-            debuginfo,
             skip_installed: request.skip_installed,
             save_test_root: request.save_test_root,
             filter: request.test_filter,

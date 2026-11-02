@@ -5,6 +5,14 @@ does not promise a stable schema or CLI yet.
 
 ## Unreleased
 
+- Debug information is opt-in per recipe, as in melange: `uses: debuginfo`
+  replaces `strip`, keeps debug sections under `$PREFIX/lib/debug`, and the
+  recipe declares the output that claims them. The step fails when no staged
+  ELF contains DWARF, so a missing `-g` cannot ship an empty package. The
+  `debuginfo` profile field, the automatic `-debuginfo` subpackage and the
+  sandbox's `-g`/`RPMX_DEBUGINFO` injection are gone; a recipe sets `-g` in
+  `build.environment`, and its flags now extend the cross toolchain instead of
+  replacing it.
 - `rpmx build` and `rpmx rebuild` run the recipe's tests by default, so a green
   build means tested. `--no-tests` opts out and `--skip-installed` runs only
   build-stage tests; `--run-tests` remains as an explicit no-op.

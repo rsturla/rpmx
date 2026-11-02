@@ -1,0 +1,35 @@
+name: debuginfo
+version: 1
+summary: Keep debug sections in a separate tree and strip the binaries
+needs:
+  tools: [binutils, findutils]
+run:
+  runs: |
+    debug_root="$STAGE$PREFIX/lib/debug"
+    find "$STAGE" -type f -exec sh -c '
+      debug_root="$STAGE$PREFIX/lib/debug"
+      for f do
+        case "$f" in
+          "$debug_root/"*) continue ;;
+        esac
+        rel="$${f#"$STAGE"}"
+        debug="$debug_root$rel.debug"
+        mkdir -p "$(dirname "$debug")"
+        # --only-keep-debug succeeds on an already-stripped binary and writes
+        # a file with no DWARF. Keep nothing in that case, so a recipe that
+        # forgot -g cannot ship an empty debug package.
+        if "${OBJCOPY:-objcopy}" --only-keep-debug "$f" "$debug" 2>/dev/null &&
+           readelf -S "$debug" 2>/dev/null | grep -q "\.debug_info"; then
+          "${STRIP:-strip}" --strip-unneeded "$f" 2>/dev/null || true
+          ( cd "$(dirname "$debug")" && "${OBJCOPY:-objcopy}" --add-gnu-debuglink="$(basename "$debug")" "$f" ) 2>/dev/null || true
+        else
+          rm -f "$debug"
+        fi
+      done
+    ' sh {} +
+    find "$debug_root" -depth -type d -empty -delete 2>/dev/null || true
+    if [ -z "$(find "$debug_root" -type f -name '*.debug' -print -quit 2>/dev/null)" ]; then
+      echo "debuginfo: no staged ELF contained debug sections;" \
+           "compile with -g (for example CFLAGS in build.environment)" >&2
+      exit 1
+    fi

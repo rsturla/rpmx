@@ -44,8 +44,6 @@ pub struct RootLock {
     /// Library directory recorded from the profile.
     #[serde(default = "crate::profile::default_libdir")]
     pub libdir: String,
-    #[serde(default)]
-    pub debuginfo: bool,
     #[serde(default = "crate::profile::default_sbom")]
     pub sbom: bool,
     pub repositories: Vec<Repository>,
@@ -388,7 +386,6 @@ impl ApplianceLock {
             options: ResolveOptions::default(),
             prefix: crate::profile::default_prefix(),
             libdir: crate::profile::default_libdir(),
-            debuginfo: false,
             sbom: false,
             repositories: self.repositories.clone(),
             packages: self.packages.clone(),

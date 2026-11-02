@@ -27,7 +27,6 @@ fn attributes_and_directories_reach_the_prepared_package() {
         stage: stage.path(),
         arch: "x86_64",
         source_date_epoch: 1_700_000_000,
-        debuginfo: false,
     })
     .expect("prepare");
 
@@ -54,7 +53,6 @@ fn attributes_for_a_missing_file_are_rejected() {
         stage: stage.path(),
         arch: "x86_64",
         source_date_epoch: 1_700_000_000,
-        debuginfo: false,
     })
     .expect_err("missing attribute target");
 

@@ -403,6 +403,35 @@ Rules:
 `scriptlets` phases: `pre`, `post`, `preun`, `postun`; `interpreter` defaults to
 `/bin/sh`.
 
+#### Debug information
+
+Debug information is opt-in per recipe. Add the `debuginfo` step (it replaces
+`strip`), compile with `-g`, and declare an output that claims the debug tree:
+
+```yaml
+build:
+  environment:
+    CFLAGS: "-g"
+  pipeline:
+    - uses: make
+    - uses: debuginfo
+outputs:
+  - name: hello
+    files:
+      include: ["/usr/bin/hello"]
+  - name: hello-debuginfo
+    summary: Debug information for hello
+    files:
+      include: ["/usr/lib/debug/**"]
+```
+
+The step writes `$PREFIX/lib/debug/<path>.debug`, strips the binary and adds
+`.gnu_debuglink`. It fails when no staged ELF contains DWARF, which is almost
+always a missing `-g`, so an opt-in cannot silently produce an empty package.
+Packages with no ELF (noarch, metapackages) omit both the step and the output.
+The step uses `$OBJCOPY`/`$STRIP`, so it keeps working in a cross build; a
+recipe's `CFLAGS` extend the profile's cross flags rather than replacing them.
+
 ### 5.9 Tests
 
 ```yaml

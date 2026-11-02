@@ -115,3 +115,16 @@ outputs:
         Some("/tmp/go-cache")
     );
 }
+
+#[test]
+fn debuginfo_keeps_debug_sections_and_fails_when_there_are_none() {
+    let plan = plan_with("    - uses: debuginfo");
+    let script = &plan.cells[0].pipeline[0].args[1];
+    assert!(script.contains("--only-keep-debug"), "{script}");
+    assert!(script.contains("readelf"), "{script}");
+    assert!(script.contains("--add-gnu-debuglink"), "{script}");
+    assert!(
+        script.contains("no staged ELF contained debug sections"),
+        "{script}"
+    );
+}

@@ -421,6 +421,7 @@ outputs:
       desktop: false
       metainfo: false
       debuginfo: false
+      bundled: true
       exclude:
         - libcurl.so.4()(64bit)
 ```
@@ -429,6 +430,12 @@ Every generator is on by default. `exclude` removes a generated provide or
 require by exact match. Generated dependencies are computed at package time
 from the staged payload and merged with the output's declared dependencies;
 they are not invisible macro behaviour, and an output can turn a generator off.
+
+Bundled provides are a separate generator fed by the component inventory, not
+by the staged payload alone. Go and Rust are discovered from vendor metadata;
+C and C++ are declared explicitly with `outputs[].bundled` or a build-time
+`.rpmx/bundled/<output>/*.list` file. See
+[`19-bundled-provides.md`](19-bundled-provides.md).
 
 ### 4.6 Features
 
@@ -663,7 +670,7 @@ outputs:
         - /usr/lib/debug/**
 ```
 
-or uses `uses: debuginfo` in the pipeline, which scans the staged ELF files and writes build-id debug links and source references. This avoids depending on rpmbuild's debuginfo machinery, and it means the default package set is smaller. Distro profiles that want debuginfo for every package must opt in with a policy flag; the default is off.
+or uses `uses: debuginfo` in the pipeline, which scans the staged ELF files, writes `$PREFIX/lib/debug/<path>.debug`, adds `.gnu_debuglink` and strips the binary. This avoids depending on rpmbuild's debuginfo machinery, and it means the default package set is smaller. There is no distro-wide flag: the recipe opts in, as with melange's `split/debug`. Build-id links and source references are not generated yet.
 
 If a package has explicit outputs with the same names, auto-split fills them rather than creating duplicates. `rpmx plan` shows the resulting manifest before the build. Auto-split never silently discards a file; if a rule is ambiguous, it is an error with the path and the candidate classes.
 

@@ -273,8 +273,6 @@ pub struct LockBuild {
     pub target: Vec<String>,
     #[serde(default)]
     pub tests: Vec<String>,
-    #[serde(default)]
-    pub debuginfo: bool,
     #[serde(default = "default_sbom")]
     pub sbom: bool,
 }

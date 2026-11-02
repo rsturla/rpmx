@@ -202,7 +202,6 @@ pub fn to_lock(
         options,
         prefix: crate::profile::default_prefix(),
         libdir: crate::profile::default_libdir(),
-        debuginfo: false,
         sbom: true,
         repositories,
         packages,

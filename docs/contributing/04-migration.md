@@ -327,7 +327,7 @@ These are the questions I would want answered before freezing the schema:
 8. **Weak dependency qualifiers.** How should `pre`/`post`/`meta` qualifiers interact with outputs and scriptlets?
 9. **Scriptlet ordering.** Can typed actions be ordered deterministically without exposing RPM's transaction heuristics? What about triggers?
 10. **Kernel modules / DKMS / akmods.** These have special build and install semantics; do they need first-class steps?
-11. **Debuginfo.** Opt-in is decided. The remaining question is policy: does a distro profile turn it on globally, and does that make the default package set too large? The native writer still needs the `debuginfo` step and a `debugedit`-equivalent path.
+11. **Debuginfo.** Opt-in per package is decided and implemented as `uses: debuginfo` plus a declared output; there is no distro-wide flag. Still missing: a `debugedit`-equivalent path remap and `-debugsource`.
 12. **Multi-version installs.** Do we need slots/subslots (Gentoo) or is `compat-` packaging enough?
 13. **Noarch subpackages in arch builds.** How does the planner handle mixed-arch outputs and file conflicts?
 14. **Source RPM semantics.** What exactly goes into the native SRPM, and can an independent RPM reader verify the header and payload?

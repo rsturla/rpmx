@@ -33,7 +33,6 @@ pub struct SourcePackageOptions<'a> {
     pub sysroot_lock: Option<&'a RootLock>,
     /// Toolchain a cross build used, recorded so rebuild needs no profile.
     pub cross: Option<&'a CrossToolchain>,
-    pub debuginfo: bool,
     pub sbom: bool,
 }
 
@@ -118,7 +117,6 @@ pub fn prepare_source_packages(
             host: cell.host.clone(),
             target: cell.target.clone(),
             tests: cell.test_tools.clone(),
-            debuginfo: options.debuginfo,
             sbom: options.sbom,
         };
         let lock_root = root_lock.as_ref().map(|(_, reference)| reference);

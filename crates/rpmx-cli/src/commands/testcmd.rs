@@ -420,7 +420,6 @@ fn run_installed(
         source_date_epoch,
         jobs: args.runtime.jobs,
         timeout,
-        debuginfo: false,
     })?;
     let settings = TestSandboxConfig {
         workspace: &workspace,
@@ -434,7 +433,6 @@ fn run_installed(
         timeout,
         prefix: &lock.prefix,
         libdir: &lock.libdir,
-        debuginfo: false,
     };
     let mut outcomes = Vec::new();
     for test in selected {

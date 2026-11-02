@@ -20,5 +20,4 @@ features:
 
 policy:
   require-tests: false
-  debuginfo: false
   sbom: true

@@ -31,7 +31,6 @@ pub(super) struct TestRunOptions<'a> {
     pub(super) source_date_epoch: u32,
     pub(super) jobs: NonZeroU32,
     pub(super) timeout: NonZeroU64,
-    pub(super) debuginfo: bool,
     /// Skip installed-stage tests, which execute target binaries.
     pub(super) skip_installed: bool,
     /// Keep the prepared test root here instead of deleting it.
@@ -100,7 +99,6 @@ pub(super) fn run(options: TestRunOptions<'_>) -> Result<Option<PathBuf>, Error>
         timeout: options.timeout,
         prefix,
         libdir,
-        debuginfo: options.debuginfo,
     };
     let mut outcomes = Vec::new();
     for test in &tests {

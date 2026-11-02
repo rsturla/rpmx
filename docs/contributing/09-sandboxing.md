@@ -259,7 +259,6 @@ pub struct SandboxConfig<'a> {
     pub source_date_epoch: u32,
     pub jobs: NonZeroU32,
     pub timeout: NonZeroU64,
-    pub debuginfo: bool,
 }
 
 pub struct RunnerConfig<'a> {
@@ -292,8 +291,8 @@ pub trait Session {
 }
 ```
 
-`source_date_epoch` and `debuginfo` are policy fields: the sandbox applies them
-to the environment and never passes them to a backend. `Sandbox::new` resolves
+`source_date_epoch` is a policy field: the sandbox applies it to the
+environment and never passes it to a backend. `Sandbox::new` resolves
 `RunnerKind` (`auto`, `bwrap`, `podman` or `qemu`) into a runner and rejects
 contradictory selections eagerly (a foreign bubblewrap target without an
 assembled root or a usable binfmt handler, or qemu without a root). The `supports` check itself is deferred to the first
