@@ -3,6 +3,7 @@ use std::path::Path;
 
 use crate::package_spec::{SourcePackageFile, SourcePackageSpec};
 use rpmx_base::error::{codes, Error, Result};
+use rpmx_base::guest::CrossToolchain;
 use rpmx_language::model::Recipe;
 use rpmx_language::plan::{Plan, PlannedStep};
 use rpmx_language::steps;
@@ -28,6 +29,10 @@ pub struct SourcePackageOptions<'a> {
     pub sources: &'a Path,
     pub source_date_epoch: u32,
     pub root_lock: Option<&'a RootLock>,
+    /// Target sysroot lock for a cross build.
+    pub sysroot_lock: Option<&'a RootLock>,
+    /// Toolchain a cross build used, recorded so rebuild needs no profile.
+    pub cross: Option<&'a CrossToolchain>,
     pub debuginfo: bool,
     pub sbom: bool,
 }
@@ -44,6 +49,7 @@ pub fn prepare_source_packages(
                 | "RPMX-MANIFEST.json"
                 | "RPMX-STEPS.json"
                 | "root.lock.json"
+                | "sysroot.lock.json"
         ) || options
             .recipe_includes
             .iter()
@@ -78,6 +84,33 @@ pub fn prepare_source_packages(
         None => None,
     };
 
+    let sysroot_lock = match options.sysroot_lock {
+        Some(lock) => {
+            let mut text = serde_json::to_string_pretty(lock)
+                .map_err(|error| Error::new(codes::SRPM_006, error.to_string()))?;
+            text.push('\n');
+            let digest = srpm::sha512_hex(text.as_bytes());
+            Some((
+                text,
+                srpm::LockRoot {
+                    path: "sysroot.lock.json".to_string(),
+                    digest,
+                },
+            ))
+        }
+        None => None,
+    };
+    let cross = match (&sysroot_lock, options.cross) {
+        (Some((_, reference)), Some(toolchain)) => Some(srpm::LockCross {
+            sysroot: reference.clone(),
+            triple: toolchain.triple.clone(),
+            cflags: toolchain.cflags.clone(),
+            cxxflags: toolchain.cxxflags.clone(),
+            ldflags: toolchain.ldflags.clone(),
+        }),
+        _ => None,
+    };
+
     let mut packages = Vec::with_capacity(options.plan.cells.len());
     for cell in &options.plan.cells {
         let build = srpm::LockBuild {
@@ -100,6 +133,7 @@ pub fn prepare_source_packages(
             &steps,
             srpm::LockBuildRef {
                 root_lock: lock_root,
+                cross: cross.as_ref(),
                 build: &build,
             },
         )?;
@@ -144,6 +178,13 @@ pub fn prepare_source_packages(
         if let Some((text, _)) = &root_lock {
             files.push(SourcePackageFile {
                 path: "root.lock.json".to_string(),
+                data: text.as_bytes().to_vec(),
+                mode: 0o644,
+            });
+        }
+        if let Some((text, _)) = &sysroot_lock {
+            files.push(SourcePackageFile {
+                path: "sysroot.lock.json".to_string(),
                 data: text.as_bytes().to_vec(),
                 mode: 0o644,
             });

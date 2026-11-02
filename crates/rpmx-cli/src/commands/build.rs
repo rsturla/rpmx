@@ -512,6 +512,10 @@ fn build_one(
         .and_then(|root| root.sysroot.as_ref())
         .map(|sysroot| sysroot.root.clone());
     let cross = automatic.as_ref().and_then(|root| root.cross.clone());
+    let sysroot_lock: Option<rpmx_core::root::RootLock> = automatic
+        .as_ref()
+        .and_then(|root| root.sysroot.as_ref())
+        .map(|sysroot| sysroot.document.clone());
     let sysroot_packages: Option<std::collections::BTreeSet<String>> = automatic
         .as_ref()
         .and_then(|root| root.sysroot.as_ref())
@@ -601,6 +605,7 @@ fn build_one(
         sysroot: sysroot.as_deref(),
         cross: cross.as_ref(),
         sysroot_packages: sysroot_packages.as_ref(),
+        sysroot_lock: sysroot_lock.as_ref(),
         runner: &args.runner,
         policy,
         profile,

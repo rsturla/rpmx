@@ -49,6 +49,7 @@ fn lock_and_manifest_are_deterministic() {
         &steps,
         LockBuildRef {
             root_lock: None,
+            cross: None,
             build: &build,
         },
     )
@@ -64,6 +65,7 @@ fn lock_and_manifest_are_deterministic() {
         &steps,
         LockBuildRef {
             root_lock: None,
+            cross: None,
             build: &build,
         },
     )

@@ -39,6 +39,8 @@ fn source_package_contains_recipe_lock_manifest_and_sources() {
         sources: sources.path(),
         source_date_epoch: 1_700_000_000,
         root_lock: None,
+        sysroot_lock: None,
+        cross: None,
         debuginfo: false,
         sbom: true,
     })
@@ -72,6 +74,8 @@ fn source_package_rejects_reserved_source_names() {
         sources: sources.path(),
         source_date_epoch: 1_700_000_000,
         root_lock: None,
+        sysroot_lock: None,
+        cross: None,
         debuginfo: false,
         sbom: true,
     })
@@ -137,6 +141,8 @@ outputs:
         sources: sources.path(),
         source_date_epoch: 1_700_000_000,
         root_lock: None,
+        sysroot_lock: None,
+        cross: None,
         debuginfo: false,
         sbom: true,
     })
@@ -295,6 +301,8 @@ fn source_package_embeds_included_recipe_fragments() {
         sources: sources.path(),
         source_date_epoch: 1_700_000_000,
         root_lock: None,
+        sysroot_lock: None,
+        cross: None,
         debuginfo: false,
         sbom: true,
     })

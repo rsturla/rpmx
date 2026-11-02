@@ -122,6 +122,10 @@ pub fn run(args: TestArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
         .and_then(|root| root.sysroot.as_ref())
         .map(|sysroot| sysroot.root.clone());
     let cross = automatic.as_ref().and_then(|root| root.cross.clone());
+    let sysroot_lock: Option<rpmx_core::root::RootLock> = automatic
+        .as_ref()
+        .and_then(|root| root.sysroot.as_ref())
+        .map(|sysroot| sysroot.document.clone());
     let exec = if sysroot.is_some() {
         host_arch
     } else {
@@ -160,6 +164,7 @@ pub fn run(args: TestArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
         sysroot: sysroot.as_deref(),
         cross: cross.as_ref(),
         sysroot_packages: sysroot_packages.as_ref(),
+        sysroot_lock: sysroot_lock.as_ref(),
         runner: &args.runner,
         policy,
         profile: args.policy.profile.as_deref(),

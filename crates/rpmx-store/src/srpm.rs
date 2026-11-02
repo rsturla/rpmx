@@ -249,6 +249,20 @@ pub struct LockRoot {
     pub digest: String,
 }
 
+/// The target half of a cross build: where the sysroot lock lives and which
+/// toolchain the build used.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct LockCross {
+    pub sysroot: LockRoot,
+    pub triple: String,
+    #[serde(default)]
+    pub cflags: Vec<String>,
+    #[serde(default)]
+    pub cxxflags: Vec<String>,
+    #[serde(default)]
+    pub ldflags: Vec<String>,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct LockBuild {
     #[serde(default)]
@@ -268,6 +282,7 @@ pub struct LockBuild {
 #[derive(Clone, Copy)]
 pub struct LockBuildRef<'a> {
     pub root_lock: Option<&'a LockRoot>,
+    pub cross: Option<&'a LockCross>,
     pub build: &'a LockBuild,
 }
 
@@ -286,6 +301,10 @@ pub struct PackageLock {
     pub steps: Vec<LockStep>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub root_lock: Option<LockRoot>,
+    /// Present when the SRPM was produced by a cross build. It names the
+    /// embedded sysroot lock, so `rpmx rebuild` needs no profile.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cross: Option<LockCross>,
     pub build: LockBuild,
 }
 
@@ -356,6 +375,7 @@ pub fn lock_json(
             })
             .collect(),
         root_lock: context.root_lock.cloned(),
+        cross: context.cross.cloned(),
         build: context.build.clone(),
     };
     json(value)

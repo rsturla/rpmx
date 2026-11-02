@@ -27,6 +27,8 @@ pub struct BuildPipeline<'a> {
     pub cross: Option<&'a rpmx_core::guest::CrossToolchain>,
     /// Package names in the target sysroot, which satisfy host dependencies.
     pub sysroot_packages: Option<&'a std::collections::BTreeSet<String>>,
+    /// Target sysroot lock, embedded in each SRPM for a cross build.
+    pub sysroot_lock: Option<&'a rpmx_core::root::RootLock>,
     pub runner: &'a str,
     pub policy: PlanPolicy<'a>,
     pub profile: Option<&'a Path>,
@@ -117,6 +119,8 @@ impl BuildPipeline<'_> {
                 cell: Some(&planned.id),
                 root_lock: self.root_lock,
                 exec: self.exec,
+                sysroot_lock: self.sysroot_lock,
+                cross: self.cross,
                 signing: self.signing,
                 quiet: true,
                 pipeline_dir: self.pipeline_dir,

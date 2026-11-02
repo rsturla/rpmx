@@ -23,6 +23,10 @@ pub struct SrpmRequest<'a> {
     pub root_lock: Option<&'a Path>,
     /// Where the build steps will run: the host for a cross build.
     pub exec: rpmx_core::arch::Arch,
+    /// Target sysroot lock, embedded so `rpmx rebuild` needs no profile.
+    pub sysroot_lock: Option<&'a rpmx_core::root::RootLock>,
+    /// Toolchain recorded in the embedded cross block.
+    pub cross: Option<&'a rpmx_core::guest::CrossToolchain>,
     pub signing: &'a OptionalSigningArgs,
     pub quiet: bool,
     pub pipeline_dir: Option<&'a Path>,
@@ -95,6 +99,8 @@ pub fn run(args: SrpmArgs, pipeline_dir: Option<&Path>) -> Result<Vec<PathBuf>, 
         cell: args.cell.as_deref(),
         root_lock: args.root_lock.as_deref(),
         exec: rpmx_core::arch::Arch::parse(&arch)?,
+        sysroot_lock: None,
+        cross: None,
         signing: &args.signing,
         quiet: args.quiet,
         pipeline_dir,
@@ -169,6 +175,8 @@ pub fn execute(request: SrpmRequest<'_>) -> Result<Vec<PathBuf>, Error> {
         sources: request.sources,
         source_date_epoch,
         root_lock: root_lock.as_ref(),
+        sysroot_lock: request.sysroot_lock,
+        cross: request.cross,
         debuginfo,
         sbom,
     })?;
