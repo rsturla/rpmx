@@ -409,6 +409,27 @@ impl Profile {
             Some(host) => normalize_arch(host)?,
             None => rpmx_base::arch::Arch::current()?.as_str(),
         };
+        let native = rpmx_base::arch::Arch::current()?;
+        if host != native.as_str() {
+            return Err(Error::new(
+                codes::ROOT_006,
+                format!(
+                    "cross build root is {host}, but rpmx is running on {native}; \
+                     build on the {host} host or use a native profile"
+                ),
+            ));
+        }
+        for arch in &self.archs {
+            if normalize_arch(arch)? == host {
+                return Err(Error::new(
+                    codes::ROOT_006,
+                    format!(
+                        "cross target {host} equals the build-root architecture; \
+                         remove the cross block and build natively"
+                    ),
+                ));
+            }
+        }
         let mut profile = self.clone();
         profile.name = Some(format!("{}-build", self.name("profile")));
         profile.archs = vec![host.to_string()];
@@ -478,29 +499,21 @@ impl Profile {
                 ));
             }
         }
-        let native = rpmx_base::arch::Arch::current()?;
-        let host = match &cross.host {
-            Some(host) => normalize_arch(host)?,
-            None => native.as_str(),
-        };
-        if host != native.as_str() {
-            return Err(Error::new(
-                codes::ROOT_006,
-                format!(
-                    "cross build root is {host}, but rpmx is running on {native}; \
-                     only a native build root is supported"
-                ),
-            ));
-        }
-        for arch in &self.archs {
-            if normalize_arch(arch)? == host {
-                return Err(Error::new(
-                    codes::ROOT_006,
-                    format!(
-                        "cross target {host} equals the build-root architecture; \
-                         remove the cross block and build natively"
-                    ),
-                ));
+        // A profile is portable data: it records which host its build root is
+        // for, but loading it on another machine is allowed. Only deriving a
+        // build root enforces that it is the current host and not the target.
+        if let Some(host) = &cross.host {
+            let host = normalize_arch(host)?;
+            for arch in &self.archs {
+                if normalize_arch(arch)? == host {
+                    return Err(Error::new(
+                        codes::ROOT_006,
+                        format!(
+                            "cross target {host} equals the build-root architecture; \
+                             remove the cross block and build natively"
+                        ),
+                    ));
+                }
             }
         }
         Ok(())
@@ -856,28 +869,56 @@ cross:
     }
 
     #[test]
-    fn a_cross_build_root_must_be_the_native_architecture() {
+    fn a_cross_build_root_is_checked_when_it_is_derived() {
+        let native = rpmx_base::arch::Arch::current().expect("host");
         let target = other_arch();
+        // A third architecture: not this host, not the target.
+        let foreign = ["s390x", "ppc64le", "aarch64", "x86_64", "i686"]
+            .into_iter()
+            .find(|arch| *arch != native.as_str() && *arch != target)
+            .expect("a third architecture");
         let text = cross_profile(
             target,
-            &format!("  host: {target}\n  packages: [toolchain-cc]"),
+            &format!("  host: {foreign}\n  packages: [toolchain-cc]"),
         );
-        let error = parse_profile(&text).expect_err("foreign build root");
+        // A profile is portable data: loading it on another host is fine.
+        let profile = parse_profile(&text).expect("a cross profile is valid data");
+        // Deriving a build root for the wrong host is not.
+        let error = profile
+            .build_root_profile()
+            .expect_err("a foreign build root cannot be assembled here");
         assert_eq!(error.code, codes::ROOT_006);
         assert!(error.message.contains("running on"), "{}", error.message);
+        // The sysroot half stays usable, which is what a target machine
+        // testing prebuilt packages needs.
+        assert_eq!(
+            profile.sysroot_profile().expect("sysroot").archs,
+            vec![target.to_string()]
+        );
     }
 
     #[test]
     fn a_cross_target_must_differ_from_the_build_root() {
         let native = rpmx_base::arch::Arch::current().unwrap().as_str();
-        let text = cross_profile(native, "  packages: [toolchain-cc]");
-        let error = parse_profile(&text).expect_err("same architecture");
+        // Without an explicit host the check happens when the build root is
+        // derived, because the host is only known then.
+        let profile = parse_profile(&cross_profile(native, "  packages: [toolchain-cc]"))
+            .expect("portable profile");
+        let error = profile.build_root_profile().expect_err("same architecture");
         assert_eq!(error.code, codes::ROOT_006);
         assert!(
             error.message.contains("build natively"),
             "{}",
             error.message
         );
+
+        // An explicit host is checked at parse time.
+        let text = cross_profile(
+            native,
+            &format!("  host: {native}\n  packages: [toolchain-cc]"),
+        );
+        let error = parse_profile(&text).expect_err("explicit same host");
+        assert_eq!(error.code, codes::ROOT_006);
     }
 
     #[test]
