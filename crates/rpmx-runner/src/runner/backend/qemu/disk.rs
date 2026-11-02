@@ -285,6 +285,9 @@ pub(super) fn free_port() -> Result<u16> {
         .port())
 }
 
+// The VM needs both disks, both forwarded ports and the log path; grouping
+// them would only move the same fields into a struct used once.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn start_vm(
     qemu: &str,
     config: &RunnerConfig<'_>,

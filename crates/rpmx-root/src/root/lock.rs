@@ -540,7 +540,7 @@ pub fn load_lock(path: &Path) -> Result<RootLock> {
             // Legacy locks stored the QEMU appliance directly. Normalise it
             // into the generic runner-assets shape before deserialising.
             if let serde_yaml_ng::Value::Mapping(mapping) = &mut document {
-                mapping.remove(&serde_yaml_ng::Value::String("appliance".to_string()));
+                mapping.remove(serde_yaml_ng::Value::String("appliance".to_string()));
                 let mut assets = serde_yaml_ng::Mapping::new();
                 assets.insert(
                     serde_yaml_ng::Value::String("qemu_appliance".to_string()),
