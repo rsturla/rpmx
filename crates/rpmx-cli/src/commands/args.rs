@@ -199,9 +199,10 @@ pub struct LintArgs {
     /// Recipe to check. (default: ./package.yaml).
     #[arg(default_value = "package.yaml")]
     pub file: PathBuf,
-    /// Target architecture used for templates.
-    #[arg(long, default_value = rpmx_core::arch::native_arch())]
-    pub arch: String,
+    /// Target architecture used for templates. Defaults to the single target
+    /// the recipe's profile declares, or the host architecture.
+    #[arg(long)]
+    pub arch: Option<String>,
     #[command(flatten)]
     pub policy: crate::cli::PolicyArgs,
     /// Treat warnings as errors.
@@ -262,9 +263,10 @@ pub struct ExplainArgs {
     /// Recipe to explain (default: ./package.yaml).
     #[arg(default_value = "package.yaml")]
     pub file: PathBuf,
-    /// Target architecture used for templates.
-    #[arg(long, default_value = rpmx_core::arch::native_arch())]
-    pub arch: String,
+    /// Target architecture used for templates. Defaults to the single target
+    /// the recipe's profile declares, or the host architecture.
+    #[arg(long)]
+    pub arch: Option<String>,
     #[command(flatten)]
     pub policy: crate::cli::PolicyArgs,
 }
@@ -386,9 +388,10 @@ pub struct PlanArgs {
     /// Recipe to plan. (default: ./package.yaml).
     #[arg(default_value = "package.yaml")]
     pub file: PathBuf,
-    /// Target architecture used for templates.
-    #[arg(long, default_value = rpmx_core::arch::native_arch())]
-    pub arch: String,
+    /// Target architecture used for templates. Defaults to the single target
+    /// the recipe's profile declares, or the host architecture.
+    #[arg(long)]
+    pub arch: Option<String>,
     #[command(flatten)]
     pub policy: crate::cli::PolicyArgs,
 }

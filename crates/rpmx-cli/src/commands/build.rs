@@ -35,6 +35,19 @@ impl ArchArtifacts {
 }
 
 pub fn run(args: BuildArgs, pipeline_dir: Option<&Path>) -> Result<Vec<PathBuf>, Error> {
+    if args.save_test_root.is_some() && !args.run_tests && args.test.is_empty() {
+        return Err(Error::new(
+            codes::CLI_001,
+            "--save-test-root needs --run-tests (or --test NAME); there is no test root otherwise",
+        ));
+    }
+    if args.save_test_root.is_some() && args.skip_installed {
+        return Err(Error::new(
+            codes::CLI_001,
+            "--save-test-root cannot be combined with --skip-installed; \
+             the root exists for installed-stage tests",
+        ));
+    }
     let resolved = resolve_policy(PolicyInput {
         profile: args.policy.profile.as_deref(),
         dist_tag: args.policy.dist_tag.as_deref(),

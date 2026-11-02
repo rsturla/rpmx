@@ -66,9 +66,14 @@ pub fn run(args: LintArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
         dist_tag: args.policy.dist_tag.as_deref(),
         build_release: args.policy.build_release,
     })?;
+    let arch = crate::commands::command_arch(
+        &args.file,
+        args.arch.as_deref(),
+        args.policy.profile.as_deref(),
+    )?;
     let (bundle, plan) = load_plan(
         &args.file,
-        &args.arch,
+        &arch,
         pipeline_dir,
         false,
         true,

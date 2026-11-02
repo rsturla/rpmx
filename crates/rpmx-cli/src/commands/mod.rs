@@ -35,6 +35,26 @@ pub use loader::{load_plan, step_root};
 use std::num::NonZeroU32;
 use std::path::PathBuf;
 
+/// The architecture a read-only command should plan for.
+///
+/// An explicit `--arch` wins; otherwise a single-target profile supplies it,
+/// and the host is the last resort. Every command uses this so a cross recipe
+/// is inspected as the architecture it builds.
+pub fn command_arch(
+    file: &std::path::Path,
+    explicit: Option<&str>,
+    profile: Option<&std::path::Path>,
+) -> Result<String, rpmx_core::Error> {
+    if let Some(arch) = explicit {
+        return Ok(arch.to_string());
+    }
+    let declared = rpmx_core::load_recipe_bundle(file)?;
+    Ok(
+        crate::commands::autoroot::declared_arch(&declared.recipe, &declared.root, profile)?
+            .unwrap_or_else(|| rpmx_core::arch::native_arch().to_string()),
+    )
+}
+
 /// The architecture recorded in an RPM or SRPM header.
 ///
 /// `rpmx rebuild` uses it so a cross SRPM rebuilds for its target without an

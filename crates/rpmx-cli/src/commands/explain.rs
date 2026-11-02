@@ -14,7 +14,12 @@ pub fn run(args: ExplainArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> 
         build_release: args.policy.build_release,
     })?;
     let policy = resolved.plan_policy();
-    let (bundle, plan) = load_plan(&args.file, &args.arch, pipeline_dir, false, true, policy)?;
+    let arch = crate::commands::command_arch(
+        &args.file,
+        args.arch.as_deref(),
+        args.policy.profile.as_deref(),
+    )?;
+    let (bundle, plan) = load_plan(&args.file, &arch, pipeline_dir, false, true, policy)?;
 
     let value = match args.topic.as_str() {
         "policy" => serde_json::json!({
@@ -34,7 +39,7 @@ pub fn run(args: ExplainArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> 
             &plan,
             &bundle.root,
             args.policy.profile.as_deref(),
-            &args.arch,
+            &arch,
         )? {
             Some(requirement) => serde_json::json!({
                 "profile": requirement.name,

@@ -61,6 +61,26 @@ pub fn run(args: TestArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
             "this recipe declares no tests; add a tests: block",
         ));
     }
+    if args.install_dir.is_some() && args.test_root.is_some() {
+        return Err(Error::new(
+            codes::TEST_004,
+            "--install-dir installs packages into a root; --test-root runs one that is already prepared",
+        ));
+    }
+    if args.save_test_root.is_some() && args.skip_installed {
+        return Err(Error::new(
+            codes::TEST_004,
+            "--save-test-root cannot be combined with --skip-installed",
+        ));
+    }
+    if let Some(root) = &args.test_root {
+        if !root.is_dir() {
+            return Err(Error::new(
+                codes::TEST_003,
+                format!("--test-root {} is not a directory", root.display()),
+            ));
+        }
+    }
     if args.install_dir.is_some() && args.skip_installed {
         return Err(Error::new(
             codes::TEST_004,
@@ -343,7 +363,7 @@ fn run_installed(
         None => {
             prepare_test_root(TestRootOptions {
                 lock: &lock,
-                destination: None,
+                destination: args.save_test_root.as_deref(),
                 pinned: args.test_root_lock.as_deref(),
                 tools: &tools,
                 rpms,
@@ -434,7 +454,7 @@ fn run_installed(
         .iter()
         .filter(|outcome| outcome.error.is_some())
         .count();
-    if args.test_root.is_none() {
+    if args.test_root.is_none() && args.save_test_root.is_none() {
         let _ = rpmx_core::root::remove_tree(&test_root_path);
     }
     if rpmx_core::output::json() {
