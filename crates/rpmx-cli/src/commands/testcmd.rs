@@ -91,13 +91,44 @@ pub fn run(args: TestArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
     }
     if let Some(root) = &automatic {
         eprintln!(
-            "root {} x86_64 {} packages {} ({})",
+            "root {} {} {} packages {} ({})",
             root.profile,
+            root.document
+                .archs
+                .first()
+                .map(String::as_str)
+                .unwrap_or("-"),
             root.packages,
             root.document.root_digest.as_deref().unwrap_or("-"),
             if root.cached { "cache" } else { "resolved" }
         );
     }
+    // Build-stage tests run in the same sandbox as a build: natively in the
+    // build root for a cross profile, with the target sysroot mounted.
+    let host_arch = rpmx_core::arch::Arch::current()?;
+    let target_arch = rpmx_core::arch::Arch::parse(&args.arch)?;
+    let sysroot: Option<std::path::PathBuf> = automatic
+        .as_ref()
+        .and_then(|root| root.sysroot.as_ref())
+        .map(|sysroot| sysroot.root.clone());
+    let cross = automatic.as_ref().and_then(|root| root.cross.clone());
+    let exec = if sysroot.is_some() {
+        host_arch
+    } else {
+        target_arch
+    };
+    let sysroot_packages: Option<std::collections::BTreeSet<String>> = automatic
+        .as_ref()
+        .and_then(|root| root.sysroot.as_ref())
+        .map(|sysroot| {
+            sysroot
+                .document
+                .packages
+                .values()
+                .flatten()
+                .map(|package| package.name.clone())
+                .collect()
+        });
     if let Some((rpms, tests, tools)) = installed {
         return run_installed(
             &args,
@@ -114,10 +145,10 @@ pub fn run(args: TestArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
         file: &args.file,
         output: &output,
         arch: &args.arch,
-        exec: rpmx_core::arch::Arch::parse(&args.arch)?,
-        sysroot: None,
-        cross: None,
-        sysroot_packages: None,
+        exec,
+        sysroot: sysroot.as_deref(),
+        cross: cross.as_ref(),
+        sysroot_packages: sysroot_packages.as_ref(),
         runner: &args.runner,
         policy,
         profile: args.policy.profile.as_deref(),

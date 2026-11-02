@@ -406,8 +406,9 @@ set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
 set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
 set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
 set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE ONLY)
-set(CMAKE_EXE_LINKER_FLAGS \"--sysroot={sysroot} -Wl,-rpath-link,{sysroot}{libdir}\")
-set(CMAKE_SHARED_LINKER_FLAGS \"--sysroot={sysroot} -Wl,-rpath-link,{sysroot}{libdir}\")
+# Linker flags come from the exported LDFLAGS, which already carries the
+# sysroot, the rpath-link and any profile flags. Setting them here would
+# override that environment and silently drop the profile's flags.
 set(PKG_CONFIG_EXECUTABLE {pkg_config})
 ",
         cc = toolchain.cc,

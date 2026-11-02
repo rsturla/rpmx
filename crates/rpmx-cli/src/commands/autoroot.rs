@@ -235,7 +235,6 @@ pub fn ensure(
         cache,
         offline,
         refresh,
-        arch,
         Assembly::Install,
     )?;
     if let Some(sysroot) = &requirement.sysroot {
@@ -246,7 +245,6 @@ pub fn ensure(
             cache,
             offline,
             refresh,
-            arch,
             Assembly::Extract,
         )?;
         // The build root stays read-only at run time, so the sysroot mount
@@ -284,9 +282,11 @@ fn ensure_root(
     cache: Option<&Path>,
     offline: bool,
     refresh: bool,
-    arch: &str,
     assembly: Assembly,
 ) -> Result<AutomaticRoot, Error> {
+    // Verify the root against its own profile, never the caller's target: a
+    // cross build root is host-arch and would otherwise never cache-hit.
+    let arch = profile.arch();
     let profile = profile.clone();
     let name = name.to_string();
     let digest = digest.to_string();
