@@ -1,0 +1,69 @@
+# yaml-language-server: $schema=https://example.org/rpmx/package.schema.json
+#
+# DESIGN SKETCH - not buildable yet.
+#
+# This is Acme's fork of toolbox. It is a normal package.yaml under the distro
+# directory. `rpmx distro fork acme toolbox` creates the skeleton; the packager
+# then edits it like any other recipe.
+#
+# There is no `pipeline: replace`, no delta and no identity field in a delta.
+# Because this fork may ship beside the upstream package, its release differs.
+
+schema: 1
+
+package:
+  name: toolbox
+  version: "3.1.0"
+  release: "1.fips"
+  summary: An example package with a single opaque build script
+  license: MIT
+  source-date-epoch: 1704067200
+
+build:
+  pipeline:
+    - uses: autotools
+    - name: install-fips-helper
+      argv:
+        - install
+        - -D
+        - -m
+        - "0755"
+        - tools/fips-postcheck
+        - ${stage}/usr/libexec/fips-postcheck
+    - name: fips-postcheck
+      argv:
+        - ${stage}/usr/libexec/fips-postcheck
+        - ${stage}/usr/bin/toolbox
+    - uses: strip
+
+  dependencies:
+    tools: [gcc, make, autoconf, automake, libtool]
+
+sources:
+  - name: toolbox
+    digest: "sha512:00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    locators:
+      - kind: https
+        url: https://example.org/toolbox-3.1.0.tar.xz
+    extract:
+      format: tar.xz
+      strip-components: 1
+
+outputs:
+  - name: toolbox
+    summary: An example package with a single opaque build script
+    files:
+      include:
+        - /usr/bin/toolbox
+        - /usr/libexec/toolbox/**
+
+  - name: toolbox-fips
+    summary: FIPS self-test helper for toolbox
+    files:
+      include:
+        - /usr/libexec/fips-postcheck
+
+tests:
+  - name: installed
+    stage: installed
+    argv: ["toolbox", "--version"]

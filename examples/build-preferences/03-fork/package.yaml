@@ -1,0 +1,50 @@
+# yaml-language-server: $schema=https://example.org/rpmx/package.schema.json
+#
+# DESIGN SKETCH - not buildable yet.
+#
+# This recipe is deliberately hard to override: the whole build is one opaque
+# script. There is no configure phase, no compile phase and no install phase
+# for a package override to target.
+
+schema: 1
+
+package:
+  name: toolbox
+  version: "3.1.0"
+  release: 1
+  summary: An example package with a single opaque build script
+  license: MIT
+  source-date-epoch: 1704067200
+
+build:
+  pipeline:
+    - name: build-everything
+      runs: |
+        make -f Makefile.dist
+        make -f Makefile.dist check
+        make -f Makefile.dist install DESTDIR="$STAGE"
+
+sources:
+  # The tarball ships both Makefile.dist (used here) and the Autotools files
+  # used by the Acme fork.
+  - name: toolbox
+    digest: "sha512:00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    locators:
+      - kind: https
+        url: https://example.org/toolbox-3.1.0.tar.xz
+    extract:
+      format: tar.xz
+      strip-components: 1
+
+outputs:
+  - name: toolbox
+    summary: An example package with a single opaque build script
+    files:
+      include:
+        - /usr/bin/toolbox
+        - /usr/libexec/toolbox/**
+
+tests:
+  - name: installed
+    stage: installed
+    argv: ["toolbox", "--version"]

@@ -1,0 +1,24 @@
+# yaml-language-server: $schema=https://example.org/rpmx/distro.schema.json
+#
+# DESIGN SKETCH - proposed distro document.
+#
+# Wolfi-like uses the upstream toolbox recipe unchanged.
+
+document: rpmx-distro
+version: 1
+name: wolfi
+extends: fedora-44
+dist-tag: .wolfi1
+
+flags:
+  cflags: [-Os, -g0]
+  ldflags: [-Wl,-z,relro, -Wl,-z,now]
+
+features:
+  enable: []
+  disable: []
+
+policy:
+  require-tests: false
+  debuginfo: false
+  sbom: true

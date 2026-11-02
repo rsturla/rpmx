@@ -1,0 +1,24 @@
+# yaml-language-server: $schema=https://example.org/rpmx/distro.schema.json
+#
+# DESIGN SKETCH - proposed distro document.
+#
+# Acme needs a FIPS build of toolbox. The upstream recipe is one opaque script,
+# so Acme carries a fork recipe at packages/toolbox/package.yaml.
+
+document: rpmx-distro
+version: 1
+name: acme
+extends: fedora-44
+dist-tag: .acme1
+
+flags:
+  cflags: [-O2, -g, -pipe]
+  ldflags: [-Wl,-z,relro, -Wl,-z,now]
+
+features:
+  enable: []
+  disable: []
+
+policy:
+  require-tests: true
+  sbom: true

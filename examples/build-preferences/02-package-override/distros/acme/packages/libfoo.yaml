@@ -1,0 +1,36 @@
+# yaml-language-server: $schema=https://example.org/rpmx/package-override.schema.json
+#
+# DESIGN SKETCH - proposed package override.
+#
+# This is the entire Acme change for libfoo. It is auto-discovered as
+# distros/acme/packages/libfoo.yaml when building with --distro acme.
+#
+# There is no recipe digest to paste, no slot to name, and no delta document.
+# The lock records the recipe digest; --locked catches drift.
+
+document: rpmx-package-override
+version: 1
+package: libfoo
+
+patches:
+  - file: libfoo/0001-ca-bundle.patch
+    reason: Use the Acme CA bundle path
+    resolves:
+      - CVE-2024-1234
+
+flags:
+  cflags:
+    append: [-D_FORTIFY_SOURCE=3]
+
+# The step that configures the build, whatever build system it uses.
+configure:
+  args:
+    append: [--enable-fips]
+
+# Add a distro check after the project's own check phase.
+after:
+  check:
+    - name: fips-postcheck
+      argv:
+        - /usr/libexec/fips-postcheck
+        - ${stage}/usr/lib/libfoo.so.2

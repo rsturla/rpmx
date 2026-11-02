@@ -1,0 +1,9 @@
+--- a/foo.pc.in
++++ b/foo.pc.in
+@@ -1,5 +1,5 @@
+ prefix=@prefix@
+ exec_prefix=${prefix}
+-libdir=@libdir@
++libdir=/usr/lib64
+ includedir=${prefix}/include
+ 

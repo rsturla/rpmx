@@ -1,0 +1,23 @@
+# yaml-language-server: $schema=https://example.org/rpmx/distro.schema.json
+#
+# DESIGN SKETCH - proposed distro document.
+#
+# Community selects GnuTLS and has no libfoo override.
+
+document: rpmx-distro
+version: 1
+name: community
+extends: fedora-44
+dist-tag: .com1
+
+flags:
+  cflags: [-O2, -g]
+  ldflags: [-Wl,-z,relro, -Wl,-z,now]
+
+features:
+  enable: [gnutls]
+  disable: [ssl, idn]
+
+policy:
+  require-tests: true
+  sbom: true

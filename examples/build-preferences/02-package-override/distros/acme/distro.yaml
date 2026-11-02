@@ -1,0 +1,23 @@
+# yaml-language-server: $schema=https://example.org/rpmx/distro.schema.json
+#
+# DESIGN SKETCH - proposed distro document.
+#
+# Acme selects OpenSSL and has one package override for libfoo.
+
+document: rpmx-distro
+version: 1
+name: acme
+extends: fedora-44
+dist-tag: .acme1
+
+flags:
+  cflags: [-O2, -g, -pipe]
+  ldflags: [-Wl,-z,relro, -Wl,-z,now]
+
+features:
+  enable: [ssl]
+  disable: [gnutls, idn]
+
+policy:
+  require-tests: true
+  sbom: true

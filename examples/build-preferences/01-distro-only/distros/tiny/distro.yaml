@@ -1,0 +1,24 @@
+# yaml-language-server: $schema=https://example.org/rpmx/distro.schema.json
+#
+# DESIGN SKETCH - proposed distro document.
+#
+# Tiny Linux: same package, different preferences. This is the entire distro
+# file. No repositories, no root, no package list.
+
+document: rpmx-distro
+version: 1
+name: tiny
+extends: fedora-44
+dist-tag: .tiny1
+
+flags:
+  cflags: [-Os, -g0]
+  ldflags: [-Wl,-z,relro, -Wl,-z,now]
+
+features:
+  enable: []
+  disable: [color, verbose]
+
+policy:
+  require-tests: false
+  sbom: false

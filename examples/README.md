@@ -11,7 +11,9 @@ rpmx build examples/jq/package.yaml
 
 | Example | Demonstrates |
 |---|---|
+| [`build-preferences/`](build-preferences/) | **Design review set.** Three sketches of how distros change preferences: distro-only, package override, and fork. Not buildable. |
 | [`curl/`](curl/) | A conventional C/CMake package with features, subpackages, typed actions, tests, OCI/HTTPS locators, and a side-by-side spec. |
+| [`eternal-release/`](eternal-release/) | **Built.** A minimal fedora-release replacement with a `context:` directory: `/etc/os-release`, legacy release files, and `.repo` definitions. |
 | [`hello-go/`](hello-go/) | Go module acquisition through a proxy, `go mod vendor`, no hand-made tarball, offline SRPM rebuild. |
 | [`go-bump/`](go-bump/) | Targeted Go module bumps for CVE remediation, using omnibump in source assembly. |
 | [`libfoo/`](libfoo/) | Deterministic generated source in the source-assembly stage, included in the SRPM; generator/version recorded in the manifest. |
@@ -26,5 +28,5 @@ rpmx build examples/jq/package.yaml
 | [`pyhello/`](pyhello/) | **Tested.** Pure-Python wheel, noarch output, separately resolved test dependency. |
 | [`hello-daemon/`](hello-daemon/) | **Tested.** A systemd service with unit, sysusers, tmpfiles, scriptlets and `%config(noreplace)`. |
 
-The design examples contain `package.yaml` and a `plan.md`. `c-hello`, `zstd`, `libgreet`, `zlib`, `xz`, `lua`, `jq`, `pyhello` and `hello-daemon`
+The design examples contain `package.yaml` plus a `plan.md` or a `README.md` with the expected transcript. `c-hello`, `zstd`, `libgreet`, `zlib`, `xz`, `lua`, `jq`, `pyhello` and `hello-daemon`
 are built end to end from a locked root; their hashes are real.

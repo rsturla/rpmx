@@ -1,0 +1,94 @@
+# yaml-language-server: $schema=https://example.org/rpmx/package.schema.json
+#
+# DESIGN SKETCH - not buildable yet.
+#
+# A distro-neutral Autotools recipe with a TLS backend choice. The recipe does
+# not name a distro, a root, or a semantic slot.
+
+schema: 1
+
+package:
+  name: libfoo
+  version: "2.3.4"
+  release: 1
+  summary: An example library used to review distro build preferences
+  license: MIT
+  source-date-epoch: 1704067200
+
+build:
+  pipeline:
+    - uses: autotools
+    - uses: strip
+  dependencies:
+    tools: [gcc, make, autoconf, automake, libtool]
+    host: []
+
+features:
+  default: [ssl]
+
+  choice:
+    tls:
+      one-of: [ssl, gnutls]
+      required: true
+
+  ssl:
+    summary: TLS support via OpenSSL
+    dependencies:
+      host: [openssl-devel]
+    configure:
+      args:
+        append: [--with-openssl]
+
+  gnutls:
+    summary: TLS support via GnuTLS
+    dependencies:
+      host: [gnutls-devel]
+    configure:
+      args:
+        append: [--with-gnutls]
+
+  idn:
+    summary: Internationalized domain names
+    dependencies:
+      host: [libidn2-devel]
+    configure:
+      args:
+        append: [--with-libidn2]
+
+sources:
+  - name: libfoo
+    digest: "sha512:00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    locators:
+      - kind: https
+        url: https://example.org/libfoo-2.3.4.tar.xz
+    extract:
+      format: tar.xz
+      strip-components: 1
+
+patches:
+  - file: patches/0001-libfoo-pkgconfig-prefix.patch
+    strip: 1
+    reason: Use the distro prefix in the generated pkg-config file
+
+outputs:
+  - name: libfoo
+    summary: Runtime library
+    files:
+      include: [/usr/lib/libfoo.so.2*]
+    dependencies:
+      run: [glibc]
+
+  - name: libfoo-devel
+    summary: Development files
+    files:
+      include:
+        - /usr/include/foo/**
+        - /usr/lib/libfoo.so
+        - /usr/lib/pkgconfig/foo.pc
+    dependencies:
+      run: ["libfoo = ${version}-${release}"]
+
+tests:
+  - name: installed
+    stage: installed
+    argv: [pkg-config, --modversion, foo]

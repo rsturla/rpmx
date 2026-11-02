@@ -1,0 +1,56 @@
+# yaml-language-server: $schema=https://example.org/rpmx/package.schema.json
+#
+# DESIGN SKETCH - not buildable yet.
+#
+# The recipe is distro-neutral. It does not name a build root or a distro.
+# `rpmx build --distro acme` supplies the root and the distro preferences.
+
+schema: 1
+
+package:
+  name: hello-color
+  version: "1.0"
+  release: 1
+  summary: A tiny program used to review distro build preferences
+  license: MIT
+  source-date-epoch: 1704067200
+
+build:
+  pipeline:
+    - uses: make
+    - uses: strip
+
+features:
+  default: [color]
+  color:
+    summary: ANSI color output
+    flags:
+      cflags:
+        append: [-DUSE_COLOR]
+  verbose:
+    summary: Verbose diagnostics
+    flags:
+      cflags:
+        append: [-DVERBOSE]
+
+sources:
+  - name: hello-color
+    digest: "sha512:00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    locators:
+      - kind: https
+        url: https://example.org/hello-color-1.0.tar.xz
+    extract:
+      format: tar.xz
+      strip-components: 1
+
+outputs:
+  - name: hello-color
+    summary: A tiny program used to review distro build preferences
+    files:
+      include:
+        - /usr/bin/hello-color
+
+tests:
+  - name: installed
+    stage: installed
+    argv: ["hello-color"]

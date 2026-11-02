@@ -1,0 +1,35 @@
+# yaml-language-server: $schema=https://example.org/rpmx/distro.schema.json
+#
+# DESIGN SKETCH - proposed distro document.
+#
+# A shared base. A new distro writes only the differences; it does not copy
+# repositories, package lists and policy.
+
+document: rpmx-distro
+version: 1
+name: fedora-44
+releasever: "1"
+dist-tag: .fc44
+archs: [x86_64]
+
+repositories:
+  - id: fedora
+    metalink: https://mirrors.example.org/fedora?releasever=$releasever&arch=$basearch
+
+packages:
+  install: [bash, coreutils, gcc, make, patch, tar]
+
+flags:
+  cflags: [-O2, -g]
+  ldflags: [-Wl,-z,relro, -Wl,-z,now]
+
+features:
+  enable: []
+  disable: []
+
+policy:
+  unowned-files: error
+  require-tests: true
+  debuginfo: false
+  sbom: true
+  forbid-shell-actions: true
