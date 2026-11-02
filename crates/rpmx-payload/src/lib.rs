@@ -738,4 +738,25 @@ mod tests {
         super::extract_decoded(std::io::Cursor::new(cpio), &dest).expect("extract");
         assert!(dest.join("d").is_dir());
     }
+
+    #[test]
+    fn the_archive_root_is_skipped_and_a_directory_keeps_its_mode() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = tempfile::tempdir().expect("work");
+        let dest = root.path().join("dest");
+        let mut cpio = cpio_entry_with("./", b"", 0, 0o040755, 0, 2);
+        cpio.extend(cpio_entry_with("priv", b"", 0, 0o040700, 1, 2));
+        cpio.extend(cpio_entry_with("priv/file", b"x", 1, 0o100600, 2, 1));
+        cpio.extend(cpio_trailer());
+
+        super::extract_decoded(std::io::Cursor::new(cpio), &dest).expect("extract");
+        let mode = std::fs::metadata(dest.join("priv"))
+            .expect("directory")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o700);
+        assert_eq!(std::fs::read(dest.join("priv/file")).expect("file"), b"x");
+    }
 }

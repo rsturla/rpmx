@@ -294,3 +294,82 @@ fn sorted_unique(values: Vec<String>) -> Vec<String> {
         .into_iter()
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn plan(text: &str, arch: &str) -> (Recipe, PlannedCell) {
+        let recipe = rpmx_language::parse_recipe(text).expect("recipe");
+        let plan = rpmx_language::plan_with_options(
+            &recipe,
+            rpmx_language::PlanOptions {
+                arch,
+                step_root: None,
+                allow_builtin_override: false,
+                dist_tag: None,
+                build_release: None,
+            },
+        )
+        .expect("plan");
+        let cell = plan.cells.into_iter().next().expect("one cell");
+        (recipe, cell)
+    }
+
+    fn fixture() -> &'static str {
+        r#"
+schema: 1
+package:
+  name: demo
+  version: "1"
+  release: 1
+  summary: demo
+  license: MIT
+outputs:
+  - name: demo
+    files:
+      include: ["/usr/bin/**"]
+"#
+    }
+
+    #[test]
+    fn a_staged_binary_for_another_architecture_is_rejected() {
+        let host = rpmx_base::arch::Arch::current().expect("host");
+        let other = match host {
+            rpmx_base::arch::Arch::X86_64 => rpmx_base::arch::Arch::Aarch64,
+            _ => rpmx_base::arch::Arch::X86_64,
+        };
+        let stage = tempfile::tempdir().expect("stage");
+        std::fs::create_dir_all(stage.path().join("usr/bin")).expect("dir");
+        std::fs::copy(
+            std::env::current_exe().expect("test binary"),
+            stage.path().join("usr/bin/demo"),
+        )
+        .expect("copy");
+
+        let (recipe, cell) = plan(fixture(), other.as_str());
+        let error = prepare_binary_packages(BinaryPackageOptions {
+            recipe: &recipe,
+            cell: &cell,
+            stage: stage.path(),
+            arch: other.as_str(),
+            source_date_epoch: 1,
+            debuginfo: false,
+        })
+        .expect_err("a host binary must not be packaged as a foreign one");
+        assert_eq!(error.code, "RPMX-BUILD-008");
+        assert!(error.message.contains("machine"), "{}", error.message);
+
+        // The same payload is fine for the architecture it was built for.
+        let (recipe, cell) = plan(fixture(), host.as_str());
+        prepare_binary_packages(BinaryPackageOptions {
+            recipe: &recipe,
+            cell: &cell,
+            stage: stage.path(),
+            arch: host.as_str(),
+            source_date_epoch: 1,
+            debuginfo: false,
+        })
+        .expect("host payload");
+    }
+}

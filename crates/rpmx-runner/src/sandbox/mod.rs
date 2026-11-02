@@ -531,7 +531,10 @@ mod tests {
     fn a_cross_environment_uses_guest_paths_and_the_profile_layout() {
         use rpmx_base::guest::CrossToolchain;
 
-        let toolchain = CrossToolchain::new("aarch64-linux-gnu");
+        let mut toolchain = CrossToolchain::new("aarch64-linux-gnu");
+        toolchain.cflags = vec!["-mcpu=x".to_string()];
+        toolchain.cxxflags = vec!["-mcxx".to_string()];
+        toolchain.ldflags = vec!["-Wl,-z,now".to_string()];
         let config = SandboxConfig {
             runner: RunnerKind::Auto,
             host: Arch::X86_64,
