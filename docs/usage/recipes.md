@@ -231,8 +231,23 @@ outputs:
         version: "1.6.43"
 ```
 
-When the version is computed during the build, write a declaration file. The
-engine creates the per-output directory and exports `RPMX_BUNDLED_DIR`:
+When the version is computed during the build, use the `bundled/declare`
+step:
+
+```yaml
+build:
+  pipeline:
+    - uses: bundled/declare
+      with:
+        output: libfoo
+        name: zlib
+        version-file: third_party/zlib/VERSION
+```
+
+The step accepts `version` or `version-file`, not both. It writes the same
+declaration file the engine reads. The engine creates the per-output directory
+and exports `RPMX_BUNDLED_DIR`, so a step that computes the version itself can
+write the file directly:
 
 ```yaml
 build:

@@ -365,3 +365,213 @@ outputs:
     assert_eq!(value["outputs"][0]["bundled"], false);
     assert_eq!(value["outputs"][0]["components"][0]["name"], "zlib");
 }
+
+#[test]
+fn bundled_declare_step_writes_a_version_from_a_file() {
+    if Command::new("bwrap").arg("--version").output().is_err() {
+        eprintln!("bubblewrap is not installed; skipping");
+        return;
+    }
+    let directory = tempfile::tempdir().expect("tempdir");
+    let source = directory.path().join("src");
+    fs::create_dir_all(source.join("third_party/zlib")).expect("source");
+    fs::write(source.join("third_party/zlib/VERSION"), "1.3.1\n").expect("version");
+    let recipe = directory.path().join("package.yaml");
+    fs::write(
+        &recipe,
+        r#"schema: 1
+package:
+  name: bundled-declare
+  version: "1.0"
+  release: 1
+  summary: Declare a bundled component with the helper step
+  license: MIT
+  source-date-epoch: 1700000000
+context: src
+source-assembly:
+  pipeline:
+    - uses: bundled/declare
+      with:
+        output: bundled-declare
+        name: zlib
+        version-file: third_party/zlib/VERSION
+outputs:
+  - name: bundled-declare
+    files:
+      include: ["/usr/bin/app"]
+"#,
+    )
+    .expect("recipe");
+    let out = directory.path().join("source");
+
+    let output = rpmx(&[
+        "source",
+        "--unsafe-host-root",
+        "--output",
+        out.to_str().unwrap(),
+        recipe.to_str().unwrap(),
+    ]);
+    assert!(output.status.success(), "{output:?}");
+    let inventory: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(out.join("RPMX-BUNDLED.json")).expect("inventory"),
+    )
+    .expect("valid JSON");
+    let component = inventory["components"]
+        .as_array()
+        .expect("components")
+        .iter()
+        .find(|component| component["name"] == "zlib")
+        .expect("zlib component");
+    assert_eq!(component["version"], "1.3.1");
+    assert_eq!(component["source"], "build");
+}
+
+#[test]
+fn bundled_declare_rejects_version_and_version_file_together() {
+    if Command::new("bwrap").arg("--version").output().is_err() {
+        eprintln!("bubblewrap is not installed; skipping");
+        return;
+    }
+    let directory = tempfile::tempdir().expect("tempdir");
+    let source = directory.path().join("src");
+    fs::create_dir_all(&source).expect("source");
+    fs::write(source.join("VERSION"), "1.3.1\n").expect("version");
+    let recipe = directory.path().join("package.yaml");
+    fs::write(
+        &recipe,
+        r#"schema: 1
+package:
+  name: bundled-declare-conflict
+  version: "1.0"
+  release: 1
+  summary: Reject conflicting declaration inputs
+  license: MIT
+  source-date-epoch: 1700000000
+context: src
+source-assembly:
+  pipeline:
+    - uses: bundled/declare
+      with:
+        output: bundled-declare-conflict
+        name: zlib
+        version: "1.3.1"
+        version-file: VERSION
+outputs:
+  - name: bundled-declare-conflict
+    files:
+      include: ["/usr/bin/app"]
+"#,
+    )
+    .expect("recipe");
+    let out = directory.path().join("source");
+    let output = rpmx(&[
+        "source",
+        "--unsafe-host-root",
+        "--output",
+        out.to_str().unwrap(),
+        recipe.to_str().unwrap(),
+    ]);
+    assert!(!output.status.success(), "{output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("set version or version-file, not both"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn bundled_declare_supports_unversioned_components() {
+    if Command::new("bwrap").arg("--version").output().is_err() {
+        eprintln!("bubblewrap is not installed; skipping");
+        return;
+    }
+    let directory = tempfile::tempdir().expect("tempdir");
+    let recipe = directory.path().join("package.yaml");
+    fs::write(
+        &recipe,
+        r#"schema: 1
+package:
+  name: bundled-unversioned
+  version: "1.0"
+  release: 1
+  summary: Declare an unversioned component
+  license: MIT
+  source-date-epoch: 1700000000
+source-assembly:
+  pipeline:
+    - uses: bundled/declare
+      with:
+        output: bundled-unversioned
+        name: zlib
+outputs:
+  - name: bundled-unversioned
+    files:
+      include: ["/usr/bin/app"]
+"#,
+    )
+    .expect("recipe");
+    let out = directory.path().join("source");
+    let output = rpmx(&[
+        "source",
+        "--unsafe-host-root",
+        "--output",
+        out.to_str().unwrap(),
+        recipe.to_str().unwrap(),
+    ]);
+    assert!(output.status.success(), "{output:?}");
+    let inventory: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(out.join("RPMX-BUNDLED.json")).expect("inventory"),
+    )
+    .expect("valid JSON");
+    let component = inventory["components"]
+        .as_array()
+        .expect("components")
+        .iter()
+        .find(|component| component["name"] == "zlib")
+        .expect("zlib component");
+    assert!(component.get("version").is_none(), "{component}");
+}
+
+#[test]
+fn bundled_declare_rejects_an_invalid_name() {
+    if Command::new("bwrap").arg("--version").output().is_err() {
+        eprintln!("bubblewrap is not installed; skipping");
+        return;
+    }
+    let directory = tempfile::tempdir().expect("tempdir");
+    let recipe = directory.path().join("package.yaml");
+    fs::write(
+        &recipe,
+        r#"schema: 1
+package:
+  name: bundled-invalid
+  version: "1.0"
+  release: 1
+  summary: Reject an invalid bundled name
+  license: MIT
+  source-date-epoch: 1700000000
+source-assembly:
+  pipeline:
+    - uses: bundled/declare
+      with:
+        output: bundled-invalid
+        name: "bad;name"
+outputs:
+  - name: bundled-invalid
+    files:
+      include: ["/usr/bin/app"]
+"#,
+    )
+    .expect("recipe");
+    let out = directory.path().join("source");
+    let output = rpmx(&[
+        "source",
+        "--unsafe-host-root",
+        "--output",
+        out.to_str().unwrap(),
+        recipe.to_str().unwrap(),
+    ]);
+    assert!(!output.status.success(), "{output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("invalid name"), "{stderr}");
+}

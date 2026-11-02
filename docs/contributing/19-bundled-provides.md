@@ -1,8 +1,8 @@
 # Bundled provides and the component inventory
 
 Status: phase 1 implemented, 2026-11-02. Go, Cargo, npm, Yarn, pnpm, Python,
-Ruby, PHP and explicit C/C++ declarations are live. Java, Conan, vcpkg, SBOM
-projection and `bundled/declare` remain planned.
+Ruby, PHP and explicit C/C++ declarations are live. Java, Conan, vcpkg and
+SBOM projection remain planned.
 
 ## 1. Goals
 
@@ -296,7 +296,7 @@ build:
           > "$RPMX_BUNDLED_DIR/libfoo/zlib.list"
 ```
 
-A later built-in step can make this safer:
+The built-in `bundled/declare` step makes this safer:
 
 ```yaml
     - uses: bundled/declare
@@ -304,7 +304,6 @@ A later built-in step can make this safer:
         output: libfoo
         name: zlib
         version-file: third_party/zlib/VERSION
-        license: Zlib
 ```
 
 `bundled/declare` is a convenience. The file layout is the stable contract; a

@@ -1,0 +1,74 @@
+name: bundled/declare
+version: 1
+summary: Declare a manually tracked bundled component for one output
+inputs:
+  output:
+    type: string
+    required: true
+  name:
+    type: string
+    required: true
+  version:
+    type: string
+    default: ""
+  version-file:
+    type: string
+    default: ""
+run:
+  env:
+    BUNDLED_OUTPUT: "${inputs.output}"
+    BUNDLED_NAME: "${inputs.name}"
+    BUNDLED_VERSION: "${inputs.version}"
+    BUNDLED_VERSION_FILE: "${inputs.version-file}"
+  runs: |
+    set -eu
+
+    case "$BUNDLED_OUTPUT" in
+      ''|.|..|*/*|*\\*)
+        echo "bundled/declare: invalid output '$BUNDLED_OUTPUT'" >&2
+        exit 2
+        ;;
+    esac
+    case "$BUNDLED_NAME" in
+      ''|[!A-Za-z0-9]*|*[!A-Za-z0-9+._-]*)
+        echo "bundled/declare: invalid name '$BUNDLED_NAME'" >&2
+        exit 2
+        ;;
+    esac
+    if [ -n "$BUNDLED_VERSION" ] && [ -n "$BUNDLED_VERSION_FILE" ]; then
+      echo "bundled/declare: set version or version-file, not both" >&2
+      exit 2
+    fi
+
+    version="$BUNDLED_VERSION"
+    if [ -n "$BUNDLED_VERSION_FILE" ]; then
+      IFS= read -r version < "$BUNDLED_VERSION_FILE" || true
+      version=${version#"${version%%[![:space:]]*}"}
+      version=${version%"${version##*[![:space:]]}"}
+      if [ -z "$version" ]; then
+        echo "bundled/declare: version-file '$BUNDLED_VERSION_FILE' is empty" >&2
+        exit 2
+      fi
+    fi
+    case "$version" in
+      *[[:space:]]*|*[![:print:]]*|*=*|*'('*|*')'*|*/*)
+        echo "bundled/declare: invalid version '$version'" >&2
+        exit 2
+        ;;
+    esac
+
+    directory="$RPMX_BUNDLED_DIR/$BUNDLED_OUTPUT"
+    file="$directory/declare.list"
+    if [ ! -e "$directory" ] || [ -L "$directory" ] || [ ! -d "$directory" ]; then
+      echo "bundled/declare: invalid declaration directory '$directory'" >&2
+      exit 2
+    fi
+    if [ -L "$file" ] || { [ -e "$file" ] && [ ! -f "$file" ]; }; then
+      echo "bundled/declare: invalid declaration file '$file'" >&2
+      exit 2
+    fi
+    if [ -n "$version" ]; then
+      printf '%s=%s\n' "$BUNDLED_NAME" "$version" >> "$file"
+    else
+      printf '%s\n' "$BUNDLED_NAME" >> "$file"
+    fi

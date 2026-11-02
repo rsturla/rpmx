@@ -15,8 +15,9 @@ does not promise a stable schema or CLI yet.
   Locks without a vendor tree or installed payload are warnings, not provides.
   `rpmx explain components` shows the inventory, evidence, scope and final
   provides per output; `--source` inspects an assembled source workspace.
-  C and C++ declare components with `outputs[].bundled` or a build-time
-  `$RPMX_BUNDLED_DIR/<output>/*.list`; the engine creates the per-output
+  C and C++ declare components with `outputs[].bundled`, the
+  `bundled/declare` step, or a build-time `$RPMX_BUNDLED_DIR/<output>/*.list`;
+  the engine creates the per-output
   directories and rejects conflicting versions. The inventory is embedded in
   the SRPM as `RPMX-BUNDLED.json` and covered by `RPMX-MANIFEST.json`.
 - Debug information is opt-in per recipe, as in melange: `uses: debuginfo`

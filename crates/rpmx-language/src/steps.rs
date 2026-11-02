@@ -84,6 +84,10 @@ const BUILTINS: &[(&str, &str)] = &[
         "cargo/vendor",
         include_str!("../pipelines/cargo/vendor.yaml"),
     ),
+    (
+        "bundled/declare",
+        include_str!("../pipelines/bundled/declare.yaml"),
+    ),
     ("npm/ci", include_str!("../pipelines/npm/ci.yaml")),
     ("cmake", include_str!("../pipelines/cmake.yaml")),
     (
