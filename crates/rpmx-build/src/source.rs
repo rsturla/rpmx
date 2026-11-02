@@ -96,8 +96,9 @@ pub fn assemble(options: SourceOptions<'_>) -> Result<PathBuf> {
     )?;
 
     if let Some(source_assembly) = &options.plan.source_assembly {
-        for step in &source_assembly.steps {
-            sandbox.run(step)?;
+        let total = source_assembly.steps.len();
+        for (index, step) in source_assembly.steps.iter().enumerate() {
+            sandbox.run_numbered(step, index + 1, total)?;
         }
     }
 

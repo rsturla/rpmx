@@ -170,10 +170,12 @@ pub fn execute(request: SourceRequest<'_>) -> Result<PathBuf, Error> {
         request.runner_asset_root,
     )?;
 
+    let _phase = rpmx_core::output::enter_phase("source");
     rpmx_core::output::phase(
         "source",
         format!("{} assembling RPMX-SOURCE.tar.gz", request.arch),
     );
+    let source_started = std::time::Instant::now();
     let snapshot = assemble(SourceOptions {
         recipe: &bundle.recipe,
         plan: &plan,
@@ -194,7 +196,18 @@ pub fn execute(request: SourceRequest<'_>) -> Result<PathBuf, Error> {
         runner: request.runner,
         recipe_dir: request.file.parent().unwrap_or_else(|| Path::new(".")),
     })?;
-    rpmx_core::output::phase("source", format!("{} {}", request.arch, snapshot.display()));
+    rpmx_core::output::phase(
+        "source",
+        format!(
+            "{} {} · {}",
+            request.arch,
+            snapshot
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("RPMX-SOURCE.tar.gz"),
+            rpmx_core::output::duration(source_started)
+        ),
+    );
 
     if let Some(selection) = &selected {
         let mut text = serde_json::to_string_pretty(&selection.lock)
@@ -230,9 +243,10 @@ pub fn execute(request: SourceRequest<'_>) -> Result<PathBuf, Error> {
         rpmx_core::output::phase(
             "done",
             format!(
-                "{} in {}",
+                "{} in {} · {}",
                 rpmx_core::output::count(1, "artifact", "artifacts"),
-                request.output.display()
+                rpmx_core::output::display_path(request.output),
+                rpmx_core::output::duration(source_started)
             ),
         );
     }

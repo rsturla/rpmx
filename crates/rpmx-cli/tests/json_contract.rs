@@ -220,7 +220,7 @@ fn failing_guest_step_exits_5_and_keeps_stdout_clean() {
         "guest output missing: {stderr}"
     );
     assert!(
-        stderr.contains("rpmx: step"),
+        stderr.contains("INFO source   step"),
         "step header missing: {stderr}"
     );
 }
@@ -249,7 +249,10 @@ fn keep_workdir_preserves_a_failed_workspace() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     let path = stderr
         .lines()
-        .find_map(|line| line.strip_prefix("work directory (source): "))
+        .find_map(|line| {
+            line.strip_prefix("work directory (source): ")
+                .or_else(|| line.strip_prefix("INFO work     source: "))
+        })
         .expect("labelled work directory line");
     let path = Path::new(path.trim());
     assert!(path.is_dir(), "workspace was not kept: {}", path.display());

@@ -82,6 +82,14 @@ fn package_stage(
         ));
     }
 
+    rpmx_core::output::phase(
+        "plan",
+        format!(
+            "{} {}-{} · {}",
+            cells[0].package, cells[0].version, cells[0].release, args.arch
+        ),
+    );
+
     std::fs::create_dir_all(output).map_err(|error| {
         Error::new(
             codes::BUILD_001,
@@ -91,6 +99,7 @@ fn package_stage(
 
     let mut written = Vec::new();
     for cell in &cells {
+        let package_started = std::time::Instant::now();
         let packages = prepare_binary_packages(BinaryPackageOptions {
             recipe: &bundle.recipe,
             cell,
@@ -99,20 +108,31 @@ fn package_stage(
             source_date_epoch,
             debuginfo: false,
         })?;
+        rpmx_core::output::phase(
+            "package",
+            format!(
+                "{} · {} · {}",
+                args.arch,
+                packages
+                    .iter()
+                    .map(|package| package.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                rpmx_core::output::duration(package_started)
+            ),
+        );
         if !args.no_lint {
             let findings = crate::commands::package_lint::check(&packages);
             crate::commands::package_lint::enforce(&findings)?;
         }
         for package in packages {
-            written.push(emit::binary(
-                &package,
-                output,
-                signing.as_ref(),
-                signature_timestamp,
-            )?);
+            let path = emit::binary(&package, output, signing.as_ref(), signature_timestamp)?;
+            rpmx_core::output::wrote(&path);
+            written.push(path);
         }
     }
 
+    let stage_started = std::time::Instant::now();
     let mut repository = Vec::new();
     if !args.no_index {
         let report = crate::commands::repo::index(
@@ -120,12 +140,29 @@ fn package_stage(
             signing.as_ref(),
             signature_timestamp.unwrap_or(source_date_epoch),
         )?;
+        rpmx_core::output::phase(
+            "index",
+            format!(
+                "{} in {}",
+                rpmx_core::output::count(report.packages, "package", "packages"),
+                rpmx_core::output::display_path(output)
+            ),
+        );
         repository.push(report.repomd);
         if let Some(signature) = report.signature {
             repository.push(signature);
         }
     }
     report(rpmx_core::output::json(), &written, &[], &[], &repository)?;
+    rpmx_core::output::phase(
+        "done",
+        format!(
+            "{} in {} · {}",
+            rpmx_core::output::count(written.len() + repository.len(), "artifact", "artifacts"),
+            rpmx_core::output::display_path(output),
+            rpmx_core::output::duration(stage_started)
+        ),
+    );
     Ok(written)
 }
 
@@ -165,6 +202,7 @@ fn build_from_recipe(
     let step_timeout = runtime.step_timeout;
     let cache = runtime.cache.cache;
 
+    let build_started = std::time::Instant::now();
     let run_tests = run_tests || !test.is_empty();
     let (bundle, plan) = load_plan(&file, &arch, pipeline_dir, false, policy)?;
     if !test.is_empty() {
@@ -264,6 +302,17 @@ fn build_from_recipe(
             format!("no such cell '{}'", cell.as_deref().unwrap_or_default()),
         ));
     }
+    if selected.len() == 1 {
+        rpmx_core::output::phase(
+            "plan",
+            format!(
+                "{} {}-{} · {arch}",
+                selected[0].package, selected[0].version, selected[0].release
+            ),
+        );
+    } else {
+        rpmx_core::output::phase("plan", format!("{} cells · {arch}", selected.len()));
+    }
 
     let pipeline = BuildPipeline {
         file: &bundle.root,
@@ -314,7 +363,7 @@ fn build_from_recipe(
             format!(
                 "{} in {}",
                 rpmx_core::output::count(report.packages, "package", "packages"),
-                output.display()
+                rpmx_core::output::display_path(output)
             ),
         );
         repository.push(report.repomd);
@@ -332,13 +381,14 @@ fn build_from_recipe(
     rpmx_core::output::phase(
         "done",
         format!(
-            "{} in {}",
+            "{} in {} · {}",
             rpmx_core::output::count(
                 built.rpms.len() + built.srpms.len() + built.evidence.len() + repository.len(),
                 "artifact",
                 "artifacts"
             ),
-            output.display()
+            rpmx_core::output::display_path(output),
+            rpmx_core::output::duration(build_started)
         ),
     );
     Ok(built.rpms)

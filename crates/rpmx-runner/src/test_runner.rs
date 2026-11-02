@@ -85,7 +85,10 @@ pub fn run_planned_tests(
 }
 
 fn run_one_test(sandbox: &Sandbox<'_>, test: &rpmx_language::plan::PlannedTest) -> Result<()> {
+    let _phase = rpmx_base::output::enter_phase("test");
     rpmx_base::output::phase("test", format!("{} ({})", test.name, test.stage));
+    let total = test.pipeline.len() + usize::from(test.argv.is_some());
+    let mut position = 0;
     if let Some(argv) = &test.argv {
         let command = argv.first().ok_or_else(|| {
             Error::new(
@@ -108,10 +111,16 @@ fn run_one_test(sandbox: &Sandbox<'_>, test: &rpmx_language::plan::PlannedTest) 
             input: None,
             input_file: None,
         };
-        sandbox.run(&step).map_err(test_failure)?;
+        position += 1;
+        sandbox
+            .run_numbered(&step, position, total)
+            .map_err(test_failure)?;
     }
     for step in &test.pipeline {
-        sandbox.run(step).map_err(test_failure)?;
+        position += 1;
+        sandbox
+            .run_numbered(step, position, total)
+            .map_err(test_failure)?;
     }
     Ok(())
 }

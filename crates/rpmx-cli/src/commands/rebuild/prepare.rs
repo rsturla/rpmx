@@ -33,7 +33,6 @@ pub(super) fn prepare(
     signing: Option<&rpmx_rpm::sign::SigningKey>,
 ) -> Result<RebuildState, Error> {
     let work = crate::commands::WorkDir::new("rebuild")?;
-    rpmx_core::output::phase("prepare", format!("reading {}", request.file.display()));
     let extracted = extract_srpm(request.file, work.path())?;
     // Read the authoritative lock before unpacking the snapshot. The snapshot
     // is user-controlled recipe data and must not be able to replace it.
@@ -126,17 +125,15 @@ pub(super) fn prepare(
     }
 
     let selected_cell = cells[0].clone();
-    rpmx_core::output::phase(
-        "prepare",
-        format!(
-            "{}-{}-{} {} ({} build steps)",
-            selected_cell.package,
-            selected_cell.version,
-            selected_cell.release,
-            request.arch,
-            selected_cell.pipeline.len()
-        ),
-    );
+    if !request.quiet {
+        rpmx_core::output::phase(
+            "prepare",
+            format!(
+                "{} {}-{} · {}",
+                selected_cell.package, selected_cell.version, selected_cell.release, request.arch
+            ),
+        );
+    }
 
     let stage = work.path().join("stage");
     std::fs::create_dir_all(&stage).map_err(|error| {
@@ -174,7 +171,7 @@ pub(super) fn prepare(
     }
     let active_lock = requested_lock.or(embedded_lock);
     if let Some(lock) = &active_lock {
-        crate::commands::autoroot::report_root(lock, &lock.profile, "locked");
+        crate::commands::autoroot::report_root(lock, &lock.profile, "from lock");
     }
 
     let mut assembled_appliance: Option<PathBuf> = None;

@@ -93,8 +93,8 @@ packages/x86_64/repodata/repomd.xml
 
 The first build resolves and assembles the root (network, a few minutes). The
 next build reuses the cached root and is fast. The four lines above are stdout;
-phase lines such as `rpmx: resolve`, `rpmx: prepare`, `rpmx: wrote` and
-`rpmx: done` go to stderr.
+leveled progress lines such as `INFO root`, `INFO wrote` and `INFO done`, and
+guest output, go to stderr.
 
 ---
 
@@ -134,5 +134,6 @@ Global options:
 | `--keep-workdir` | Keep temporary directories and print their paths. |
 | `--debug` | Echo step commands before running them. |
 | `--verbose` | List resolved detail such as every build-root package. |
+| `--color MODE` | Color progress: `auto`, `always` or `never`. |
 
 ---

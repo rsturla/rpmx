@@ -62,19 +62,28 @@ fn pump(mut reader: impl Read + Send + 'static, stderr: bool) -> Receiver<()> {
         let mut sanitizer = Sanitizer::default();
         let mut clean = Vec::new();
         let mut chunk = [0u8; 8192];
+        let mut guest = rpmx_base::output::logs_to_stderr()
+            .then(|| rpmx_base::output::GuestWriter::new(stderr));
         loop {
             match reader.read(&mut chunk) {
                 Ok(0) | Err(_) => break,
                 Ok(read) => {
                     clean.clear();
                     sanitizer.push(&chunk[..read], &mut clean);
-                    if stderr || rpmx_base::output::logs_to_stderr() {
-                        let _ = std::io::stderr().write_all(&clean);
-                    } else {
-                        let _ = std::io::stdout().write_all(&clean);
+                    match &mut guest {
+                        Some(writer) => writer.push(&clean),
+                        None if stderr => {
+                            let _ = std::io::stderr().write_all(&clean);
+                        }
+                        None => {
+                            let _ = std::io::stdout().write_all(&clean);
+                        }
                     }
                 }
             }
+        }
+        if let Some(writer) = &mut guest {
+            writer.flush();
         }
         let _ = done.send(());
     });

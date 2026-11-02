@@ -11,6 +11,7 @@
 
 use std::io::IsTerminal;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::Mutex;
 
 static LOGS_TO_STDERR: AtomicBool = AtomicBool::new(false);
 static KEEP_WORKDIR: AtomicBool = AtomicBool::new(false);
@@ -19,6 +20,8 @@ static JSON: AtomicBool = AtomicBool::new(false);
 static VERBOSE: AtomicBool = AtomicBool::new(false);
 /// 0 = auto, 1 = always, 2 = never.
 static COLOR: AtomicU8 = AtomicU8::new(0);
+/// The stage that step lines and guest output belong to, when one is active.
+static CURRENT_PHASE: Mutex<Option<&'static str>> = Mutex::new(None);
 
 const RESET: &str = "\x1b[0m";
 const BOLD: &str = "\x1b[1m";
@@ -112,6 +115,33 @@ fn color_enabled() -> bool {
     }
 }
 
+/// Make `phase` the stage for step lines and guest output until the guard is
+/// dropped. Guards nest: dropping one restores the enclosing stage.
+pub fn enter_phase(phase: &'static str) -> PhaseGuard {
+    let previous = CURRENT_PHASE
+        .lock()
+        .ok()
+        .and_then(|mut slot| slot.replace(phase));
+    PhaseGuard { previous }
+}
+
+pub struct PhaseGuard {
+    previous: Option<&'static str>,
+}
+
+impl Drop for PhaseGuard {
+    fn drop(&mut self) {
+        if let Ok(mut slot) = CURRENT_PHASE.lock() {
+            *slot = self.previous;
+        }
+    }
+}
+
+/// The active stage, if a phase guard is held.
+pub fn current_phase() -> Option<&'static str> {
+    CURRENT_PHASE.lock().ok().and_then(|slot| *slot)
+}
+
 fn write(level: Level, phase: &str, detail: impl std::fmt::Display) {
     if color_enabled() {
         eprintln!(
@@ -139,11 +169,6 @@ pub fn phase_line(phase: &str, detail: impl std::fmt::Display) -> String {
     format!("{:<4} {phase:<8} {detail}", Level::Info.tag())
 }
 
-/// Write an indented line under the preceding phase, used by `--verbose`.
-pub fn item(detail: impl std::fmt::Display) {
-    write(Level::Info, "", detail);
-}
-
 /// Report something the user should look at but that does not fail the build.
 pub fn warning(phase: &str, detail: impl std::fmt::Display) {
     write(Level::Warn, phase, detail);
@@ -152,7 +177,12 @@ pub fn warning(phase: &str, detail: impl std::fmt::Display) {
 /// Report a terminal error.
 pub fn error(detail: impl std::fmt::Display) {
     if color_enabled() {
-        eprintln!("{}{}{} {detail}", Level::Error.color(), Level::Error.tag(), RESET);
+        eprintln!(
+            "{}{}{} {detail}",
+            Level::Error.color(),
+            Level::Error.tag(),
+            RESET
+        );
     } else {
         eprintln!("{} {detail}", Level::Error.tag());
     }
@@ -189,6 +219,71 @@ pub fn count(n: usize, one: &str, many: &str) -> String {
     } else {
         format!("{n} {many}")
     }
+}
+
+/// Prefix guest output with `INFO` or `WARN`, one line at a time.
+///
+/// Melange-style builds label child stdout and stderr so the whole transcript
+/// reads as one log. The writer buffers partial lines across chunk boundaries
+/// and never splits a multi-byte UTF-8 sequence.
+pub struct GuestWriter {
+    level: Level,
+    phase: Option<&'static str>,
+    pending: Vec<u8>,
+}
+
+/// A line longer than this is flushed rather than buffered without bound.
+const GUEST_LINE_LIMIT: usize = 64 * 1024;
+
+impl GuestWriter {
+    pub fn new(stderr: bool) -> Self {
+        Self {
+            level: if stderr { Level::Warn } else { Level::Info },
+            phase: current_phase(),
+            pending: Vec::new(),
+        }
+    }
+
+    pub fn push(&mut self, bytes: &[u8]) {
+        self.pending.extend_from_slice(bytes);
+        while let Some(position) = self.pending.iter().position(|byte| *byte == b'\n') {
+            let line: Vec<u8> = self.pending.drain(..=position).collect();
+            write_guest(
+                self.level,
+                self.phase.unwrap_or(""),
+                &line[..line.len().saturating_sub(1)],
+            );
+        }
+        if self.pending.len() > GUEST_LINE_LIMIT {
+            self.flush();
+        }
+    }
+
+    pub fn flush(&mut self) {
+        if !self.pending.is_empty() {
+            let line = std::mem::take(&mut self.pending);
+            write_guest(self.level, self.phase.unwrap_or(""), &line);
+        }
+    }
+}
+
+fn write_guest(level: Level, phase: &str, line: &[u8]) {
+    use std::io::Write;
+    let mut stderr = std::io::stderr().lock();
+    if color_enabled() {
+        let _ = write!(stderr, "{}{}{} ", level.color(), level.tag(), RESET);
+    } else {
+        let _ = write!(stderr, "{} ", level.tag());
+    }
+    if !phase.is_empty() {
+        if color_enabled() {
+            let _ = write!(stderr, "{BOLD}{phase:<8}{RESET} ");
+        } else {
+            let _ = write!(stderr, "{phase:<8} ");
+        }
+    }
+    let _ = stderr.write_all(line);
+    let _ = stderr.write_all(b"\n");
 }
 
 /// Format a duration for progress lines.

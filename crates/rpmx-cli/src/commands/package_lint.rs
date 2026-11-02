@@ -92,11 +92,14 @@ pub fn check_file(path: &str, mode: u32, license: bool, symlink: bool) -> Vec<Fi
 /// Print findings and fail on errors.
 pub fn enforce(findings: &[Finding]) -> Result<(), Error> {
     for finding in findings {
-        let mark = match finding.severity {
-            Severity::Error => "error",
-            Severity::Warning => "warning",
-        };
-        eprintln!("{mark}[RPMX-POLICY-001]: {}", finding.message);
+        match finding.severity {
+            Severity::Error => {
+                rpmx_core::output::error(format!("lint: {} [RPMX-POLICY-001]", finding.message))
+            }
+            Severity::Warning => {
+                rpmx_core::output::warning("lint", format!("{} [RPMX-POLICY-001]", finding.message))
+            }
+        }
     }
     let errors = findings
         .iter()

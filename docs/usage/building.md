@@ -27,9 +27,40 @@ root -> fetch -> source snapshot -> SRPM -> extract SRPM -> build steps
      -> package -> SBOM -> tests -> sign -> repodata
 ```
 
-Every step prints its label and duration to stderr. Failure output includes the
-command, cwd, a hint, and `--keep-workdir` leaves the workspace. `--debug` runs
-`runs:` scripts with `set -x` and echoes the command.
+Progress goes to stderr as leveled lines, with guest stdout labelled `INFO` and
+guest stderr labelled `WARN`:
+
+```text
+INFO plan     hello 0.1.0-1.fc44 · x86_64
+INFO root     fedora-44-build · x86_64 · 209 packages · cache hit
+INFO          builder registry.fedoraproject.org/fedora:44
+INFO          repositories fedora, updates
+INFO source   x86_64 assembling RPMX-SOURCE.tar.gz
+INFO source   step [1/1] runs
+INFO source   x86_64 RPMX-SOURCE.tar.gz · 0.4s
+INFO srpm     hello-0.1.0-1.fc44.src.rpm · 0.2s
+INFO wrote    packages/x86_64/src/hello-0.1.0-1.fc44.src.rpm
+INFO build    x86_64 · 3 steps
+INFO build    step [1/3] runs
+INFO build    step [2/3] make
+INFO build    gcc -O2 -Wall -Wextra -Werror -o hello hello.c
+INFO build    step [3/3] strip
+INFO package  x86_64 · hello · 0.1s
+INFO wrote    packages/x86_64/hello-0.1.0-1.fc44.x86_64.rpm
+INFO index    1 package in packages/x86_64
+INFO done     4 artifacts in packages/x86_64 · 12.4s
+```
+
+Every line carries the stage it belongs to: step headers, guest output, and the
+tool's own events.
+
+stdout carries only the artifact list, one path per line, or the single
+`--json` document. A first build reports each package entering the root as
+`INFO install <name>-<evr>.<arch>`. `--verbose` lists every resolved root
+package and each step's duration; `--color=auto|always|never` controls ANSI
+color; `--debug` runs `runs:` scripts with `set -x` and echoes the command.
+A failing step adds the command, cwd, a hint, and `--keep-workdir` leaves the
+workspace.
 
 ### Artifacts
 
@@ -72,6 +103,7 @@ rpmx source --locked
 `package.lock.json` records:
 
 - the recipe bundle digest and every recipe file with its digest;
+- the context directory path and its tree digest, when the recipe declares one;
 - the effective source date epoch;
 - policy (dist tag, build release);
 - sources (name and digest);

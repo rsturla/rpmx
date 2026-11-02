@@ -186,10 +186,12 @@ Autotools packages, Lua, jq, a noarch Python wheel, and a systemd service.
 Recipe commands default `FILE` to `./package.yaml`. `build`, `test` and
 `rebuild` default their output to `./packages/<arch>/`, default `--jobs` to the
 host CPU count (exported to build steps as `JOBS`), and write repository
-metadata unless `--no-index` is set. `--keep-workdir` preserves a failed
-workspace and prints a labelled path per directory; `--debug` echoes the
-commands a step runs; `--verbose` lists resolved detail such as every package in
-the build root.
+metadata unless `--no-index` is set. Progress is leveled `INFO`/`WARN` output on
+stderr, including guest output; stdout carries only artifact paths or the
+`--json` document. `--keep-workdir` preserves a failed workspace and prints a
+labelled path per directory; `--debug` echoes the commands a step runs;
+`--verbose` lists resolved detail and step durations; `--color=auto|always|never`
+controls ANSI color.
 
 ## Local repositories
 

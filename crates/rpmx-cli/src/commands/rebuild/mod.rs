@@ -96,6 +96,7 @@ pub fn run(args: RebuildArgs) -> Result<Vec<PathBuf>, Error> {
 }
 
 pub fn execute(request: RebuildRequest<'_>) -> Result<RebuildOutput, Error> {
+    let build_started = std::time::Instant::now();
     let signing = crate::commands::load_signing_key(
         request.signing.signing_key.as_deref(),
         request.signing.signing_passphrase_env.as_deref(),
@@ -156,50 +157,54 @@ pub fn execute(request: RebuildRequest<'_>) -> Result<RebuildOutput, Error> {
         debuginfo,
     })?;
 
-    rpmx_core::output::phase("check", "build tools");
-    check_build_tools(
-        &sandbox,
-        &build,
-        &cell.tools,
-        &cell.host,
-        &cell.target,
-        &cell.test_tools,
-        &locked_packages,
-    )?;
-    rpmx_core::output::phase("build", format!("{arch} {} steps", cell.pipeline.len()));
-    for step in &cell.pipeline {
-        if let Some(digest) = &step.step_digest {
-            match extracted.lock_steps.get(&step.uses) {
-                Some(expected) if expected == digest => {}
-                Some(expected) => {
-                    return Err(Error::new(
-                        codes::SRPM_011,
-                        format!(
-                            "step '{}' digest {digest} does not match lock {expected}",
-                            step.uses
-                        ),
-                    ));
-                }
-                None => {
-                    return Err(Error::new(
-                        codes::SRPM_011,
-                        format!("step '{}' is missing from the lock", step.uses),
-                    ));
+    {
+        let _phase = rpmx_core::output::enter_phase("build");
+        check_build_tools(
+            &sandbox,
+            &build,
+            &cell.tools,
+            &cell.host,
+            &cell.target,
+            &cell.test_tools,
+            &locked_packages,
+        )?;
+        rpmx_core::output::phase("build", format!("{arch} · {} steps", cell.pipeline.len()));
+        let total_steps = cell.pipeline.len();
+        for (index, step) in cell.pipeline.iter().enumerate() {
+            if let Some(digest) = &step.step_digest {
+                match extracted.lock_steps.get(&step.uses) {
+                    Some(expected) if expected == digest => {}
+                    Some(expected) => {
+                        return Err(Error::new(
+                            codes::SRPM_011,
+                            format!(
+                                "step '{}' digest {digest} does not match lock {expected}",
+                                step.uses
+                            ),
+                        ));
+                    }
+                    None => {
+                        return Err(Error::new(
+                            codes::SRPM_011,
+                            format!("step '{}' is missing from the lock", step.uses),
+                        ));
+                    }
                 }
             }
+            sandbox.run_numbered(step, index + 1, total_steps)?;
         }
-        sandbox.run(step)?;
+
+        std::fs::create_dir_all(&output).map_err(|error| {
+            Error::new(
+                codes::BUILD_001,
+                format!("cannot create {}: {error}", output.display()),
+            )
+        })?;
+
+        sandbox.sync()?;
     }
 
-    std::fs::create_dir_all(&output).map_err(|error| {
-        Error::new(
-            codes::BUILD_001,
-            format!("cannot create {}: {error}", output.display()),
-        )
-    })?;
-
-    sandbox.sync()?;
-
+    let package_started = std::time::Instant::now();
     let packages = prepare_binary_packages(BinaryPackageOptions {
         recipe: &recipe,
         cell: &cell,
@@ -211,12 +216,13 @@ pub fn execute(request: RebuildRequest<'_>) -> Result<RebuildOutput, Error> {
     rpmx_core::output::phase(
         "package",
         format!(
-            "{arch} {}",
+            "{arch} · {} · {}",
             packages
                 .iter()
                 .map(|package| package.name.as_str())
                 .collect::<Vec<_>>()
-                .join(", ")
+                .join(", "),
+            rpmx_core::output::duration(package_started)
         ),
     );
 
@@ -344,13 +350,14 @@ pub fn execute(request: RebuildRequest<'_>) -> Result<RebuildOutput, Error> {
         rpmx_core::output::phase(
             "done",
             format!(
-                "{} in {}",
+                "{} in {} · {}",
                 rpmx_core::output::count(
                     written.len() + evidence.len() + repository.len(),
                     "artifact",
                     "artifacts"
                 ),
-                output.display()
+                rpmx_core::output::display_path(&output),
+                rpmx_core::output::duration(build_started)
             ),
         );
     }

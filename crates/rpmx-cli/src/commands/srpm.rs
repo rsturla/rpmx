@@ -86,6 +86,7 @@ pub fn run(args: SrpmArgs, pipeline_dir: Option<&Path>) -> Result<Vec<PathBuf>, 
 }
 
 pub fn execute(request: SrpmRequest<'_>) -> Result<Vec<PathBuf>, Error> {
+    let build_started = std::time::Instant::now();
     let signing = crate::commands::load_signing_key(
         request.signing.signing_key.as_deref(),
         request.signing.signing_passphrase_env.as_deref(),
@@ -169,13 +170,17 @@ pub fn execute(request: SrpmRequest<'_>) -> Result<Vec<PathBuf>, Error> {
             "{}-{}-{}.src.rpm",
             package.name, package.version, package.release
         );
-        rpmx_core::output::phase("srpm", &identity);
+        let started = std::time::Instant::now();
         let path = emit::source(
             &package,
             request.output,
             signing.as_ref(),
             signature_timestamp,
         )?;
+        rpmx_core::output::phase(
+            "srpm",
+            format!("{identity} · {}", rpmx_core::output::duration(started)),
+        );
         rpmx_core::output::wrote(&path);
         written.push(path);
     }
@@ -193,9 +198,10 @@ pub fn execute(request: SrpmRequest<'_>) -> Result<Vec<PathBuf>, Error> {
         rpmx_core::output::phase(
             "done",
             format!(
-                "{} in {}",
+                "{} in {} · {}",
                 rpmx_core::output::count(written.len(), "artifact", "artifacts"),
-                request.output.display()
+                rpmx_core::output::display_path(request.output),
+                rpmx_core::output::duration(build_started)
             ),
         );
     }

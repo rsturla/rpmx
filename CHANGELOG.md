@@ -5,12 +5,14 @@ does not promise a stable schema or CLI yet.
 
 ## Unreleased
 
-- Human progress output now names each phase on stderr (`resolve`, `source`,
-  `srpm`, `prepare`, `build`, `package`, `test`, `index`, `done`), includes the
-  architecture for arch-specific phases, reports every artifact as
-  `rpmx: wrote <path>`, reports each package as it enters a build root, and
-  ends with an artifact count. stdout remains the artifact list or the single
-  JSON document. `--verbose` lists the resolved root package set.
+- Human progress output is now a leveled `INFO`/`WARN`/`ERRO` log on stderr,
+  with a plan header, a resolved root block (builder and repositories), numbered
+  steps, per-phase durations, relative artifact paths and a final artifact
+  count. Every step line and guest line carries the active stage (`source`,
+  `build`, `test`). Guest stdout and stderr are prefixed and written to stderr
+  too, so stdout is only the artifact list or the single JSON document.
+  `--verbose` lists the resolved root package set and step durations, and
+  `--color` controls ANSI color.
 - QEMU builds no longer boot the build root. A separate, locked transport
   appliance is resolved from the profile repositories, assembled into its own
   cache, and attached as a second disk. Build steps run on a chrooted build

@@ -160,6 +160,7 @@ impl<'a> Sandbox<'a> {
         } else {
             step.label.clone()
         };
+        let heading = step_heading(step, position);
         let request = RunnerRequest {
             command,
             args: &args,
@@ -187,10 +188,18 @@ impl<'a> Sandbox<'a> {
         }
         // Step headers and outcomes go to stderr so stdout stays a clean
         // artifact list (or a JSON document).
+        let stage = rpmx_base::output::current_phase();
         if rpmx_base::output::debug() {
-            rpmx_base::output::phase("run", &rendered);
+            match stage {
+                Some(phase) => rpmx_base::output::phase(phase, format!("run {rendered}")),
+                None => rpmx_base::output::phase("run", &rendered),
+            }
         }
-        rpmx_base::output::phase("step", &label);
+        let step_line = match stage {
+            Some(_) => format!("step {heading}"),
+            None => heading.clone(),
+        };
+        rpmx_base::output::phase(stage.unwrap_or("step"), &step_line);
         let started = std::time::Instant::now();
         let result = session
             .as_mut()
@@ -198,10 +207,16 @@ impl<'a> Sandbox<'a> {
             .run(&request);
         match result {
             Ok(()) => {
-                rpmx_base::output::phase(
-                    "step",
-                    format!("{label}: ok ({:.1}s)", started.elapsed().as_secs_f64()),
-                );
+                if rpmx_base::output::verbose() || rpmx_base::output::debug() {
+                    let step_line = match stage {
+                        Some(_) => format!("step {heading}"),
+                        None => heading.clone(),
+                    };
+                    rpmx_base::output::phase(
+                        stage.unwrap_or("step"),
+                        format!("{step_line} · ok ({:.1}s)", started.elapsed().as_secs_f64()),
+                    );
+                }
                 Ok(())
             }
             Err(mut error) => {
@@ -226,6 +241,37 @@ impl<'a> Sandbox<'a> {
             session.sync_out()?;
         }
         Ok(())
+    }
+}
+
+/// The user-facing name of a step, without the phase prefix the planner adds.
+///
+/// Unnamed `runs:` steps become `runs#1`; the ordinal is already in the
+/// position, so show only `runs`.
+fn step_name(step: &PlannedStep) -> Option<&str> {
+    let raw = if step.label.is_empty() {
+        step.uses.as_str()
+    } else {
+        step.label.as_str()
+    };
+    let raw = raw
+        .strip_prefix("source:")
+        .or_else(|| raw.strip_prefix("build:"))
+        .or_else(|| raw.strip_prefix("test:"))
+        .unwrap_or(raw);
+    if raw.is_empty() {
+        None
+    } else {
+        Some(raw.split('#').next().unwrap_or(raw))
+    }
+}
+
+fn step_heading(step: &PlannedStep, position: Option<(usize, usize)>) -> String {
+    match (position, step_name(step)) {
+        (Some((index, total)), Some(name)) => format!("[{index}/{total}] {name}"),
+        (Some((index, total)), None) => format!("[{index}/{total}]"),
+        (None, Some(name)) => name.to_string(),
+        (None, None) => String::new(),
     }
 }
 

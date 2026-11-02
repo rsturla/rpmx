@@ -571,20 +571,36 @@ fn load_cached(
 pub fn report_root(lock: &RootLock, profile: &str, source: &str) {
     let count = count_packages(lock);
     rpmx_core::output::phase(
-        "resolve",
+        "root",
         format!(
-            "{profile} {} {} ({source})",
+            "{profile} · {} · {} · {source}",
             lock.archs.join(","),
             rpmx_core::output::count(count, "package", "packages")
         ),
     );
     if let Some(builder) = &lock.builder {
-        rpmx_core::output::item(format!("builder {}", builder.image));
+        rpmx_core::output::phase("root", format!("builder {}", builder.image));
+    }
+    if !lock.repositories.is_empty() {
+        rpmx_core::output::phase(
+            "root",
+            format!(
+                "repositories {}",
+                lock.repositories
+                    .iter()
+                    .map(|repository| repository.id.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        );
     }
     if rpmx_core::output::verbose() {
         for (package_arch, entries) in &lock.packages {
             for package in entries {
-                rpmx_core::output::item(format!("{}-{}.{package_arch}", package.name, package.evr));
+                rpmx_core::output::phase(
+                    "root",
+                    format!("{}-{}.{package_arch}", package.name, package.evr),
+                );
             }
         }
     }

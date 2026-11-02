@@ -9,6 +9,7 @@ pub fn run(cli: Cli) -> Result<(), Error> {
         debug: _,
         json: _,
         verbose: _,
+        color: _,
         command,
     } = cli;
     match command {

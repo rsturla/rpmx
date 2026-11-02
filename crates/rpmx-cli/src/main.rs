@@ -20,7 +20,9 @@ fn main() -> ExitCode {
     let command = cli.command_name();
     // Guest output must never share stdout with a JSON document.
     rpmx_core::output::set_json(json);
-    rpmx_core::output::set_logs_to_stderr(json);
+    // Only an interactive shell owns stdout; every other command reserves it
+    // for the artifact list or the JSON document.
+    rpmx_core::output::set_logs_to_stderr(json || command != "shell");
     rpmx_core::output::set_keep_workdir(cli.keep_workdir);
     rpmx_core::output::set_debug(cli.debug);
     rpmx_core::output::set_verbose(cli.verbose);
