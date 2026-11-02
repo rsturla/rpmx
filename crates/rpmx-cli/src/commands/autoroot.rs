@@ -97,6 +97,39 @@ pub fn profile_dist_tag(recipe: &Recipe, recipe_path: &Path) -> Result<Option<St
     load_profile(&path)?.dist_tag()
 }
 
+/// The single target a recipe's profile declares, if exactly one.
+///
+/// A cross profile names one target; commands that would otherwise default to
+/// the host architecture use this so the recipe builds what it says.
+pub fn declared_arch(
+    recipe: &Recipe,
+    recipe_path: &Path,
+    profile: Option<&Path>,
+) -> Result<Option<String>, Error> {
+    let path = match profile {
+        Some(path) => Some(path.to_path_buf()),
+        None => {
+            let Some(spec) = &recipe.build.root else {
+                return Ok(None);
+            };
+            let Some(name) = &spec.profile else {
+                return Ok(None);
+            };
+            let directory = recipe_path.parent().unwrap_or_else(|| Path::new("."));
+            Some(discover_profile(name, directory)?)
+        }
+    };
+    let Some(path) = path else {
+        return Ok(None);
+    };
+    let profile = load_profile(&path)?;
+    if profile.archs.len() == 1 {
+        Ok(Some(profile.archs[0].clone()))
+    } else {
+        Ok(None)
+    }
+}
+
 /// Build the merged root requirement without touching the network or cache.
 ///
 /// Returns `None` when the recipe names no profile and the caller gave none.
@@ -981,9 +1014,12 @@ fn required_packages(plan: &Plan) -> RequiredPackages {
             split_needs(step, false, &mut build, &mut target);
         }
         for test in &cell.tests {
+            // A build-stage test runs in the build sandbox, so its tools are
+            // build-root packages. An installed-stage test runs in a target
+            // test root.
+            let installed = test.stage != "build";
             for step in &test.pipeline {
-                // Tests run in a target test root.
-                split_needs(step, true, &mut build, &mut target);
+                split_needs(step, installed, &mut build, &mut target);
             }
         }
     }

@@ -72,3 +72,12 @@ outputs:
     files:
       include: ["/usr/bin/c-hello-cross"]
 
+tests:
+  # A build-stage test runs in the build sandbox, so it can inspect the
+  # artefact without executing it.
+  - name: target-arch
+    stage: build
+    pipeline:
+      - runs: |
+          aarch64-linux-gnu-readelf -h c-hello-cross | grep -q 'AArch64'
+

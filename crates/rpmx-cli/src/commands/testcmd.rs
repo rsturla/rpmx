@@ -29,7 +29,17 @@ pub fn run(args: TestArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
     })?;
     let policy: PlanPolicy<'_> = resolved.plan_policy();
 
-    let (bundle, plan) = load_plan(&args.file, &args.arch, pipeline_dir, false, policy)?;
+    let declared = rpmx_core::load_recipe_bundle(&args.file)?;
+    let arch = match &args.arch {
+        Some(arch) => arch.clone(),
+        None => crate::commands::autoroot::declared_arch(
+            &declared.recipe,
+            &declared.root,
+            args.policy.profile.as_deref(),
+        )?
+        .unwrap_or_else(|| rpmx_core::arch::native_arch().to_string()),
+    };
+    let (bundle, plan) = load_plan(&args.file, &arch, pipeline_dir, false, policy)?;
     if !args.selected.is_empty() {
         let known: std::collections::BTreeSet<_> = plan
             .cells
@@ -70,7 +80,7 @@ pub fn run(args: TestArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
             args.runtime.cache.cache.as_deref(),
             args.offline,
             false,
-            &args.arch,
+            &arch,
         )?
     } else {
         None
@@ -106,7 +116,7 @@ pub fn run(args: TestArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
     // Build-stage tests run in the same sandbox as a build: natively in the
     // build root for a cross profile, with the target sysroot mounted.
     let host_arch = rpmx_core::arch::Arch::current()?;
-    let target_arch = rpmx_core::arch::Arch::parse(&args.arch)?;
+    let target_arch = rpmx_core::arch::Arch::parse(&arch)?;
     let sysroot: Option<std::path::PathBuf> = automatic
         .as_ref()
         .and_then(|root| root.sysroot.as_ref())
@@ -132,6 +142,7 @@ pub fn run(args: TestArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
     if let Some((rpms, tests, tools)) = installed {
         return run_installed(
             &args,
+            &arch,
             root_lock.as_deref().expect("checked above"),
             &rpms,
             &tests,
@@ -139,12 +150,12 @@ pub fn run(args: TestArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
         );
     }
 
-    let output = crate::commands::default_output(&args.arch);
+    let output = crate::commands::default_output(&arch);
     let signing = OptionalSigningArgs::default();
     let pipeline = BuildPipeline {
         file: &args.file,
         output: &output,
-        arch: &args.arch,
+        arch: &arch,
         exec,
         sysroot: sysroot.as_deref(),
         cross: cross.as_ref(),
@@ -231,6 +242,7 @@ fn installed_tests(
 
 fn run_installed(
     args: &TestArgs,
+    arch: &str,
     root_lock_path: &Path,
     rpms: &[PathBuf],
     selected: &[rpmx_core::PlannedTest],
@@ -239,7 +251,7 @@ fn run_installed(
     let lock = rpmx_core::root::load_lock(root_lock_path)?;
     let runner = args.runner.parse::<rpmx_core::runner::RunnerKind>()?;
     let host = rpmx_core::arch::Arch::current()?;
-    let target = rpmx_core::arch::Arch::parse(&args.arch)?;
+    let target = rpmx_core::arch::Arch::parse(arch)?;
     let cache = match args.runtime.cache.cache.as_deref() {
         Some(path) => path.to_path_buf(),
         None => crate::commands::fetch::default_cache()?,
@@ -274,7 +286,7 @@ fn run_installed(
         Some(&cache),
         args.offline,
         runner,
-        &args.arch,
+        arch,
         args.runner_asset_root.as_deref(),
         true,
     )?;

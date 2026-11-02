@@ -296,9 +296,10 @@ pub struct TestArgs {
     pub file: PathBuf,
     #[command(flatten)]
     pub policy: crate::cli::PolicyArgs,
-    /// Target architecture used for templates.
-    #[arg(long, default_value = rpmx_core::arch::native_arch())]
-    pub arch: String,
+    /// Target architecture used for templates. Defaults to the single target
+    /// the recipe's profile declares, or the host architecture.
+    #[arg(long)]
+    pub arch: Option<String>,
     /// Runner: auto, bwrap, podman or qemu.
     #[arg(long, default_value = "auto", value_parser = ["auto", "bwrap", "podman", "qemu"])]
     pub runner: String,
