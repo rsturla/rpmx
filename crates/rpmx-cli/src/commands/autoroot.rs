@@ -90,7 +90,9 @@ pub fn profile_dist_tag(recipe: &Recipe, recipe_path: &Path) -> Result<Option<St
     let Some(name) = &spec.profile else {
         return Ok(None);
     };
-    let recipe_dir = recipe_path.parent().unwrap_or_else(|| Path::new("."));
+    let recipe_dir = recipe_path
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."));
     let path = discover_profile(name, recipe_dir)?;
     load_profile(&path)?.dist_tag()
 }
@@ -111,7 +113,9 @@ pub fn requirement(
         return Ok(None);
     }
 
-    let recipe_dir = recipe_path.parent().unwrap_or_else(|| Path::new("."));
+    let recipe_dir = recipe_path
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."));
     let mut profile = match (spec, selected_profile.as_deref()) {
         (Some(spec), _) if spec.profile.is_some() => {
             if has_inline_fields(spec) {
@@ -1085,11 +1089,11 @@ outputs:
         assert!(has_inline_fields(&spec));
     }
 
-    fn plan(recipe: &Recipe) -> rpmx_core::Plan {
+    fn plan_for(recipe: &Recipe, arch: &str) -> rpmx_core::Plan {
         rpmx_core::plan_with_options(
             recipe,
             rpmx_core::PlanOptions {
-                arch: "x86_64",
+                arch,
                 step_root: None,
                 allow_builtin_override: false,
                 dist_tag: None,
@@ -1097,6 +1101,10 @@ outputs:
             },
         )
         .expect("plan")
+    }
+
+    fn plan(recipe: &Recipe) -> rpmx_core::Plan {
+        plan_for(recipe, "x86_64")
     }
 
     #[test]
@@ -1110,8 +1118,25 @@ outputs:
                 // exist yet; they cannot build and are not covered here.
                 continue;
             };
-            let plan = plan(&bundle.recipe);
-            let root = super::requirement(&bundle.recipe, &plan, &bundle.root, None, "x86_64")
+            // A cross example declares exactly one target; build that one.
+            let mut arch = rpmx_core::arch::native_arch().to_string();
+            if let Some(spec) = &bundle.recipe.build.root {
+                if let Some(name) = &spec.profile {
+                    let directory = bundle
+                        .root
+                        .parent()
+                        .unwrap_or_else(|| std::path::Path::new("."));
+                    if let Ok(profile_path) = super::discover_profile(name, directory) {
+                        if let Ok(profile) = rpmx_core::profile::load_profile(&profile_path) {
+                            if profile.archs.len() == 1 {
+                                arch = profile.archs[0].clone();
+                            }
+                        }
+                    }
+                }
+            }
+            let plan = plan_for(&bundle.recipe, &arch);
+            let root = super::requirement(&bundle.recipe, &plan, &bundle.root, None, &arch)
                 .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
             assert!(
                 root.is_some(),
