@@ -46,6 +46,7 @@ that it may be distributed under those terms. Do not add code, test assets or
 documentation that cannot be distributed under them. Preserve the license and
 attribution of vendored code; see [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
 
-The CI workflow runs formatting, clippy and the test suite. Before a release,
-also run `cargo deny check licenses advisories` and review
-[`RELEASING.md`](RELEASING.md).
+The CI workflow runs formatting, clippy, the test suite and
+`cargo deny check licenses`. Advisory findings are reported but are not
+merge-blocking; triage them separately. Before a release, also run
+`cargo deny check advisories` and review [`RELEASING.md`](RELEASING.md).

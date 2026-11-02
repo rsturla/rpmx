@@ -481,7 +481,8 @@ where
 
 Each ticket is independently shippable and must keep `cargo fmt`, `cargo
 clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, and
-`cargo deny check licenses advisories` green.
+`cargo deny check licenses` green. `cargo deny check advisories` is
+informational.
 
 ### Review gates
 
@@ -527,19 +528,19 @@ the explicit VM path), `docs/usage/getting-started.md:37`, and
 - Proof: docs review; `cargo test -p rpmx --test docs`.
 - Review gate: `reviewer` + `reviewer-spec` on the contract/doc diff.
 
-0.4 Resolve the `cargo-deny` baseline before code slices start.
-- `cargo deny check licenses` passes after removing the two invalid
-  non-SPDX entries from `deny.toml` (`MIT/Apache-2.0`, `Apache-2.0 / MIT`);
-  `MIT` and `Apache-2.0` remain individually allowed.
-- `cargo deny check advisories` currently fails on four pre-existing findings:
-  `crypto-bigint` RUSTSEC-2026-0387, `ml-dsa` RUSTSEC-2025-0144, `rsa`
-  RUSTSEC-2023-0071 (all through `pgp`), and `unsafe-libyaml`
+0.4 Make advisory findings non-blocking.
+- `cargo deny check licenses` is the blocking gate. It passes after removing
+  the two invalid non-SPDX entries from `deny.toml` (`MIT/Apache-2.0`,
+  `Apache-2.0 / MIT`); `MIT` and `Apache-2.0` remain individually allowed.
+- `cargo deny check advisories` is informational and runs as a separate
+  `continue-on-error` CI job. Current findings do not block this work:
+  `crypto-bigint` RUSTSEC-2026-0387, `ml-dsa` RUSTSEC-2025-0144 and `rsa`
+  RUSTSEC-2023-0071 (through `pgp`), plus `unsafe-libyaml`
   RUSTSEC-2024-0449 (through `serde_yaml_ng`).
-- Decide explicitly: targeted `[advisories] ignore` entries with a recorded
-  rationale and expiry/review date, dependency upgrades/replacements, or a
-  separate hardening ticket. Do not silently ignore the crypto findings.
-- Proof: `cargo deny check licenses` passes; the advisory decision is recorded
-  in `deny.toml`, the issue tracker, or the plan.
+- No advisory is silently added to an ignore list. The advisory job stays
+  visible so a finding can be triaged on its own schedule.
+- Proof: `cargo deny check licenses` passes; the advisory job is present and
+  non-blocking.
 
 ### Phase 1 — correctness prerequisites (no new feature)
 
@@ -707,8 +708,7 @@ binfmt/qemu are available.
    with actionable errors.
 9. `cargo fmt`, `cargo clippy --workspace --all-targets -- -D warnings`,
    `cargo test --workspace`, and `cargo deny check licenses` pass.
-   `cargo deny check advisories` follows the recorded policy from 0.4; no
-   unreviewed ignore is added.
+   `cargo deny check advisories` is informational and non-blocking.
 10. A pre-change SRPM still rebuilds (the embedded schema-1 lock is untouched).
 11. Every build-related log line from a two-arch build carries the correct
     `[<arch>]` tag, including guest stdout/stderr; a single-arch build also

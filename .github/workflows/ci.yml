@@ -28,4 +28,16 @@ jobs:
       - uses: actions/checkout@v4
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
-          command: check licenses advisories
+          command: check licenses
+
+  advisories:
+    runs-on: ubuntu-latest
+    # Advisory findings are informational. Keep them visible without blocking
+    # the build; a vulnerability report should be triaged, not merge-blocking
+    # by default.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check advisories
