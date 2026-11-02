@@ -16,5 +16,6 @@ sha2.workspace = true
 zstd = "0.14"
 rpmx-core = { path = "../rpmx-core" }
 rpmx-base = { path = "../rpmx-base" }
+rpmx-payload = { path = "../rpmx-payload" }
 serde_json.workspace = true
 tempfile = "3"

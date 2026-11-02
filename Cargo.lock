@@ -1885,12 +1885,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "rpmx-payload"
+version = "0.0.0"
+dependencies = [
+ "flate2",
+ "rand",
+ "rpm",
+ "rpmx-base",
+ "tempfile",
+ "zstd",
+]
+
+[[package]]
 name = "rpmx-root"
 version = "0.0.0"
 dependencies = [
  "rpm",
  "rpmx-base",
  "rpmx-language",
+ "rpmx-payload",
  "rpmx-runner",
  "rpmx-store",
  "serde",
@@ -1909,6 +1922,7 @@ dependencies = [
  "rpm",
  "rpmx-base",
  "rpmx-core",
+ "rpmx-payload",
  "serde_json",
  "sha2",
  "tempfile",
