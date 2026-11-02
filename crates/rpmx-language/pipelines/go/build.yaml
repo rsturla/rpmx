@@ -1,5 +1,5 @@
 name: go/build
-version: 1
+version: 2
 summary: Build a Go binary
 inputs:
   output:
@@ -11,9 +11,17 @@ inputs:
   args:
     type: list<string>
     default: []
+  # A distribution package links the system C library on purpose: the pure-Go
+  # resolver ignores nsswitch.conf and os/user ignores NSS. Opt out only for a
+  # package that must be static.
+  cgo:
+    type: boolean
+    default: true
 needs:
   tools: [go]
 run:
   cwd: "${source.dir}"
   runs: |
-    go build ${inputs.args} -o "$STAGE${inputs.output}" ${inputs.packages}
+    cgo=0
+    if [ "${inputs.cgo}" = true ]; then cgo=1; fi
+    CGO_ENABLED=$cgo go build ${inputs.args} -o "$STAGE${inputs.output}" ${inputs.packages}

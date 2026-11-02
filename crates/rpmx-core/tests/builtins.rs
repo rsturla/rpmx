@@ -73,6 +73,17 @@ fn go_build_uses_the_declared_output() {
 }
 
 #[test]
+fn go_build_can_disable_cgo() {
+    let plan = plan_with(
+        "    - uses: go/build\n      with:\n        output: /usr/bin/hello\n        cgo: false",
+    );
+    let script = &plan.cells[0].pipeline[0].args[1];
+    assert!(script.contains("CGO_ENABLED=$cgo"), "{script}");
+    // The input renders into the guard, so the step actually sees `false`.
+    assert!(script.contains("[ \"false\" = true ]"), "{script}");
+}
+
+#[test]
 fn build_environment_is_applied_to_steps() {
     let yaml = r#"
 schema: 1

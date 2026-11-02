@@ -1,5 +1,5 @@
 name: go/test
-version: 1
+version: 2
 summary: Run Go tests
 inputs:
   packages:
@@ -8,9 +8,14 @@ inputs:
   args:
     type: list<string>
     default: []
+  cgo:
+    type: boolean
+    default: true
 needs:
   tools: [go]
 run:
   cwd: "${source.dir}"
   runs: |
-    go test ${inputs.args} ${inputs.packages}
+    cgo=0
+    if [ "${inputs.cgo}" = true ]; then cgo=1; fi
+    CGO_ENABLED=$cgo go test ${inputs.args} ${inputs.packages}
