@@ -99,6 +99,7 @@ pub fn execute(request: SourceRequest<'_>) -> Result<PathBuf, Error> {
         request.arch,
         request.pipeline_dir,
         false,
+        true,
         request.policy,
     )?;
     let automatic =

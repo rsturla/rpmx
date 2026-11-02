@@ -139,6 +139,7 @@ pub fn execute(request: SrpmRequest<'_>) -> Result<Vec<PathBuf>, Error> {
         request.arch,
         request.pipeline_dir,
         false,
+        true,
         policy,
     )?;
     if let Some(id) = request.cell {

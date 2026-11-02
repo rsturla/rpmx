@@ -14,7 +14,7 @@ pub fn run(args: ExplainArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> 
         build_release: args.policy.build_release,
     })?;
     let policy = resolved.plan_policy();
-    let (bundle, plan) = load_plan(&args.file, &args.arch, pipeline_dir, false, policy)?;
+    let (bundle, plan) = load_plan(&args.file, &args.arch, pipeline_dir, false, true, policy)?;
 
     let value = match args.topic.as_str() {
         "policy" => serde_json::json!({

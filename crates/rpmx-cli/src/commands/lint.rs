@@ -71,6 +71,7 @@ pub fn run(args: LintArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
         &args.arch,
         pipeline_dir,
         false,
+        true,
         resolved.plan_policy(),
     )?;
     let mut diagnostics = check(&bundle.recipe, &plan, &bundle.root);

@@ -257,7 +257,7 @@ fn recipe_checks(recipe: &std::path::Path) -> Result<Vec<Check>, rpmx_core::Erro
         dist_tag: None,
         build_release: None,
     };
-    let (_, plan) = crate::commands::load_plan(recipe, &arch, None, false, policy)?;
+    let (_, plan) = crate::commands::load_plan(recipe, &arch, None, false, true, policy)?;
     let Some(requirement) =
         autoroot::requirement(&bundle.recipe, &plan, &bundle.root, None, &arch)?
     else {

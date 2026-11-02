@@ -214,7 +214,7 @@ fn package_stage(
         args.signing.signing_key.as_deref(),
         args.signing.signing_passphrase_env.as_deref(),
     )?;
-    let (bundle, plan) = load_plan(args.file.as_path(), arch, pipeline_dir, false, policy)?;
+    let (bundle, plan) = load_plan(args.file.as_path(), arch, pipeline_dir, false, true, policy)?;
     if args.locked {
         crate::commands::lock::verify(
             &bundle,
@@ -461,7 +461,7 @@ fn build_one(
     let output = arch_output(args, arch);
     let build_started = std::time::Instant::now();
     let run_tests = args.run_tests || !args.test.is_empty();
-    let (bundle, plan) = load_plan(&args.file, arch, pipeline_dir, false, policy)?;
+    let (bundle, plan) = load_plan(&args.file, arch, pipeline_dir, false, true, policy)?;
     if !args.test.is_empty() {
         let known: std::collections::BTreeSet<_> = plan
             .cells

@@ -145,6 +145,7 @@ pub(super) fn prepare(
         &target_arch,
         Some(pipelines.as_path()),
         true,
+        false,
         policy,
     )?;
     let cells: Vec<_> = match request.cell {

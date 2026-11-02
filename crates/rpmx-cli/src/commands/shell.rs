@@ -188,6 +188,7 @@ fn resolve_root(
         arch,
         pipeline_dir,
         false,
+        true,
         resolved.plan_policy(),
     )?;
     let automatic = autoroot::ensure(

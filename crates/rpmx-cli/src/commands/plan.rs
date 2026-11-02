@@ -17,6 +17,7 @@ pub fn run(args: PlanArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
         &args.arch,
         pipeline_dir,
         false,
+        true,
         resolved.plan_policy(),
     )?;
     if rpmx_core::output::json() {

@@ -39,7 +39,7 @@ pub fn run(args: TestArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
         )?
         .unwrap_or_else(|| rpmx_core::arch::native_arch().to_string()),
     };
-    let (bundle, plan) = load_plan(&args.file, &arch, pipeline_dir, false, policy)?;
+    let (bundle, plan) = load_plan(&args.file, &arch, pipeline_dir, false, true, policy)?;
     if !args.selected.is_empty() {
         let known: std::collections::BTreeSet<_> = plan
             .cells
