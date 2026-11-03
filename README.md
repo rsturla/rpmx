@@ -38,14 +38,20 @@ prototype, not production software.
   `generators:` block can disable a class or exclude one generated entry.
 - **Git sources.** Sources can be pinned to a full git commit and are archived
   deterministically before entering the cache.
+- **Bundled components.** `bundled(...)` provides are discovered from Go,
+  Cargo, npm/Yarn/pnpm, Python, Ruby and PHP vendor metadata. C and C++ declare
+  them explicitly with `outputs[].bundled`, the `bundled/declare` step, or a
+  build-time declaration file. `rpmx explain components` shows the evidence and
+  final provides per output.
 
 ## Status
 
 Early prototype. The build, test, signing and repository paths are exercised
 end to end on x86_64. Foreign targets run through bubblewrap + qemu-user binfmt
-by default; `--runner qemu` selects the full-VM path instead. Cross compilation
-is not implemented. The supported RPM feature set is intentionally small; see
-[Known limitations](#known-limitations).
+by default; `--runner qemu` selects the full-VM path instead. A profile with a
+`cross` block builds a target natively against a target sysroot, and a cross
+SRPM embeds that sysroot so `rpmx rebuild` needs no profile. The supported RPM
+feature set is intentionally small; see [Known limitations](#known-limitations).
 
 ## Requirements
 
@@ -382,8 +388,9 @@ explicit escape hatch.
 - Rich dependencies are not implemented; weak dependencies
   (`recommends`, `suggests`, `supplements`, `enhances`) are.
 - Dependency generators cover ELF, pkgconfig, shebangs, Python, Perl,
-  desktop/AppStream and debuginfo. Fontconfig, OCaml, sysusers/usergroup and
-  rpm macro provides are not generated; Python emits versioned
+  desktop/AppStream and debuginfo. Bundled components cover Go, Cargo,
+  npm/Yarn/pnpm, Python, Ruby, PHP and explicit C/C++. Fontconfig, OCaml,
+  sysusers/usergroup and rpm macro provides are not generated; Python emits versioned
   `pythonX.Ydist(...)` names only; a distro that wants a major-only alias or
   extras subpackages declares them on its runtime package. A
   `#!/usr/bin/env name` shebang requires `/usr/bin/env`, not `name`, and
@@ -393,13 +400,12 @@ explicit escape hatch.
 - `-debugsource`, build-id debug links and per-subpackage debuginfo are not
   implemented.
 - A cross build is driven by a profile with a `cross` block; it uses a
-  host-native toolchain and a target sysroot, and needs no binfmt handler.
+  host-native toolchain and a target sysroot, and needs no binfmt handler. Its
+  SRPM embeds the sysroot lock and toolchain, so a rebuild needs no profile.
   Emulated foreign builds still use bubblewrap + host binfmt; `--runner qemu`
   is the explicit full-VM path and requires `qemu-system-<arch>` plus an
   assembled transport appliance. The build root itself is not bootable and
   does not need kernel or SSH packages.
-- Cross rebuild from an existing SRPM is not supported yet: the embedded lock
-  does not carry the sysroot closure.
 - Multi-arch `build` rejects `--locked`, `--stage`, `--root`, `--root-lock`,
   `--test-root-lock`, `--junit` and `--sbom` until per-arch lock/evidence
   aggregation lands. `--run-tests` and `--cell` work per architecture.
