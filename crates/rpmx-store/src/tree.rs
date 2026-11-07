@@ -141,12 +141,72 @@ fn is_skipped(relative: &str) -> bool {
     })
 }
 
+fn digest_root_relaxed(root: &Path) -> Result<String> {
+    let mut changed = Vec::new();
+    if let Err(error) = make_owner_readable(root, &mut changed) {
+        restore_modes(&changed);
+        return Err(error);
+    }
+    let result = tree_digest(root);
+    restore_modes(&changed);
+    result
+}
+
+fn make_owner_readable(path: &Path, changed: &mut Vec<(std::path::PathBuf, u32)>) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let metadata = fs::symlink_metadata(path).map_err(|error| {
+        Error::new(
+            codes::ROOT_014,
+            format!("cannot stat {}: {error}", path.display()),
+        )
+    })?;
+    let mode = metadata.permissions().mode() & 0o7777;
+    let needed = if metadata.is_dir() {
+        0o500
+    } else if metadata.is_file() {
+        0o400
+    } else {
+        0
+    };
+    if needed != 0 && mode & needed != needed {
+        fs::set_permissions(path, fs::Permissions::from_mode(mode | needed)).map_err(|error| {
+            Error::new(
+                codes::ROOT_014,
+                format!("cannot make {} readable: {error}", path.display()),
+            )
+        })?;
+        changed.push((path.to_path_buf(), mode));
+    }
+    if metadata.is_dir() {
+        let entries = rpmx_base::io::sorted_entries(path, codes::ROOT_014)?;
+        for entry in entries {
+            make_owner_readable(&entry.path(), changed)?;
+        }
+    }
+    Ok(())
+}
+
+fn restore_modes(changed: &[(std::path::PathBuf, u32)]) {
+    use std::os::unix::fs::PermissionsExt;
+
+    for (path, mode) in changed.iter().rev() {
+        let _ = fs::set_permissions(path, fs::Permissions::from_mode(*mode));
+    }
+}
+
 /// Digest a root, re-entering a user namespace when rpm left mode-000 trees
-/// behind. The fallback re-executes this binary so the walk still sees root.
+/// behind. The first fallback temporarily grants the owner read access and
+/// restores every mode afterwards; this works without namespace privileges
+/// when the caller owns the tree. The second fallback re-executes this binary
+/// so the walk still sees root.
 pub fn digest_root(root: &Path) -> Result<String> {
     match tree_digest(root) {
         Ok(digest) => Ok(digest),
         Err(direct) => {
+            if let Ok(digest) = digest_root_relaxed(root) {
+                return Ok(digest);
+            }
             let executable = std::env::current_exe().map_err(|error| {
                 Error::new(
                     codes::ROOT_014,

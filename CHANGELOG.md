@@ -32,6 +32,12 @@ does not promise a stable schema or CLI yet.
   otherwise identical rebuilds produce different SBOMs and prevented a
   bootstrap fixed point from converging.
 
+- Root digests read mode-000 files without requiring namespace privileges.
+  `digest_root` first tries the tree as-is, then temporarily grants the owner
+  read access and restores every mode, and only then falls back to
+  re-executing under a user namespace. Fedora's `/etc/gshadow` previously made
+  `rpmx bootstrap build` fail with `RPMX-ROOT-014` on a fresh candidate root.
+
 - Bootstrap stages accept a `replaces` map from an Eternal output package name
   to one or more seed package names. This lets the ladder keep a stable output
   name while hiding a differently named seed provider; a fixed-point pass
