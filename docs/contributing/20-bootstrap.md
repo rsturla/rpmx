@@ -161,6 +161,9 @@ are allowed, so a manifest in `.bootstrap/` can reference `../packages` and
 - `extra-sysroot`: target packages added to this stage's sysroot only.
 - `order`: optional explicit edges, for example
   `order: [[glibc, gcc], [gcc, glibc]]`.
+- `replaces`: optional map from an Eternal output package to the seed package
+  name or names it replaces. It lets a stage hide a differently named seed
+  provider; fixed-point passes apply the same map to their input repositories.
 - `fixed-point`: optional package names rebuilt until output and root digests
   stabilise.
 - `source-date-epoch`: optional per-stage override for `repo::index`; defaults
@@ -384,7 +387,8 @@ Plan output (human):
 
 ```text
 stage0  profile=profiles/stage0.profile.yaml  arch=x86_64  inputs=-
-  root   bootstrap/roots/stage0   lock bootstrap/locks/stage0.lock.yaml
+  root   bootstrap/roots/stage0/x86_64
+  lock   bootstrap/locks/stage0/x86_64.lock.yaml
   repo   out/stage0/x86_64        id bootstrap-stage0
   tools  +bison +python3 +texinfo
   order  filesystem, binutils, glibc, gcc, make, bash, coreutils
@@ -431,10 +435,11 @@ credential references are not committed by accident.
 ### 5.2 Stage root resolution
 
 - Resolve and assemble the build root with `Assembly::Install` into
-  `roots/<stage>/root`.
+  `roots/<stage>/<arch>/root`.
 - Resolve and assemble the sysroot with `Assembly::Extract` into
-  `roots/<stage>-sysroot/root` when the profile crosses.
-- Write `locks/<stage>.lock.yaml` and `locks/<stage>.sysroot.lock.yaml`.
+  `roots/<stage>/<arch>-sysroot/root` when the profile crosses.
+- Write `locks/<stage>/<arch>.lock.yaml` and
+  `locks/<stage>/<arch>.sysroot.lock.yaml`.
 - Add optional `seed: Option<String>` and `generation: Option<String>` (or a
   generic labels map) to `RootLock`, outside `closure_digest`, populated from
   the manifest's `seed` block. This keeps locks self-describing without
@@ -483,7 +488,8 @@ stage and recipe in the message, followed by the exact retry command.
 `extra-tools`/`extra-sysroot` are part of the stage requirement, so they are:
 
 - resolved into the stage root/sysroot,
-- recorded in `locks/<stage>.lock.yaml` and the embedded SRPM root lock,
+- recorded in `locks/<stage>/<arch>.lock.yaml` and the embedded SRPM root
+  lock,
 - printed in the stage build log,
 - absent from later stages unless that stage also declares them,
 - never part of the output's runtime dependency set.
@@ -603,15 +609,15 @@ pub exclude: Vec<String>,
      gets `exclude = <stage output package names>`, and add the stage output
      repo. This ensures the stage output wins even when NEVRA is unchanged.
    - Resolve and assemble a candidate root under
-     `roots/<stage>-iter<i>/`; keep its lock/digests.
+     `roots/<stage>/<arch>-iter<i>/`; keep its lock/digests.
    - Rebuild only the `fixed-point` recipes in declared/graph order against the
      candidate root, writing over the same stage output.
    - Re-index the stage output.
    - Compare, for each fixed-point recipe, the SHA-512 of every produced RPM,
      plus the candidate root's `closure_digest` and `root_digest`. If both the
      package bytes and the root digests are unchanged from the previous pass,
-     promote the candidate root and lock to `roots/<stage>`/
-     `locks/<stage>.lock.yaml` and stop.
+     promote the candidate root and lock to `roots/<stage>/<arch>`/
+     `locks/<stage>/<arch>.lock.yaml` and stop.
 3. If not converged after `max_iterations`, return `BOOTSTRAP_005` naming the
    packages whose bytes changed and the last two root digests.
 
@@ -638,8 +644,8 @@ Keep `rpmx rebuild` strict. Add a separate path.
 
 ```console
 rpmx bootstrap rebuild package.src.rpm \
-  --root-lock bootstrap/locks/stage1.lock.yaml \
-  --root bootstrap/roots/stage1 \
+  --root-lock bootstrap/locks/stage1/x86_64.lock.yaml \
+  --root bootstrap/roots/stage1/x86_64 \
   --output out/stage1/x86_64 \
   --srpm-out out/stage1/src
 ```

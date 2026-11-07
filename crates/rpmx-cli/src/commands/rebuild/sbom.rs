@@ -38,6 +38,11 @@ impl SbomContext {
             sources: package_lock
                 .sources
                 .iter()
+                // The source root lock records the root used to assemble the
+                // sources. It is build metadata, not an input to the package,
+                // and rebuilds of the same recipe from different roots would
+                // otherwise make every binary carry a different SBOM.
+                .filter(|source| source.path != "source-root.lock.json")
                 .map(|source| (source.path.clone(), source.digest.clone()))
                 .collect(),
             source_rpm: format!("{}-{}-{}.src.rpm", cell.package, cell.version, cell.release),

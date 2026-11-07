@@ -140,8 +140,8 @@ fn plan_json_exposes_the_ladder_and_effective_timestamp() {
     assert_eq!(stages[0]["arch"], "x86_64");
     assert_eq!(stages[0]["inputs"], serde_json::json!([]));
     assert_eq!(stages[0]["seed"], true);
-    assert_eq!(stages[0]["root"], "bootstrap/roots/stage0");
-    assert_eq!(stages[0]["lock"], "bootstrap/locks/stage0.lock.yaml");
+    assert_eq!(stages[0]["root"], "bootstrap/roots/stage0/x86_64");
+    assert_eq!(stages[0]["lock"], "bootstrap/locks/stage0/x86_64.lock.yaml");
     assert_eq!(stages[0]["repo"], "out/stage0/x86_64");
     assert_eq!(stages[0]["repo_id"], "bootstrap-stage0");
     assert_eq!(stages[0]["order"], serde_json::json!(["gcc", "glibc"]));
@@ -261,6 +261,38 @@ fn a_multi_arch_build_requires_an_arch() {
         .as_str()
         .unwrap()
         .contains("--arch"));
+}
+
+#[test]
+fn multi_arch_plans_have_independent_roots_and_locks() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    fixture(directory.path());
+    let manifest = directory.path().join("bootstrap.yaml");
+    let text = std::fs::read_to_string(&manifest)
+        .unwrap()
+        .replace("archs: [x86_64]", "archs: [x86_64, aarch64]");
+    write(&manifest, &text);
+    for file in ["stage0.profile.yaml", "stage1.profile.yaml"] {
+        let path = directory.path().join(file);
+        let text = std::fs::read_to_string(&path)
+            .unwrap()
+            .replace("archs: [x86_64]", "archs: [x86_64, aarch64]");
+        write(&path, &text);
+    }
+
+    let output = rpmx(&["bootstrap", "plan", manifest.to_str().unwrap(), "--json"]);
+    assert!(output.status.success(), "{output:?}");
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("one JSON document");
+    let stages = value["stages"].as_array().expect("stages");
+    assert_eq!(stages.len(), 4);
+    assert_eq!(stages[0]["root"], "bootstrap/roots/stage0/x86_64");
+    assert_eq!(stages[0]["lock"], "bootstrap/locks/stage0/x86_64.lock.yaml");
+    assert_eq!(stages[2]["root"], "bootstrap/roots/stage0/aarch64");
+    assert_eq!(
+        stages[2]["lock"],
+        "bootstrap/locks/stage0/aarch64.lock.yaml"
+    );
 }
 
 #[test]

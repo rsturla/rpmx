@@ -46,8 +46,8 @@ the network.
 seed   name=fedora-44 image=registry.fedoraproject.org/fedora:44 releasever=44 generation=2026.01
 epoch  1704067200
 stage0  profile=profiles/stage0.profile.yaml arch=x86_64 inputs=-
-  root   bootstrap/roots/stage0
-  lock   bootstrap/locks/stage0.lock.yaml
+  root   bootstrap/roots/stage0/x86_64
+  lock   bootstrap/locks/stage0/x86_64.lock.yaml
   repo   out/stage0/x86_64  id bootstrap-stage0
   seed   true
   tools  +bison +python3 +texinfo
@@ -82,10 +82,10 @@ rpmx bootstrap build bootstrap.yaml --arch x86_64
 Each stage has its own root and lock:
 
 ```text
-bootstrap/roots/stage0/root
-bootstrap/roots/stage0-sysroot/root      # cross stages only
-bootstrap/locks/stage0.lock.yaml
-bootstrap/locks/stage0.sysroot.lock.yaml # cross stages only
+bootstrap/roots/stage0/x86_64/root
+bootstrap/roots/stage0/x86_64-sysroot/root      # cross stages only
+bootstrap/locks/stage0/x86_64.lock.yaml
+bootstrap/locks/stage0/x86_64.sysroot.lock.yaml # cross stages only
 ```
 
 A cross stage resolves a host build root and a target sysroot. `extra-tools`
@@ -131,11 +131,13 @@ stage output as the winning repository. This makes the stage converge on its
 own toolchain instead of silently resolving the input's copy.
 
 The first pass builds every stage recipe from the declared inputs. Each
-following pass resolves a candidate root under `roots/<stage>-iter<i>/`, rebuilds
+following pass resolves a candidate root under
+`roots/<stage>/<arch>-iter<i>/`, rebuilds
 only the `fixed-point` recipes and re-indexes the stage output. It stops when
 the SHA-512 of every produced RPM and the candidate root's closure and root
 digests match the previous pass. A candidate that matches is promoted to
-`roots/<stage>` and `locks/<stage>.lock.yaml`; a stage that does not converge
+`roots/<stage>/<arch>` and `locks/<stage>/<arch>.lock.yaml`; a stage that
+does not converge
 within `max-iterations` fails with `RPMX-BOOTSTRAP-005`, naming the packages
 whose bytes changed and the last two root digests.
 
@@ -150,8 +152,8 @@ Use the bootstrap-specific command rather than relaxing `rpmx rebuild`:
 
 ```console
 rpmx bootstrap rebuild stage0/probe.src.rpm \
-  --root-lock bootstrap/locks/stage1.lock.yaml \
-  --root bootstrap/roots/stage1/root \
+  --root-lock bootstrap/locks/stage1/x86_64.lock.yaml \
+  --root bootstrap/roots/stage1/x86_64/root \
   --output out/stage1/x86_64 \
   --srpm-out out/stage1/src
 ```
@@ -213,6 +215,9 @@ stages:
     packages: all
     output: out
     fixed-point: [binutils, glibc, gcc]
+    replaces:                      # only when names differ
+      eternal-coreutils: coreutils
+      eternal-util-linux: [util-linux, util-linux-core]
 ```
 
 `schema: 1` is accepted as an alias for `version: 1`. Unknown fields are
@@ -242,6 +247,12 @@ manifest in `.bootstrap/` can use `recipe-root: ../packages` and
   changing. A dependency cycle is accepted only when every member is listed
   here. The input repositories exclude the stage output's package names and
   the stage output repo wins; `max-iterations` bounds the passes.
+- `replaces` maps an Eternal output package name to the seed package name or
+  names it replaces. The names do not have to match. A non-seed stage adds the
+  seed names to the profile repositories' `exclude` list, and a fixed-point
+  pass adds them to the input repositories as well. The output RPM must still
+  declare the seed name in its `provides` when other packages depend on that
+  name; `replaces` only controls which provider the resolver may see.
 - `source-date-epoch` overrides the manifest timestamp for this stage.
 
 ### Seed-stage policy

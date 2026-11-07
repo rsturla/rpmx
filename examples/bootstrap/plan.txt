@@ -1,21 +1,21 @@
 seed   name=fedora-44 image=registry.fedoraproject.org/fedora:44 releasever=44 generation=2026.01
 epoch  1704067200
 stage0  profile=profiles/seed.profile.yaml arch=x86_64 inputs=-
-  root   roots/stage0
-  lock   locks/stage0.lock.yaml
+  root   roots/stage0/x86_64
+  lock   locks/stage0/x86_64.lock.yaml
   repo   out/stage0/x86_64  id bootstrap-stage0
   seed   true
   tools  +python3 +texinfo
   order  binutils, filesystem, glibc, gcc, bash, make
 stage1  profile=profiles/stage1.profile.yaml arch=x86_64 inputs=stage0
-  root   roots/stage1
-  lock   locks/stage1.lock.yaml
+  root   roots/stage1/x86_64
+  lock   locks/stage1/x86_64.lock.yaml
   repo   out/stage1/x86_64  id bootstrap-stage1
   fixed  binutils, glibc, gcc
   order  binutils, filesystem, glibc, gcc, bash, make
 stage2  profile=profiles/final.profile.yaml arch=x86_64 inputs=stage1
-  root   roots/stage2
-  lock   locks/stage2.lock.yaml
+  root   roots/stage2/x86_64
+  lock   locks/stage2/x86_64.lock.yaml
   repo   out/x86_64  id bootstrap-stage2
   fixed  binutils, glibc, gcc
   order  binutils, filesystem, glibc, gcc, bash, make

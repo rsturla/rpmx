@@ -462,9 +462,15 @@ fn fixed_point_profile(
     }
     let mut profile = effective.clone();
     let input_prefix = format!("bootstrap-{}-", stage.name);
+    let mut excluded = package_names.clone();
+    for (package, seeds) in &stage.replaces {
+        if package_names.contains(package) || stage.packages.contains(package) {
+            excluded.extend(seeds.iter().cloned());
+        }
+    }
     for repository in &mut profile.repositories {
         if repository.id.starts_with(&input_prefix) && repository.id != output_id {
-            repository.exclude = package_names.iter().cloned().collect();
+            repository.exclude = excluded.iter().cloned().collect();
         }
     }
     profile.repositories.push(Repository {
@@ -510,15 +516,9 @@ fn resolve_candidate_roots(
         None
     };
     let build_arch = Arch::parse(build_profile.arch())?;
-    let stage_root = base
-        .join(&stage.root)
-        .with_file_name(format!("{}-iter{iteration}", stage.name));
+    let stage_root = with_suffix(&base.join(&stage.root), &format!("-iter{iteration}"));
     let build_root = stage_root.join("root");
-    let lock_dir = base.join(&stage.lock).parent().map(Path::to_path_buf);
-    let build_lock_path = lock_dir
-        .as_deref()
-        .unwrap_or_else(|| Path::new("."))
-        .join(format!("{}-iter{iteration}.lock.yaml", stage.name));
+    let build_lock_path = lock_with_suffix(&base.join(&stage.lock), &format!("-iter{iteration}"));
     let build_lock = resolve_one_root(
         &build_profile,
         &format!("{}-{}-iter{iteration}", stage.name, stage.name),
@@ -535,14 +535,8 @@ fn resolve_candidate_roots(
 
     let (sysroot_root, sysroot_lock) = match &sysroot_profile {
         Some(sysroot_profile) => {
-            let sysroot_root = stage_root
-                .parent()
-                .unwrap_or_else(|| Path::new("."))
-                .join(format!("{}-iter{iteration}-sysroot/root", stage.name));
-            let sysroot_lock_path = lock_dir
-                .as_deref()
-                .unwrap_or_else(|| Path::new("."))
-                .join(format!("{}-iter{iteration}.sysroot.lock.yaml", stage.name));
+            let sysroot_root = with_suffix(&stage_root, "-sysroot").join("root");
+            let sysroot_lock_path = sysroot_lock_path(&build_lock_path);
             let lock = resolve_one_root(
                 sysroot_profile,
                 &format!("{}-iter{iteration}-sysroot", stage.name),
@@ -731,7 +725,7 @@ fn promote_candidate(
         let mut sysroot_lock = candidate_lock.clone();
         update_output_repository(&mut sysroot_lock, &output_id, &output_url);
         sysroot_lock.requirement = Some(requirement.to_string());
-        let lock_path = base_lock_path(&final_roots.build_lock_path, &stage.name);
+        let lock_path = sysroot_lock_path(&final_roots.build_lock_path);
         publish(candidate_root, final_root, true, "stage sysroot")?;
         write_lock_atomic(&lock_path, &sysroot_lock)?;
     }
@@ -752,8 +746,25 @@ fn update_output_repository(lock: &mut RootLock, output_id: &str, output_url: &s
     );
 }
 
-fn base_lock_path(build_lock_path: &Path, stage: &str) -> PathBuf {
-    build_lock_path.with_file_name(format!("{stage}.sysroot.lock.yaml"))
+fn sysroot_lock_path(build_lock_path: &Path) -> PathBuf {
+    lock_with_suffix(build_lock_path, ".sysroot")
+}
+
+fn lock_with_suffix(path: &Path, suffix: &str) -> PathBuf {
+    let name = path
+        .file_name()
+        .map(|name| name.to_string_lossy())
+        .unwrap_or_default();
+    let stem = name.strip_suffix(".lock.yaml").unwrap_or(&name);
+    path.with_file_name(format!("{stem}{suffix}.lock.yaml"))
+}
+
+fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
+    let name = path
+        .file_name()
+        .map(|name| name.to_string_lossy())
+        .unwrap_or_default();
+    path.with_file_name(format!("{name}{suffix}"))
 }
 
 fn synthesize_profile(
@@ -766,6 +777,20 @@ fn synthesize_profile(
     let path = base.join(&stage.profile);
     let mut profile = load_profile(&path)?.for_target(arch)?;
     profile.name = Some(format!("{}-{}", plan.name, stage.name));
+
+    // When a package keeps a different name in the seed, hide the seed
+    // provider as soon as a later stage can satisfy the dependency from an
+    // earlier Eternal stage. The seed stage itself must keep the seed package.
+    if !stage.seed {
+        let mut replaced = BTreeSet::new();
+        for seeds in stage.replaces.values() {
+            replaced.extend(seeds.iter().cloned());
+        }
+        for repository in &mut profile.repositories {
+            repository.exclude.extend(replaced.iter().cloned());
+            dedupe(&mut repository.exclude);
+        }
+    }
 
     for input in &stage.inputs {
         let dependency = stages
@@ -884,12 +909,8 @@ fn resolve_roots(
 
     let (sysroot_root, sysroot_lock) = match &sysroot_profile {
         Some(profile) => {
-            let sysroot_root = stage_root
-                .parent()
-                .unwrap_or_else(|| Path::new("."))
-                .join(format!("{}-sysroot/root", stage.name));
-            let sysroot_lock_path =
-                build_lock_path.with_file_name(format!("{}.sysroot.lock.yaml", stage.name));
+            let sysroot_root = with_suffix(&stage_root, "-sysroot").join("root");
+            let sysroot_lock_path = sysroot_lock_path(&build_lock_path);
             let lock = resolve_one_root(
                 profile,
                 &format!("{}-{}-sysroot", plan.name, stage.name),
@@ -1123,17 +1144,30 @@ fn publish(temp: &Path, destination: &Path, force: bool, label: &str) -> Result<
         })?;
     }
     let backup = destination.with_extension(format!("bootstrap-old-{}", std::process::id()));
-    if destination.exists() {
-        let _ = std::fs::remove_dir_all(&backup);
-        std::fs::rename(destination, &backup).map_err(|error| {
-            Error::new(
+    let old_mode = if destination.exists() {
+        let _ = rpmx_core::root::remove_tree(&backup);
+        let old_mode = ensure_owner_writable(destination)?;
+        if let Err(error) = std::fs::rename(destination, &backup) {
+            restore_mode(destination, old_mode)?;
+            return Err(Error::new(
                 codes::BUILD_001,
                 format!("cannot move {} aside: {error}", destination.display()),
-            )
-        })?;
-    }
+            ));
+        }
+        old_mode
+    } else {
+        None
+    };
+    // Assembled roots are read-only (mode 0555). Linux refuses to rename a
+    // directory that its owner cannot write, so make the top-level directory
+    // writable for the rename and put the original mode back afterwards.
+    let temp_mode = ensure_owner_writable(temp)?;
     if let Err(error) = std::fs::rename(temp, destination) {
-        let _ = std::fs::rename(&backup, destination);
+        restore_mode(temp, temp_mode)?;
+        if backup.exists() {
+            let _ = std::fs::rename(&backup, destination);
+            restore_mode(destination, old_mode)?;
+        }
         return Err(Error::new(
             codes::BUILD_001,
             format!(
@@ -1143,8 +1177,50 @@ fn publish(temp: &Path, destination: &Path, force: bool, label: &str) -> Result<
             ),
         ));
     }
-    let _ = std::fs::remove_dir_all(&backup);
+    restore_mode(destination, temp_mode)?;
+    let _ = rpmx_core::root::remove_tree(&backup);
     Ok(())
+}
+
+fn ensure_owner_writable(path: &Path) -> Result<Option<u32>, Error> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let metadata = std::fs::symlink_metadata(path).map_err(|error| {
+        Error::new(
+            codes::BUILD_001,
+            format!("cannot inspect {}: {error}", path.display()),
+        )
+    })?;
+    if !metadata.is_dir() {
+        return Ok(None);
+    }
+    let mode = metadata.permissions().mode() & 0o7777;
+    if mode & 0o200 != 0 {
+        return Ok(None);
+    }
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode | 0o200)).map_err(
+        |error| {
+            Error::new(
+                codes::BUILD_001,
+                format!("cannot make {} writable: {error}", path.display()),
+            )
+        },
+    )?;
+    Ok(Some(mode))
+}
+
+fn restore_mode(path: &Path, mode: Option<u32>) -> Result<(), Error> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let Some(mode) = mode else {
+        return Ok(());
+    };
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).map_err(|error| {
+        Error::new(
+            codes::BUILD_001,
+            format!("cannot restore permissions on {}: {error}", path.display()),
+        )
+    })
 }
 
 fn write_lock_atomic(path: &Path, lock: &RootLock) -> Result<(), Error> {
@@ -1177,7 +1253,9 @@ fn temporary_sibling(path: &Path, kind: &str) -> Result<PathBuf, Error> {
 
 #[cfg(test)]
 mod tests {
-    use super::{check_inputs, ensure_replaceable, select_arch, select_stages, synthesize_profile};
+    use super::{
+        check_inputs, ensure_replaceable, publish, select_arch, select_stages, synthesize_profile,
+    };
     use rpmx_core::error::codes;
     use std::path::Path;
 
@@ -1414,6 +1492,75 @@ stages:
             .as_deref()
             .unwrap()
             .ends_with("out/x86_64"));
+    }
+
+    #[test]
+    fn a_fixed_point_profile_hides_seed_names_for_renamed_outputs() {
+        let directory = tempfile::tempdir().unwrap();
+        fixture(directory.path());
+        let manifest = directory.path().join("bootstrap.yaml");
+        let mut plan = rpmx_core::bootstrap::plan_manifest(&manifest, Some("x86_64")).unwrap();
+        plan.stages[1]
+            .replaces
+            .insert("gcc".to_string(), vec!["gcc-seed".to_string()]);
+        let stages: Vec<_> = plan.stages.iter().collect();
+        let effective =
+            synthesize_profile(&plan, &stages, &plan.stages[1], "x86_64", directory.path())
+                .unwrap();
+        let seed = effective
+            .repositories
+            .iter()
+            .find(|repo| repo.id == "base")
+            .expect("seed repo");
+        assert!(
+            seed.exclude.contains(&"gcc-seed".to_string()),
+            "{:?}",
+            seed.exclude
+        );
+
+        let output = directory.path().join("out/x86_64");
+        let names = ["gcc".to_string(), "glibc".to_string()]
+            .into_iter()
+            .collect();
+        let iteration =
+            super::fixed_point_profile(&effective, &plan.stages[1], &output, &names).unwrap();
+        let input = iteration
+            .repositories
+            .iter()
+            .find(|repo| repo.id == "bootstrap-stage1-stage0")
+            .expect("input repo");
+        assert!(
+            input.exclude.contains(&"gcc-seed".to_string()),
+            "{:?}",
+            input.exclude
+        );
+    }
+
+    #[test]
+    fn publishing_replaces_a_read_only_root() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = tempfile::tempdir().unwrap();
+        let temp = directory.path().join("candidate");
+        std::fs::create_dir_all(&temp).unwrap();
+        std::fs::write(temp.join("new"), "new").unwrap();
+        std::fs::set_permissions(&temp, std::fs::Permissions::from_mode(0o555)).unwrap();
+
+        let destination = directory.path().join("root");
+        std::fs::create_dir_all(&destination).unwrap();
+        std::fs::write(destination.join("old"), "old").unwrap();
+        std::fs::set_permissions(&destination, std::fs::Permissions::from_mode(0o555)).unwrap();
+
+        publish(&temp, &destination, true, "stage root").unwrap();
+
+        assert!(destination.join("new").exists());
+        assert!(!destination.join("old").exists());
+        let mode = std::fs::metadata(&destination)
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o7777;
+        assert_eq!(mode, 0o555);
     }
 
     #[test]

@@ -69,6 +69,45 @@ where
     }
 }
 
+fn string_list_map<'de, D>(
+    deserializer: D,
+) -> std::result::Result<std::collections::BTreeMap<String, Vec<String>>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = serde_yaml_ng::Value::deserialize(deserializer)?;
+    let serde_yaml_ng::Value::Mapping(mapping) = value else {
+        return Err(serde::de::Error::custom(format!(
+            "expected a mapping of package names, got {value:?}"
+        )));
+    };
+    let mut result = std::collections::BTreeMap::new();
+    for (key, value) in mapping {
+        let serde_yaml_ng::Value::String(key) = key else {
+            return Err(serde::de::Error::custom("replacement keys must be strings"));
+        };
+        let values = match value {
+            serde_yaml_ng::Value::String(text) => vec![text],
+            serde_yaml_ng::Value::Sequence(values) => values
+                .into_iter()
+                .map(|value| match value {
+                    serde_yaml_ng::Value::String(text) => Ok(text),
+                    other => Err(serde::de::Error::custom(format!(
+                        "expected a seed package name, got {other:?}"
+                    ))),
+                })
+                .collect::<std::result::Result<Vec<_>, _>>()?,
+            other => {
+                return Err(serde::de::Error::custom(format!(
+                    "expected a seed package name or list, got {other:?}"
+                )))
+            }
+        };
+        result.insert(key, values);
+    }
+    Ok(result)
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct BootstrapManifest {
@@ -138,6 +177,11 @@ pub struct Stage {
     pub order: Vec<[String; 2]>,
     #[serde(default, rename = "fixed-point", deserialize_with = "string_or_list")]
     pub fixed_point: Vec<String>,
+    /// Output package names mapped to the seed package names they replace.
+    /// Names do not have to match; the mapping is how a stage hides the seed
+    /// provider once the Eternal package exists.
+    #[serde(default, deserialize_with = "string_list_map")]
+    pub replaces: std::collections::BTreeMap<String, Vec<String>>,
     #[serde(default, rename = "source-date-epoch", alias = "source_date_epoch")]
     pub source_date_epoch: Option<u32>,
 }
@@ -158,6 +202,7 @@ pub struct PlannedStage {
     pub extra_tools: Vec<String>,
     pub extra_sysroot: Vec<String>,
     pub fixed_point: Vec<String>,
+    pub replaces: std::collections::BTreeMap<String, Vec<String>>,
     pub packages: Vec<String>,
     pub recipes: Vec<String>,
     pub order: Vec<String>,
@@ -407,6 +452,7 @@ struct StageMeta {
     extra_tools: Vec<String>,
     extra_sysroot: Vec<String>,
     fixed_point: Vec<String>,
+    replaces: std::collections::BTreeMap<String, Vec<String>>,
     selected: Vec<SelectedRecipe>,
     package_order: Vec<String>,
     source_date_epoch: Option<u32>,
@@ -422,14 +468,18 @@ impl StageMeta {
             arch: arch.to_string(),
             inputs: self.inputs.clone(),
             output: self.output.clone(),
-            root: self.root.clone(),
-            lock: self.lock.clone(),
+            root: Path::new(&self.root).join(arch).display().to_string(),
+            lock: Path::new(&self.lock)
+                .join(format!("{arch}.lock.yaml"))
+                .display()
+                .to_string(),
             repo: repo.display().to_string(),
             repo_id: format!("bootstrap-{}", self.name),
             seed: self.seed,
             extra_tools: self.extra_tools.clone(),
             extra_sysroot: self.extra_sysroot.clone(),
             fixed_point: self.fixed_point.clone(),
+            replaces: self.replaces.clone(),
             packages: self.selected.iter().map(|item| item.name.clone()).collect(),
             recipes: self
                 .selected
@@ -600,15 +650,13 @@ fn build_stage_metas(manifest: &BootstrapManifest, base: &Path) -> Result<Vec<St
             profile_path,
             output: stage.output.clone(),
             root: roots.join(&stage.name).display().to_string(),
-            lock: locks
-                .join(format!("{}.lock.yaml", stage.name))
-                .display()
-                .to_string(),
+            lock: locks.join(&stage.name).display().to_string(),
             inputs,
             seed: stage.seed,
             extra_tools: stage.extra_tools.clone(),
             extra_sysroot: stage.extra_sysroot.clone(),
             fixed_point: stage.fixed_point.clone(),
+            replaces: stage.replaces.clone(),
             selected,
             package_order,
             source_date_epoch,
@@ -1473,6 +1521,31 @@ packages:
         assert_eq!(plan.stages[0].repo, "out/stage0/x86_64");
         assert_eq!(plan.stages[1].inputs, vec!["stage0"]);
         assert_eq!(plan.source_date_epoch, Some(1704067200));
+    }
+
+    #[test]
+    fn replacement_names_are_kept_in_the_plan() {
+        let (_directory, path) = setup(
+            r#"  - name: stage0
+    profile: stage0.yaml
+    packages: [gcc, glibc]
+    output: out
+    seed: true
+    replaces:
+      gcc: [gcc-seed, libgcc-seed]
+"#,
+        );
+        let plan = plan_with_base(
+            &super::load_manifest(&path).unwrap(),
+            path.parent().unwrap(),
+            &path,
+            Some("x86_64"),
+        )
+        .unwrap();
+        assert_eq!(
+            plan.stages[0].replaces["gcc"],
+            vec!["gcc-seed".to_string(), "libgcc-seed".to_string()]
+        );
     }
 
     #[test]

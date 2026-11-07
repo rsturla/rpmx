@@ -37,8 +37,8 @@ strict and use the bootstrap replacement command:
 
 ```console
 rpmx bootstrap rebuild package.src.rpm \
-  --root-lock examples/bootstrap/locks/stage1.lock.yaml \
-  --root examples/bootstrap/roots/stage1/root \
+  --root-lock examples/bootstrap/locks/stage1/x86_64.lock.yaml \
+  --root examples/bootstrap/roots/stage1/x86_64/root \
   --output out/stage1/x86_64 \
   --srpm-out out/stage1/src
 ```

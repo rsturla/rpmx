@@ -18,7 +18,25 @@ does not promise a stable schema or CLI yet.
   parent components such as `../packages`, so a manifest can live in
   `.bootstrap/` without absolute paths. Native stages assemble a normal dnf
   root (with scriptlets and an RPM database); only cross sysroots use the
-  payload-only extractor.
+  payload-only extractor. Multi-arch plans keep each architecture's roots,
+  fixed-point candidates and locks separate.
+
+- Bootstrap stages can publish a read-only assembled root. The publisher adds
+  owner write permission only for the directory rename and restores the
+  original mode afterwards; stale read-only backups are removed through the
+  namespace-aware root remover. This makes repeated `rpmx bootstrap build`
+  runs work with `--force` instead of failing with `Permission denied`.
+
+- Package SBOMs no longer list `source-root.lock.json` as a source. It records
+  the root used for source assembly, so treating it as a package input made
+  otherwise identical rebuilds produce different SBOMs and prevented a
+  bootstrap fixed point from converging.
+
+- Bootstrap stages accept a `replaces` map from an Eternal output package name
+  to one or more seed package names. This lets the ladder keep a stable output
+  name while hiding a differently named seed provider; a fixed-point pass
+  applies the same mapping to its input repositories. The recipe still owns
+  the matching `provides`.
 
 - Bundled components are discovered from vendor metadata and emitted as
   `bundled(...)` provides. Go reads `vendor/modules.txt`, Cargo reads
@@ -84,8 +102,9 @@ does not promise a stable schema or CLI yet.
 - `rpmx bootstrap build` resolves one build-root/sysroot pair per stage and
   runs the stage recipes in dependency order. It synthesizes the stage profile
   in memory (input stage repositories, recipe-required packages, `extra-tools`
-  and `extra-sysroot`), writes `<roots>/<stage>/root` and
-  `<locks>/<stage>.lock.yaml`, records seed/generation/requirement provenance,
+  and `extra-sysroot`), writes `<roots>/<stage>/<arch>/root` and
+  `<locks>/<stage>/<arch>.lock.yaml`, records seed/generation/requirement
+  provenance,
   indexes the stage output with the manifest or stage `source-date-epoch`, and
   publishes it atomically. A non-empty output or root needs `--force`;
   `--locked` verifies stage locks and fails with `RPMX-BOOTSTRAP-006` on
