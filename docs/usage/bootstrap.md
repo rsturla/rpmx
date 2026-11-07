@@ -126,9 +126,11 @@ rpmx bootstrap build bootstrap.yaml --arch x86_64 --refresh --force
 
 A stage with `fixed-point` rebuilds the named recipes against a root that
 already contains the stage output. Rebuilding a package usually keeps the same
-NEVRA, so the engine filters the input repositories with `exclude` and adds the
-stage output as the winning repository. This makes the stage converge on its
-own toolchain instead of silently resolving the input's copy.
+NEVRA, so the engine hides the package in every other repository, including
+the seed, with `exclude`, and adds the stage output as the only provider. This
+makes the stage converge on its own toolchain instead of silently resolving
+the input's copy, and it means a recipe does not need an inflated release or
+epoch just to outrank Fedora.
 
 The first pass builds every stage recipe from the declared inputs. Each
 following pass resolves a candidate root under
@@ -250,7 +252,7 @@ manifest in `.bootstrap/` can use `recipe-root: ../packages` and
 - `replaces` maps an Eternal output package name to the seed package name or
   names it replaces. The names do not have to match. A non-seed stage adds the
   seed names to the profile repositories' `exclude` list, and a fixed-point
-  pass adds them to the input repositories as well. The output RPM must still
+  pass hides them in every repository except the stage output. The output RPM must still
   declare the seed name in its `provides` when other packages depend on that
   name; `replaces` only controls which provider the resolver may see.
 - `source-date-epoch` overrides the manifest timestamp for this stage.

@@ -5,6 +5,10 @@ does not promise a stable schema or CLI yet.
 
 ## Unreleased
 
+- Bootstrap fixed-point passes hide every provider except the stage output,
+  including the seed repositories. A package no longer needs an inflated
+  release or epoch to outrank Fedora while the seed is still in the profile.
+
 - `rpmx bootstrap plan` validates a dedicated `rpmx-bootstrap` manifest and
   prints an ordered stage graph without resolving roots. Stages select recipes
   by discovery or explicit globs, reject duplicate/multi-cell recipes, require
@@ -41,7 +45,7 @@ does not promise a stable schema or CLI yet.
 - Bootstrap stages accept a `replaces` map from an Eternal output package name
   to one or more seed package names. This lets the ladder keep a stable output
   name while hiding a differently named seed provider; a fixed-point pass
-  applies the same mapping to its input repositories. The recipe still owns
+  applies the same mapping to every other repository. The recipe still owns
   the matching `provides`.
 
 - Bundled components are discovered from vendor metadata and emitted as

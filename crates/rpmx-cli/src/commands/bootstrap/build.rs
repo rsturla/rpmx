@@ -461,16 +461,20 @@ fn fixed_point_profile(
         ));
     }
     let mut profile = effective.clone();
-    let input_prefix = format!("bootstrap-{}-", stage.name);
     let mut excluded = package_names.clone();
     for (package, seeds) in &stage.replaces {
         if package_names.contains(package) || stage.packages.contains(package) {
             excluded.extend(seeds.iter().cloned());
         }
     }
+    // Hide every other provider of a package this iteration builds, including
+    // the seed repositories. The output repository is the only one allowed to
+    // supply it, so the bootstrap does not depend on an artificial EVR bump to
+    // win a version comparison against Fedora.
     for repository in &mut profile.repositories {
-        if repository.id.starts_with(&input_prefix) && repository.id != output_id {
-            repository.exclude = excluded.iter().cloned().collect();
+        if repository.id != output_id {
+            repository.exclude.extend(excluded.iter().cloned());
+            dedupe(&mut repository.exclude);
         }
     }
     profile.repositories.push(Repository {
@@ -1482,6 +1486,12 @@ stages:
             .find(|repo| repo.id == "bootstrap-stage1-stage0")
             .expect("input repo");
         assert_eq!(input.exclude, vec!["gcc".to_string(), "glibc".to_string()]);
+        let seed = iteration
+            .repositories
+            .iter()
+            .find(|repo| repo.id == "base")
+            .expect("seed repo");
+        assert_eq!(seed.exclude, vec!["gcc".to_string(), "glibc".to_string()]);
         let output_repo = iteration
             .repositories
             .iter()
@@ -1533,6 +1543,16 @@ stages:
             input.exclude.contains(&"gcc-seed".to_string()),
             "{:?}",
             input.exclude
+        );
+        let seed = iteration
+            .repositories
+            .iter()
+            .find(|repo| repo.id == "base")
+            .expect("seed repo");
+        assert!(
+            seed.exclude.contains(&"gcc-seed".to_string()),
+            "{:?}",
+            seed.exclude
         );
     }
 

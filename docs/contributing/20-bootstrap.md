@@ -163,7 +163,7 @@ are allowed, so a manifest in `.bootstrap/` can reference `../packages` and
   `order: [[glibc, gcc], [gcc, glibc]]`.
 - `replaces`: optional map from an Eternal output package to the seed package
   name or names it replaces. It lets a stage hide a differently named seed
-  provider; fixed-point passes apply the same map to their input repositories.
+  provider; fixed-point passes hide those names in every other repository.
 - `fixed-point`: optional package names rebuilt until output and root digests
   stabilise.
 - `source-date-epoch`: optional per-stage override for `repo::index`; defaults
@@ -605,9 +605,11 @@ pub exclude: Vec<String>,
    stage recipe in order. Index the stage output.
 2. For iteration `i = 1..max_iterations` (manifest field, default 3):
    - Collect the package names currently present in the stage output.
-   - Synthesise a fixed-point profile: the same stage profile, every input repo
-     gets `exclude = <stage output package names>`, and add the stage output
-     repo. This ensures the stage output wins even when NEVRA is unchanged.
+   - Synthesise a fixed-point profile: the same stage profile, every other
+     repository (including the seed) gets
+     `exclude = <stage output package names>`, and add the stage output repo.
+     This ensures the stage output wins even when NEVRA is unchanged, without
+     relying on a release or epoch bump.
    - Resolve and assemble a candidate root under
      `roots/<stage>/<arch>-iter<i>/`; keep its lock/digests.
    - Rebuild only the `fixed-point` recipes in declared/graph order against the
