@@ -1891,6 +1891,7 @@ dependencies = [
 name = "rpmx-language"
 version = "0.0.0"
 dependencies = [
+ "globset",
  "rpmx-base",
  "serde",
  "serde_json",

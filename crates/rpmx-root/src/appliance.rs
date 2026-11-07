@@ -282,6 +282,7 @@ mod tests {
             mirrorlist: None,
             gpgkey: None,
             repo_gpgcheck: false,
+            exclude: Vec::new(),
             auth: None,
         }
     }

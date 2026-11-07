@@ -19,6 +19,53 @@ pub fn package_arch(path: &Path) -> Result<String, Error> {
     Ok(package.metadata.get_arch().unwrap_or("noarch").to_string())
 }
 
+/// The package name recorded in an RPM or SRPM header.
+pub fn package_name(path: &Path) -> Result<String, Error> {
+    let package = rpm::Package::open(path).map_err(|error| {
+        Error::new(
+            codes::EXTRACT_001,
+            format!("cannot read {}: {error}", path.display()),
+        )
+    })?;
+    let name = package.metadata.get_name().map_err(|error| {
+        Error::new(
+            codes::EXTRACT_001,
+            format!(
+                "{} has no package name in its header: {error}",
+                path.display()
+            ),
+        )
+    })?;
+    Ok(name.to_string())
+}
+
+/// Package names in a repository directory (top-level `.rpm` files only).
+pub fn package_names(path: &Path) -> Result<std::collections::BTreeSet<String>, Error> {
+    let mut names = std::collections::BTreeSet::new();
+    let entries = std::fs::read_dir(path).map_err(|error| {
+        Error::new(
+            codes::EXTRACT_001,
+            format!("cannot read {}: {error}", path.display()),
+        )
+    })?;
+    for entry in entries {
+        let entry = entry.map_err(|error| {
+            Error::new(
+                codes::EXTRACT_001,
+                format!("cannot read {}: {error}", path.display()),
+            )
+        })?;
+        let candidate = entry.path();
+        if candidate
+            .extension()
+            .is_some_and(|extension| extension == "rpm")
+        {
+            names.insert(package_name(&candidate)?);
+        }
+    }
+    Ok(names)
+}
+
 pub fn write_srpm(spec: &SourcePackageSpec, out: &Path) -> Result<(), Error> {
     let mut builder = PackageBuilder::new(
         &spec.name,

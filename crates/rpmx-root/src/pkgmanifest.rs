@@ -139,6 +139,7 @@ pub fn to_lock(
             mirrorlist: repository.mirrorlist.clone(),
             gpgkey: None,
             repo_gpgcheck: false,
+            exclude: Vec::new(),
             auth: None,
         })
         .collect::<Vec<_>>();
@@ -208,5 +209,8 @@ pub fn to_lock(
         closure_digest: closure,
         root_digest: None,
         builder: None,
+        seed: None,
+        generation: None,
+        requirement: None,
     })
 }

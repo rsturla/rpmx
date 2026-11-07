@@ -25,6 +25,7 @@ pub fn run(cli: Cli) -> Result<(), Error> {
         Command::Lint(args) => commands::lint::run(args, pipeline_dir.as_deref()),
         Command::Lock(args) => commands::lock::run(args, pipeline_dir.as_deref()),
         Command::Plan(args) => commands::plan::run(args, pipeline_dir.as_deref()),
+        Command::Bootstrap { command } => commands::bootstrap::run(command),
         Command::Root { command } => match command {
             cli::RootCommand::Resolve(args) => commands::root::resolve(args),
             cli::RootCommand::Assemble(args) => commands::root::assemble(args),

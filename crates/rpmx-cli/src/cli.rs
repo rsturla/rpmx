@@ -45,6 +45,7 @@ impl Cli {
             Command::Lint(_) => "lint",
             Command::Lock(_) => "lock",
             Command::Plan(_) => "plan",
+            Command::Bootstrap { .. } => "bootstrap",
             Command::Root { .. } => "root",
             Command::Runner { .. } => "runner",
             Command::Fetch(_) => "fetch",
@@ -83,6 +84,16 @@ pub enum RunnerCommand {
     Assemble(crate::commands::ApplianceAssembleArgs),
     /// Print the runner asset closure and identity.
     Inspect(crate::commands::ApplianceInspectArgs),
+}
+
+#[derive(Debug, Subcommand)]
+pub enum BootstrapCommand {
+    /// Validate a manifest and print the stage graph without resolving roots.
+    Plan(crate::commands::BootstrapPlanArgs),
+    /// Resolve stage roots, build every stage in order, and index its repository.
+    Build(crate::commands::BootstrapBuildArgs),
+    /// Rebuild one stage package against a bootstrap stage lock and re-emit its SRPM.
+    Rebuild(Box<crate::commands::BootstrapRebuildArgs>),
 }
 
 #[derive(Debug, Subcommand)]
@@ -136,6 +147,11 @@ pub enum Command {
     Lock(crate::commands::LockArgs),
     /// Show the build cells, outputs and tests without building.
     Plan(crate::commands::PlanArgs),
+    /// Plan and build an ordered bootstrap ladder.
+    Bootstrap {
+        #[command(subcommand)]
+        command: BootstrapCommand,
+    },
     /// Resolve, assemble and export build roots.
     /// Resolve, assemble and export build roots.
     Root {

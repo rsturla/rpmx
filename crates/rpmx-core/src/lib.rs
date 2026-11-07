@@ -10,7 +10,8 @@ pub use rpmx_runner::{build_env, runner, sandbox, terminal, test_runner};
 pub use rpmx_store::{cas, srpm, tar_guard, tree};
 
 pub use rpmx_language::{
-    load_recipe, load_recipe_bundle, matrix, model, normalize_dist_tag, parse_recipe, plan,
-    plan_with_options, steps, template, BundleFile, Plan, PlanOptions, PlannedCell, PlannedOutput,
-    PlannedStep, PlannedTest, Recipe, RecipeBundle,
+    bootstrap, load_recipe, load_recipe_bundle, matrix, model, normalize_dist_tag, parse_recipe,
+    plan, plan_with_options, steps, template, BootstrapManifest, BootstrapPlan, BundleFile, Plan,
+    PlanOptions, PlannedCell, PlannedOutput, PlannedStage, PlannedStep, PlannedTest, Recipe,
+    RecipeBundle, Stage,
 };

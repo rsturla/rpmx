@@ -89,6 +89,10 @@ pub struct Repository {
     /// Verify signed repository metadata in addition to package signatures.
     #[serde(default, rename = "repo-gpgcheck")]
     pub repo_gpgcheck: bool,
+    /// Package names excluded from this repository. Bootstrap uses it to make
+    /// the stage output win over an input repository with the same NEVRA.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exclude: Vec<String>,
     /// Credential references for an authenticated repository.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auth: Option<RepositoryAuth>,
@@ -135,6 +139,14 @@ pub struct Cross {
     /// Architecture of the build root. It must be the host running rpmx.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub host: Option<String>,
+    /// Allow the build root and sysroot to share an architecture.
+    ///
+    /// This is the native bootstrap mode: a seed build root and a target
+    /// sysroot can both be x86_64 while remaining separate roots. Without it,
+    /// a same-architecture cross profile is rejected by `validate_cross` and
+    /// `build_root_profile`.
+    #[serde(default)]
+    pub bootstrap: bool,
     /// GNU triple naming the toolchain commands, such as `aarch64-linux-gnu`.
     /// Defaults to the target architecture's triple.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -259,6 +271,21 @@ impl Profile {
                     codes::ROOT_006,
                     format!("duplicate repository id '{}'", repository.id),
                 ));
+            }
+            for package in &repository.exclude {
+                if package.trim().is_empty()
+                    || package.contains(',')
+                    || package.chars().any(char::is_control)
+                {
+                    return Err(Error::new(
+                        codes::ROOT_006,
+                        format!(
+                            "repository '{}' has an invalid exclude entry '{package}'; expected a \
+                             package name without commas or control characters",
+                            repository.id
+                        ),
+                    ));
+                }
             }
             let sources = [
                 repository.baseurl.is_some(),
@@ -416,17 +443,19 @@ impl Profile {
                 ),
             ));
         }
-        for arch in &self.archs {
-            if normalize_arch(arch)? == host {
-                return Err(Error::new(
-                    codes::ROOT_006,
-                    format!(
-                        "profile '{}' cross-builds for {}, so it cannot also build {host}; \
-                         use a native profile for {host}",
-                        self.name("profile"),
-                        self.archs.join(", ")
-                    ),
-                ));
+        if !cross.bootstrap {
+            for arch in &self.archs {
+                if normalize_arch(arch)? == host {
+                    return Err(Error::new(
+                        codes::ROOT_006,
+                        format!(
+                            "profile '{}' cross-builds for {}, so it cannot also build {host}; \
+                             use a native profile for {host}",
+                            self.name("profile"),
+                            self.archs.join(", ")
+                        ),
+                    ));
+                }
             }
         }
         let mut profile = self.clone();
@@ -503,15 +532,18 @@ impl Profile {
         // build root enforces that it is the current host and not the target.
         if let Some(host) = &cross.host {
             let host = normalize_arch(host)?;
-            for arch in &self.archs {
-                if normalize_arch(arch)? == host {
-                    return Err(Error::new(
-                        codes::ROOT_006,
-                        format!(
-                            "cross target {host} equals the build-root architecture; \
-                             remove the cross block and build natively"
-                        ),
-                    ));
+            if !cross.bootstrap {
+                for arch in &self.archs {
+                    if normalize_arch(arch)? == host {
+                        return Err(Error::new(
+                            codes::ROOT_006,
+                            format!(
+                                "cross target {host} equals the build-root architecture; \
+                                 set cross.bootstrap: true for a native bootstrap, or remove \
+                                 the cross block and build natively"
+                            ),
+                        ));
+                    }
                 }
             }
         }
@@ -918,6 +950,39 @@ cross:
         );
         let error = parse_profile(&text).expect_err("explicit same host");
         assert_eq!(error.code, codes::ROOT_006);
+    }
+
+    #[test]
+    fn a_native_bootstrap_may_share_the_build_root_architecture() {
+        let native = rpmx_base::arch::Arch::current().unwrap().as_str();
+        let text = cross_profile(
+            native,
+            &format!(
+                "  host: {native}\n  bootstrap: true\n  packages: [toolchain-cc]\n  sysroot_packages: [libc-devel]"
+            ),
+        );
+        let profile = parse_profile(&text).expect("native bootstrap profile");
+        let cross = profile.cross().expect("cross block");
+        assert!(cross.bootstrap);
+
+        let build = profile.build_root_profile().expect("build root");
+        let sysroot = profile.sysroot_profile().expect("sysroot");
+        assert_eq!(build.archs, vec![native.to_string()]);
+        assert_eq!(sysroot.archs, vec![native.to_string()]);
+        assert_eq!(build.packages.install, vec!["toolchain-cc".to_string()]);
+        assert!(sysroot.packages.install.contains(&"libc-devel".to_string()));
+        assert!(!sysroot
+            .packages
+            .install
+            .contains(&"toolchain-cc".to_string()));
+        assert_ne!(
+            build.name("build"),
+            sysroot.name("sysroot"),
+            "the two roots need distinct lock identities"
+        );
+
+        let target = profile.for_target(native).expect("target");
+        assert!(target.cross().expect("cross").bootstrap);
     }
 
     #[test]

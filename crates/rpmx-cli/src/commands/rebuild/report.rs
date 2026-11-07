@@ -9,6 +9,7 @@ pub(super) fn print_artifacts(
     quiet: bool,
     json: bool,
     written: &[PathBuf],
+    srpms: &[PathBuf],
     evidence: &[PathBuf],
     repository: &[PathBuf],
     signing_key: Option<&str>,
@@ -23,6 +24,10 @@ pub(super) fn print_artifacts(
             ArtifactGroup {
                 kind: "rpm",
                 paths: written,
+            },
+            ArtifactGroup {
+                kind: "srpm",
+                paths: srpms,
             },
             ArtifactGroup {
                 kind: "evidence",
