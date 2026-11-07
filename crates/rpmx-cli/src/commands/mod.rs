@@ -28,6 +28,7 @@ mod signing;
 pub mod source;
 pub mod srpm;
 pub mod steps;
+mod test_roots;
 pub mod testcmd;
 
 pub use args::*;

@@ -15,12 +15,17 @@ pub(crate) fn expand_dependencies(
     scope: &BTreeMap<String, Value>,
     field: &str,
 ) -> Result<Vec<String>> {
+    expand_values(values, scope, &format!("build.dependencies.{field}"))
+}
+
+pub(crate) fn expand_values(
+    values: &[String],
+    scope: &BTreeMap<String, Value>,
+    field: &str,
+) -> Result<Vec<String>> {
     values
         .iter()
-        .map(|value| {
-            template::expand_string(value, scope)
-                .map_err(|error| error.at(format!("build.dependencies.{field}")))
-        })
+        .map(|value| template::expand_string(value, scope).map_err(|error| error.at(field)))
         .collect()
 }
 
@@ -271,7 +276,33 @@ pub(crate) fn expand_tests(
             ));
         }
         let name = test.name;
-        let scope = format!("test:{name}");
+        let packages = expand_values(
+            &test.environment.contents.packages,
+            scope,
+            &format!("tests[{index}].environment.contents.packages"),
+        )?;
+        if test.stage != "installed" && !packages.is_empty() {
+            return Err(Error::new(
+                codes::TEST_004,
+                format!(
+                    "test '{name}' declares environment.contents.packages but uses stage '{}'; \
+                     test packages are installed into the disposable installed-stage root",
+                    test.stage
+                ),
+            )
+            .at(format!("tests[{index}].environment.contents.packages")));
+        }
+        let environment = test
+            .environment
+            .environment
+            .iter()
+            .map(|(key, value)| {
+                template::expand_string(value, scope)
+                    .map(|value| (key.clone(), value))
+                    .map_err(|error| error.at(format!("tests[{index}].environment.environment")))
+            })
+            .collect::<Result<BTreeMap<_, _>>>()?;
+        let step_scope = format!("test:{name}");
         planned.push(PlannedTest {
             name,
             stage: test.stage,
@@ -282,10 +313,12 @@ pub(crate) fn expand_tests(
                     step_root,
                     &format!("tests[{index}].pipeline"),
                     allow_builtin_override,
-                    &scope,
+                    &step_scope,
                 )?,
                 None => Vec::new(),
             },
+            packages,
+            environment,
         });
     }
     Ok(planned)

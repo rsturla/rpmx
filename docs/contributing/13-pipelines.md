@@ -222,11 +222,14 @@ records `source-root.lock.json`; `--unsafe-host-root` is the explicit exception.
 
 Tests run after packaging. `stage: build` tests run in the build sandbox.
 `stage: installed` tests run in a fresh test root: `build.dependencies.tests`
-are resolved from the same repositories, assembled offline, and the built RPMs
-are installed over it with real dependency checking, not `--nodeps`
-(`--run-tests`). The resolved test root is written beside the RPMs as
-`<name>-<version>-<release>.test-root.lock.json`; `--test-root-lock FILE`
-assembles a pinned lock offline and rejects drift from the recipe's test tools.
+plus each test's `environment.contents.packages` are resolved from the same
+repositories, assembled offline, and the built RPMs are installed over it with
+real dependency checking, not `--nodeps` (`--run-tests`). Tests with different
+package sets get separate roots. The resolved test roots are written beside the
+RPMs as `<name>-<version>-<release>[.<n>].test-root.lock.json`;
+`--test-root-lock FILE` assembles a pinned lock offline and checks that the
+fixed test base environment is present; the lock is authoritative for the
+rest.
 `--sbom FILE` overrides the build-level SPDX path; per-package documents are
 embedded in the RPMs.
 

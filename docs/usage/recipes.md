@@ -546,10 +546,18 @@ tests:
 
   - name: cli
     stage: installed
+    environment:
+      contents:
+        packages: [python3]
+      environment:
+        HOME: /tmp
     argv: ["hello", "--version"]
 
   - name: scripted
     stage: installed
+    environment:
+      contents:
+        packages: [grep]
     pipeline:
       - runs: |
           hello | grep -q hello
@@ -562,9 +570,22 @@ tests:
 - Tests run with `rpmx build`, `rpmx rebuild` and `rpmx test`; `--no-tests`
   skips them on a build.
 - `--test NAME` selects tests; `--junit FILE` writes JUnit XML.
-- Installed tests use `build.dependencies.tests` plus the built RPMs. Real
-  dependency checking is performed; the only retry is for a conflict with a
-  package the test root already has, which the package under test replaces.
+- `test.environment.contents.packages` lists packages installed only for that
+  test's root. This mirrors Wolfi/melange test environments. Tests with the
+  same package set share a root; a different set gets a separate root. It is
+  valid only for `stage: installed`; build-stage tests use
+  `build.dependencies.tools`.
+- `build.dependencies.tests` remains the package-wide list of test-root
+  packages, applied to every installed test.
+- `test.environment.environment` sets variables for every step of that test. A
+  step's own `env` entries win.
+- Real dependency checking is performed; the only retry is for a conflict with
+  a package the test root already has, which the package under test replaces.
+- A build writes one test-root lock per distinct environment:
+  `<name>-<version>-<release>.test-root.lock.json` for the first,
+  `.<n>.test-root.lock.json` for the others. `--save-test-root` and
+  `--test-root-lock` require a single environment; pass `--test NAME` to
+  select one.
 
 ### 5.10 Matrix and variables
 

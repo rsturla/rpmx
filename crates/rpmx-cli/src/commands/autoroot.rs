@@ -1131,8 +1131,9 @@ pub(crate) fn required_packages(plan: &Plan) -> RequiredPackages {
         for test in &cell.tests {
             // A build-stage test runs in the build sandbox, so its tools are
             // build-root packages. An installed-stage test runs in a target
-            // test root.
+            // test root; its environment packages belong there too.
             let installed = test.stage != "build";
+            target.extend(test.packages.iter().cloned());
             for step in &test.pipeline {
                 split_needs(step, installed, &mut build, &mut target);
             }

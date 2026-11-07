@@ -13,6 +13,7 @@ use rpmx_core::test_root::{prepare as prepare_test_root, TestRootOptions};
 use rpmx_core::test_runner::{run_planned_tests, TestSandboxConfig};
 use rpmx_core::Error;
 
+use crate::commands::test_roots::{grouped, key_for};
 use crate::commands::{
     load_plan, pipeline::BuildPipeline, report, resolve_policy, OptionalSigningArgs, PlanPolicy,
     PolicyInput, TestArgs, WorkDir,
@@ -358,40 +359,78 @@ fn run_installed(
             format!("cannot create {}: {error}", stage.display()),
         )
     })?;
-    let tools: Vec<String> = tools.iter().cloned().collect();
-    let test_root_path = match &args.test_root {
-        Some(directory) => {
-            // A shipped root: validate that it is the architecture the tests
-            // are for, then use it as is.
-            lock.require_target(&target.to_string())?;
-            let directory = std::fs::canonicalize(directory).map_err(|error| {
-                Error::new(
-                    codes::TEST_003,
-                    format!("cannot resolve {}: {error}", directory.display()),
-                )
-            })?;
-            if !directory.is_dir() {
-                return Err(Error::new(
-                    codes::TEST_003,
-                    format!("{} is not a directory", directory.display()),
-                ));
-            }
-            directory
+    let global_tools: Vec<String> = tools.iter().cloned().collect();
+    let groups = grouped(selected, &global_tools);
+    let mut prepared_roots = Vec::new();
+    let mut roots: std::collections::BTreeMap<String, PathBuf> = std::collections::BTreeMap::new();
+    if let Some(directory) = &args.test_root {
+        if groups.len() > 1 {
+            return Err(Error::new(
+                codes::TEST_004,
+                "this recipe has multiple installed-test environments; --test-root needs one (pass --test NAME)",
+            ));
         }
-        None => {
-            prepare_test_root(TestRootOptions {
+        // A shipped root: validate that it is the architecture the tests are
+        // for, then use it as is.
+        lock.require_target(&target.to_string())?;
+        let directory = std::fs::canonicalize(directory).map_err(|error| {
+            Error::new(
+                codes::TEST_003,
+                format!("cannot resolve {}: {error}", directory.display()),
+            )
+        })?;
+        if !directory.is_dir() {
+            return Err(Error::new(
+                codes::TEST_003,
+                format!("{} is not a directory", directory.display()),
+            ));
+        }
+        for group in &groups {
+            roots.insert(group.key.clone(), directory.clone());
+        }
+    } else {
+        if groups.len() > 1 && args.save_test_root.is_some() {
+            return Err(Error::new(
+                codes::TEST_004,
+                "this recipe has multiple installed-test environments; --save-test-root needs one (pass --test NAME)",
+            ));
+        }
+        if groups.len() > 1 && args.test_root_lock.is_some() {
+            return Err(Error::new(
+                codes::TEST_004,
+                "this recipe has multiple installed-test environments; --test-root-lock needs one (pass --test NAME)",
+            ));
+        }
+        for (index, group) in groups.iter().enumerate() {
+            let group_work = work.path().join(format!("test-root-{index}"));
+            let prepared = prepare_test_root(TestRootOptions {
                 lock: &lock,
-                destination: args.save_test_root.as_deref(),
-                pinned: args.test_root_lock.as_deref(),
-                tools: &tools,
+                destination: if groups.len() == 1 {
+                    args.save_test_root.as_deref()
+                } else {
+                    None
+                },
+                pinned: if groups.len() == 1 {
+                    args.test_root_lock.as_deref()
+                } else {
+                    None
+                },
+                tools: &group.packages,
                 rpms,
                 image: lock.builder.as_ref().map(|builder| builder.image.as_str()),
                 cache: &cache,
-                work: work.path(),
-            })?
-            .path
+                work: &group_work,
+            })?;
+            roots.insert(group.key.clone(), prepared.path.clone());
+            prepared_roots.push(prepared);
         }
-    };
+    }
+    let test_root_path = roots.values().next().cloned().ok_or_else(|| {
+        Error::new(
+            codes::TEST_004,
+            "no installed-stage test selected; pass --test NAME",
+        )
+    })?;
     let appliance = crate::commands::autoroot::appliance_for(
         &lock,
         Some(&cache),
@@ -436,11 +475,20 @@ fn run_installed(
     };
     let mut outcomes = Vec::new();
     for test in selected {
+        let test_root = roots
+            .get(&key_for(&global_tools, test))
+            .map(PathBuf::as_path)
+            .ok_or_else(|| {
+                Error::new(
+                    codes::TEST_004,
+                    format!("test '{}' has no prepared test root", test.name),
+                )
+            })?;
         let started = std::time::Instant::now();
         let result = run_planned_tests(
             &sandbox,
             std::slice::from_ref(test),
-            Some(&test_root_path),
+            Some(test_root),
             settings,
         );
         let error = result.as_ref().err().map(|error| error.message.clone());
@@ -471,7 +519,9 @@ fn run_installed(
         .filter(|outcome| outcome.error.is_some())
         .count();
     if args.test_root.is_none() && args.save_test_root.is_none() {
-        let _ = rpmx_core::root::remove_tree(&test_root_path);
+        for prepared in prepared_roots {
+            let _ = rpmx_core::root::remove_tree(&prepared.path);
+        }
     }
     if rpmx_core::output::json() {
         println!(

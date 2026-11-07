@@ -47,9 +47,15 @@ rpmx test --install-dir packages/x86_64 --json --junit report.xml
   message}]}`.
 - Exit 6 on failure.
 
-Test roots are disposable and use real dependency checking. If the test root
-cannot install its packages, add the missing runtime packages to
-`build.dependencies.tests` or pass `--test-root-lock` on `build`/`rebuild`.
+Test roots are disposable and use real dependency checking. Each distinct
+`test.environment.contents.packages` set gets its own root; tests with the same
+set share one. If a test root cannot install its packages, add the missing
+runtime packages to that test's `environment.contents.packages` (or the
+package-wide `build.dependencies.tests`) or pass `--test-root-lock` on
+`build`/`rebuild`.
+
+`--save-test-root`, `--test-root` and `--test-root-lock` need a single test
+environment. If a recipe has several, select one with `--test NAME`.
 The one exception is a package that deliberately replaces what the test root
 already has, such as a distribution default implementation: that install is
 retried without dependency checking and a warning names the replacement. A

@@ -120,6 +120,12 @@ pub struct PlannedTest {
     pub stage: String,
     pub argv: Option<Vec<String>>,
     pub pipeline: Vec<PlannedStep>,
+    /// Packages that are installed only for this test's root.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub packages: Vec<String>,
+    /// Variables applied to every step of this test.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub environment: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -605,8 +611,34 @@ fn plan_cell(
 
 #[cfg(test)]
 mod tests {
-    use super::step_labels;
+    use super::{plan, step_labels};
     use crate::model::Step;
+
+    const TEST_RECIPE: &str = r#"
+schema: 1
+package:
+  name: probe
+  version: "1.0"
+  release: 1
+  summary: probe
+  license: MIT
+build:
+  pipeline:
+    - runs: "true"
+outputs:
+  - name: probe
+    metapackage: true
+tests:
+  - name: installed
+    stage: installed
+    environment:
+      contents:
+        packages: [python3, "${package.name}-test"]
+      environment:
+        HOME: /tmp
+    pipeline:
+      - runs: "true"
+"#;
 
     fn runs(text: &str) -> Step {
         Step {
@@ -641,6 +673,31 @@ mod tests {
         assert_eq!(
             step_labels(&[make.clone(), make, named], "build"),
             ["make", "make#2", "make#3"]
+        );
+    }
+
+    #[test]
+    fn test_environments_expand_packages_and_variables() {
+        let recipe = crate::parse_recipe(TEST_RECIPE).expect("recipe");
+        let plan = plan(&recipe, "x86_64").expect("plan");
+        let test = &plan.cells[0].tests[0];
+        assert_eq!(test.packages, ["python3", "probe-test"]);
+        assert_eq!(
+            test.environment.get("HOME").map(String::as_str),
+            Some("/tmp")
+        );
+    }
+
+    #[test]
+    fn test_packages_are_rejected_on_build_stage() {
+        let recipe = crate::parse_recipe(&TEST_RECIPE.replace("stage: installed", "stage: build"))
+            .expect("recipe");
+        let error = plan(&recipe, "x86_64").expect_err("build-stage packages");
+        assert_eq!(error.code, rpmx_base::error::codes::TEST_004);
+        assert!(
+            error.message.contains("installed-stage"),
+            "{}",
+            error.message
         );
     }
 

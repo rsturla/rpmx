@@ -449,7 +449,7 @@ pub fn execute(request: RebuildRequest<'_>) -> Result<RebuildOutput, Error> {
     }
 
     if run_tests {
-        if let Some(path) = tests::run(tests::TestRunOptions {
+        let test_evidence = tests::run(tests::TestRunOptions {
             sandbox: &sandbox,
             cell: &cell,
             written: &written,
@@ -471,9 +471,8 @@ pub fn execute(request: RebuildRequest<'_>) -> Result<RebuildOutput, Error> {
             save_test_root: request.save_test_root,
             filter: request.test_filter,
             junit: request.junit,
-        })? {
-            evidence.push(path);
-        }
+        })?;
+        evidence.extend(test_evidence);
     }
 
     let mut repository = Vec::new();

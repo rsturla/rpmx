@@ -127,6 +127,12 @@ pub fn plan(plan: &Plan) {
         }
         for test in &cell.tests {
             println!("  test   {} ({})", test.name, test.stage);
+            if !test.packages.is_empty() {
+                println!("    root   {}", test.packages.join(", "));
+            }
+            for (key, value) in &test.environment {
+                println!("    env    {key}={value}");
+            }
             for step in &test.pipeline {
                 println!("    step   {}", step_summary(step));
             }

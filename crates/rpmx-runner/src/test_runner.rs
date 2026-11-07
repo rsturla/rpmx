@@ -103,7 +103,7 @@ fn run_one_test(sandbox: &Sandbox<'_>, test: &rpmx_language::plan::PlannedTest) 
             command: Some(command.clone()),
             args: argv[1..].to_vec(),
             cwd: None,
-            env: BTreeMap::new(),
+            env: test.environment.clone(),
             needs: Vec::new(),
             needs_tools: Vec::new(),
             needs_host: Vec::new(),
@@ -121,8 +121,12 @@ fn run_one_test(sandbox: &Sandbox<'_>, test: &rpmx_language::plan::PlannedTest) 
     }
     for step in &test.pipeline {
         position += 1;
+        let mut step = step.clone();
+        for (key, value) in &test.environment {
+            step.env.entry(key.clone()).or_insert_with(|| value.clone());
+        }
         sandbox
-            .run_numbered(step, position, total)
+            .run_numbered(&step, position, total)
             .map_err(test_failure)?;
     }
     Ok(())

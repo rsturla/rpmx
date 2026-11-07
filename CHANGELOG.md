@@ -5,6 +5,14 @@ does not promise a stable schema or CLI yet.
 
 ## Unreleased
 
+- Tests accept a Wolfi/melange-style environment:
+  `environment.contents.packages` lists packages installed only for that test's
+  disposable root, and `environment.environment` sets test-only variables.
+  Tests with different package sets get separate roots; the package-wide
+  `build.dependencies.tests` still applies to every installed test. Test
+  packages are rejected on `stage: build`, where they would be silently
+  ignored.
+
 - Recipes can inherit `package.maintainers` from `rpmx-defaults.yaml` in the
   recipe directory or a repository ancestor. The recipe wins when it declares
   its own maintainers. The defaults file joins the recipe bundle, so the lock
