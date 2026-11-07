@@ -32,7 +32,7 @@ fn digest_root_reads_and_restores_mode_zero_trees() {
     let work = tempfile::tempdir().unwrap();
     let private = work.path().join("etc/private");
     write(&private.join("shadow"), "secret");
-    fs::set_permissions(&private.join("shadow"), fs::Permissions::from_mode(0o000)).unwrap();
+    fs::set_permissions(private.join("shadow"), fs::Permissions::from_mode(0o000)).unwrap();
     fs::set_permissions(&private, fs::Permissions::from_mode(0o000)).unwrap();
 
     digest_root(work.path()).expect("digest a root owned by the caller");
