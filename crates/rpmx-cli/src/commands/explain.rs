@@ -58,6 +58,7 @@ pub fn run(args: ExplainArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> 
                 "steps": cell.pipeline.iter().map(step).collect::<Vec<_>>(),
                 "tests": cell.tests.iter().map(|test| serde_json::json!({
                     "name": test.name,
+                    "output": test.output,
                     "stage": test.stage,
                     "packages": test.packages,
                     "environment": test.environment,

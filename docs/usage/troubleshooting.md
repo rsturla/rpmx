@@ -19,6 +19,13 @@ The test root needs runtime dependencies. Add them to the test's
 or use `--test-root-lock` with a pinned closure.
 Ensure `TMPDIR` has space; a test root is a full distribution root.
 
+**An output-level test cannot find a sibling output**
+
+The test root installs only the output under test and the sibling outputs that
+satisfy its RPM dependencies. Add the missing relationship to the output's
+`dependencies.run`, or use a recipe-level test when the test really needs every
+output.
+
 **A step failed**  
 Read the `command`, `cwd` and help line. Re-run with `--keep-workdir` and enter
 the workspace with `rpmx shell` (using the root and paths printed by the build),

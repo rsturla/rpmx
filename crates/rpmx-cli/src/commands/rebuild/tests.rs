@@ -12,7 +12,7 @@ use rpmx_core::test_runner::{run_planned_tests, TestSandboxConfig};
 use rpmx_core::Error;
 
 use crate::commands::report::{self, TestOutcome};
-use crate::commands::test_roots::{grouped, key_for};
+use crate::commands::test_roots::{filter_tests, grouped, key_for, read_rpms, rpms_for_output};
 
 pub(super) struct TestRunOptions<'a> {
     pub(super) sandbox: &'a Sandbox<'a>,
@@ -43,14 +43,14 @@ pub(super) struct TestRunOptions<'a> {
 
 /// Run build- and installed-stage tests and persist the test-root lock.
 pub(super) fn run(options: TestRunOptions<'_>) -> Result<Vec<PathBuf>, Error> {
-    let tests: Vec<_> = options
+    let candidates: Vec<_> = options
         .cell
         .tests
         .iter()
         .filter(|test| !options.skip_installed || test.stage != "installed")
-        .filter(|test| options.filter.is_empty() || options.filter.contains(&test.name))
         .cloned()
         .collect();
+    let tests = filter_tests(&candidates, options.filter)?;
     if !options.filter.is_empty() && tests.is_empty() {
         // Another matrix cell may own the selected test.
         return Ok(Vec::new());
@@ -81,8 +81,10 @@ pub(super) fn run(options: TestRunOptions<'_>) -> Result<Vec<PathBuf>, Error> {
                     "installed-stage tests need an embedded or explicit root lock",
                 )
             })?;
+        let test_rpms = read_rpms(options.written)?;
         for (index, group) in groups.iter().enumerate() {
             let work = options.work.join(format!("test-root-{index}"));
+            let group_rpms = rpms_for_output(group.output.as_deref(), &test_rpms)?;
             let prepared = prepare_test_root(TestRootOptions {
                 lock,
                 destination: if groups.len() == 1 {
@@ -96,7 +98,7 @@ pub(super) fn run(options: TestRunOptions<'_>) -> Result<Vec<PathBuf>, Error> {
                     None
                 },
                 tools: &group.packages,
-                rpms: options.written,
+                rpms: &group_rpms,
                 image: options.builder_image,
                 cache: &cache,
                 work: &work,
@@ -144,13 +146,13 @@ pub(super) fn run(options: TestRunOptions<'_>) -> Result<Vec<PathBuf>, Error> {
         let error = result.as_ref().err().map(|error| error.message.clone());
         eprintln!(
             "rpmx: test {} ({}): {} ({:.1}s)",
-            test.name,
+            test.qualified_name(),
             test.stage,
             if error.is_some() { "FAILED" } else { "ok" },
             started.elapsed().as_secs_f64()
         );
         outcomes.push(TestOutcome {
-            name: test.name.clone(),
+            name: test.qualified_name(),
             stage: test.stage.clone(),
             error,
             duration: started.elapsed(),

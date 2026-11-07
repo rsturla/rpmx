@@ -760,7 +760,10 @@ tests:
 ```
 
 - `stage: build`: run inside the build sandbox after `build` (or after `install`, if declared).
-- `stage: installed`: install the outputs into a disposable root, then run the command there.
+- `stage: installed`: install the outputs into a disposable root, then run
+  the command there. A recipe-level test installs every output; an output-level
+  test installs its own output plus the sibling outputs its RPM dependencies
+  require.
 - `stage: package`: operate on the produced RPMs (reproducibility, manifest, signature checks).
 - `kind: command` (default), `abi`, or `reproduce`.
 - Test dependencies are scoped like build dependencies.

@@ -289,9 +289,9 @@ fn check(recipe: &Recipe, plan: &Plan, recipe_path: &Path) -> Vec<Diagnostic> {
         }
     }
 
-    for (kind, names) in [
+    let mut named_sections: Vec<(String, Vec<String>)> = vec![
         (
-            "sources",
+            "sources".to_string(),
             recipe
                 .sources
                 .iter()
@@ -299,7 +299,7 @@ fn check(recipe: &Recipe, plan: &Plan, recipe_path: &Path) -> Vec<Diagnostic> {
                 .collect::<Vec<_>>(),
         ),
         (
-            "outputs",
+            "outputs".to_string(),
             recipe
                 .outputs
                 .iter()
@@ -307,14 +307,25 @@ fn check(recipe: &Recipe, plan: &Plan, recipe_path: &Path) -> Vec<Diagnostic> {
                 .collect::<Vec<_>>(),
         ),
         (
-            "tests",
+            "tests".to_string(),
             recipe
                 .tests
                 .iter()
                 .map(|test| test.name.clone())
                 .collect::<Vec<_>>(),
         ),
-    ] {
+    ];
+    named_sections.extend(recipe.outputs.iter().enumerate().map(|(index, output)| {
+        (
+            format!("outputs[{index}].tests"),
+            output
+                .tests
+                .iter()
+                .map(|test| test.name.clone())
+                .collect::<Vec<_>>(),
+        )
+    }));
+    for (kind, names) in named_sections {
         let mut seen = BTreeSet::new();
         for name in names {
             if !seen.insert(name.clone()) {
@@ -324,7 +335,7 @@ fn check(recipe: &Recipe, plan: &Plan, recipe_path: &Path) -> Vec<Diagnostic> {
                         "names/duplicate",
                         format!("{kind} declares '{name}' more than once"),
                     )
-                    .at(kind),
+                    .at(kind.clone()),
                 );
             }
         }
@@ -364,21 +375,29 @@ fn check(recipe: &Recipe, plan: &Plan, recipe_path: &Path) -> Vec<Diagnostic> {
         }
     }
 
-    for test in &recipe.tests {
-        let has_argv = test.argv.as_ref().is_some_and(|argv| !argv.is_empty());
-        let has_pipeline = test
-            .pipeline
-            .as_ref()
-            .is_some_and(|steps| !steps.is_empty());
-        if !has_argv && !has_pipeline {
-            diagnostics.push(
-                Diagnostic::error(
-                    codes::LINT_020,
-                    "tests/empty",
-                    format!("test '{}' has neither argv nor pipeline", test.name),
-                )
-                .at("tests"),
-            );
+    for (scope, tests) in
+        std::iter::once(("tests".to_string(), recipe.tests.as_slice())).chain(
+            recipe.outputs.iter().enumerate().map(|(index, output)| {
+                (format!("outputs[{index}].tests"), output.tests.as_slice())
+            }),
+        )
+    {
+        for test in tests {
+            let has_argv = test.argv.as_ref().is_some_and(|argv| !argv.is_empty());
+            let has_pipeline = test
+                .pipeline
+                .as_ref()
+                .is_some_and(|steps| !steps.is_empty());
+            if !has_argv && !has_pipeline {
+                diagnostics.push(
+                    Diagnostic::error(
+                        codes::LINT_020,
+                        "tests/empty",
+                        format!("test '{}' has neither argv nor pipeline", test.name),
+                    )
+                    .at(scope.clone()),
+                );
+            }
         }
     }
 

@@ -30,7 +30,9 @@ creation or builds. It verifies the lock when `--locked` is given.
 A build runs the recipe's tests after it packages them, so a green build means
 the same thing it means under `rpmbuild`. `--no-tests` skips them, and
 `--skip-installed` runs only build-stage tests (the installed stage needs to
-execute the target binary). `--test NAME` runs one test instead of all.
+execute the target binary). `--test NAME` runs one test instead of all; use
+`--test OUTPUT/NAME` when an output-level test shares its bare name with
+another output.
 
 The full build runs:
 

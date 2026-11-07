@@ -44,7 +44,8 @@ pub fn run_planned_tests(
             codes::TEST_004,
             format!(
                 "test '{}' uses unsupported stage '{}'",
-                test.name, test.stage
+                test.qualified_name(),
+                test.stage
             ),
         ));
     }
@@ -87,19 +88,22 @@ pub fn run_planned_tests(
 
 fn run_one_test(sandbox: &Sandbox<'_>, test: &rpmx_language::plan::PlannedTest) -> Result<()> {
     let _phase = rpmx_base::output::enter_phase("test");
-    rpmx_base::output::phase("test", format!("{} ({})", test.name, test.stage));
+    rpmx_base::output::phase(
+        "test",
+        format!("{} ({})", test.qualified_name(), test.stage),
+    );
     let total = test.pipeline.len() + usize::from(test.argv.is_some());
     let mut position = 0;
     if let Some(argv) = &test.argv {
         let command = argv.first().ok_or_else(|| {
             Error::new(
                 codes::TEST_004,
-                format!("test '{}' has an empty argv", test.name),
+                format!("test '{}' has an empty argv", test.qualified_name()),
             )
         })?;
         let step = PlannedStep {
-            label: format!("test:{}", test.name),
-            uses: format!("test:{}", test.name),
+            label: format!("test:{}", test.qualified_name()),
+            uses: format!("test:{}", test.qualified_name()),
             command: Some(command.clone()),
             args: argv[1..].to_vec(),
             cwd: None,

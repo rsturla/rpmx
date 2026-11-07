@@ -538,42 +538,72 @@ recipe's `CFLAGS` extend the profile's cross flags rather than replacing them.
 
 ### 5.9 Tests
 
+Recipe-level tests live at the top level and see every output:
+
 ```yaml
 tests:
   - name: unit
     stage: build
     argv: [ctest, --output-on-failure]
 
-  - name: cli
+  - name: integration
     stage: installed
-    environment:
-      contents:
-        packages: [python3]
-      environment:
-        HOME: /tmp
-    argv: ["hello", "--version"]
+    argv: [hello, --version]
+```
 
-  - name: scripted
-    stage: installed
-    environment:
-      contents:
-        packages: [grep]
-    pipeline:
-      - runs: |
-          hello | grep -q hello
+Output-level tests live under an output and see that output plus the sibling
+outputs that provide its runtime dependencies:
+
+```yaml
+outputs:
+  - name: hello
+    files:
+      include: [/usr/bin/hello]
+    dependencies:
+      run: [hello-lib]
+    tests:
+      - name: smoke
+        stage: installed
+        environment:
+          contents:
+            packages: [grep]
+          environment:
+            HOME: /tmp
+        argv: [sh, -c, "hello --version | grep -q hello"]
+
+  - name: hello-lib
+    files:
+      include: [/usr/lib64/libhello.so.1]
+    tests:
+      - name: exported
+        stage: installed
+        argv: [sh, -c, "test -e /usr/lib64/libhello.so.1"]
 ```
 
 - `stage: build` runs in the build sandbox, with the source workspace present.
 - `stage: installed` installs the built RPMs into a disposable test root and
   runs there.
+- A recipe-level installed test installs every output, so it is an integration
+  test. An output-level installed test installs that output and the sibling
+  outputs needed by its RPM dependencies, not unrelated outputs. This catches a
+  missing `Requires` between outputs instead of masking it with the full output
+  set.
+- The test root still contains `bash`, `coreutils`, and the resolved test
+  environment; runtime dependencies from outside the recipe must be listed in
+  the test environment or supplied by the root.
 - `stage: package` is not implemented yet.
 - Tests run with `rpmx build`, `rpmx rebuild` and `rpmx test`; `--no-tests`
   skips them on a build.
-- `--test NAME` selects tests; `--junit FILE` writes JUnit XML.
+- `--test NAME` selects every test with that name; within one matrix cell the
+  bare name must be unique. Use `--test OUTPUT/NAME` when several outputs
+  declare the same test name. Test names must be unique within one `tests:`
+  block; the same name may be reused by different outputs or matrix cells. A
+  test name cannot contain `/`.
+- `--junit FILE` writes JUnit XML.
 - `test.environment.contents.packages` lists packages installed only for that
   test's root. This mirrors Wolfi/melange test environments. Tests with the
-  same package set share a root; a different set gets a separate root. It is
-  valid only for `stage: installed`; build-stage tests use
+  same output and package set share a root; a different set gets a separate
+  root. It is valid only for `stage: installed`; build-stage tests use
   `build.dependencies.tools`.
 - `build.dependencies.tests` remains the package-wide list of test-root
   packages, applied to every installed test.
@@ -584,8 +614,8 @@ tests:
 - A build writes one test-root lock per distinct environment:
   `<name>-<version>-<release>.test-root.lock.json` for the first,
   `.<n>.test-root.lock.json` for the others. `--save-test-root` and
-  `--test-root-lock` require a single environment; pass `--test NAME` to
-  select one.
+  `--test-root-lock` require a single environment; pass `--test NAME` or
+  `--test OUTPUT/NAME` to select one.
 
 ### 5.10 Matrix and variables
 

@@ -24,8 +24,9 @@ self-sufficient rebuilds, a versioned JSON contract, `init`, `doctor`,
 `explain`, `steps`, `shell`, `--keep-workdir`, `--debug`, default
 `package.yaml`/`packages/<arch>`, repository indexing, source extraction for
 gzip/xz/zstd, SHA-256 sources, package policy checks, Melange-style step
-feedback, and Wolfi-shaped per-test environments
-(`test.environment.contents.packages` plus `test.environment.environment`).
+feedback, and Wolfi-shaped tests: per-test
+`environment.contents.packages`/`environment.environment`, plus output-level
+`tests:` blocks that install only the tested output and its runtime siblings.
 
 Still open from the proposal set: `features`, typed `actions` (systemd,
 sysusers, tmpfiles), `update` metadata, and a config file. `rpmx bump` and
@@ -934,9 +935,9 @@ rpmx test package.yaml [--test NAME]... [--stage build|installed|package]
 - `build --run-tests` delegates to the same runner.
 
 Recipe: allow tests at the top level **and** under outputs, with per-test
-environment and dependencies. The top-level Wolfi shape is implemented as
-`test.environment.contents.packages` and `test.environment.environment`;
-output-level tests and a separate `dependencies.run` list remain open.
+environment and dependencies. Both scopes now use the Wolfi shape
+(`test.environment.contents.packages` and `test.environment.environment`); a
+separate `dependencies.run` list is still open.
 
 ```yaml
 tests:

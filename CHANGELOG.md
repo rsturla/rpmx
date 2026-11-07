@@ -5,6 +5,12 @@ does not promise a stable schema or CLI yet.
 
 ## Unreleased
 
+- Tests can be declared under an output. An installed-stage output test
+  prepares a root with that output and the sibling outputs that provide its
+  runtime dependencies, instead of installing every output. Recipe-level tests
+  still install all outputs. Use `--test OUTPUT/NAME` when several outputs
+  reuse a test name.
+
 - Tests accept a Wolfi/melange-style environment:
   `environment.contents.packages` lists packages installed only for that test's
   disposable root, and `environment.environment` sets test-only variables.

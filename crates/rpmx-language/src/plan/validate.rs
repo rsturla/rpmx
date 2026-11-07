@@ -265,6 +265,20 @@ pub(crate) fn validate_steps(recipe: &Recipe) -> Result<()> {
             }
         }
     }
+    for (output_index, output) in recipe.outputs.iter().enumerate() {
+        for (test_index, test) in output.tests.iter().enumerate() {
+            if let Some(pipeline) = &test.pipeline {
+                for (step_index, step) in pipeline.iter().enumerate() {
+                    validate_step(
+                        step,
+                        format!(
+                            "outputs[{output_index}].tests[{test_index}].pipeline[{step_index}]"
+                        ),
+                    )?;
+                }
+            }
+        }
+    }
     Ok(())
 }
 

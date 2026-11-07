@@ -111,7 +111,8 @@ pub struct BuildArgs {
     /// Skip package policy checks.
     #[arg(long)]
     pub no_lint: bool,
-    /// Run only the named test; repeat for several.
+    /// Run only the named test; repeat for several. Use OUTPUT/NAME when a
+    /// bare name is shared by several outputs.
     #[arg(long = "test", value_name = "NAME")]
     pub test: Vec<String>,
     /// Write a JUnit XML report for the tests that ran.
@@ -181,7 +182,8 @@ pub struct RebuildArgs {
     /// Skip package policy checks.
     #[arg(long)]
     pub no_lint: bool,
-    /// Run only the named test; repeat for several.
+    /// Run only the named test; repeat for several. Use OUTPUT/NAME when a
+    /// bare name is shared by several outputs.
     #[arg(long = "test", value_name = "NAME")]
     pub test: Vec<String>,
     /// Write a JUnit XML report for the tests that ran.
@@ -333,7 +335,8 @@ pub struct TestArgs {
     /// Runner: auto, bwrap, podman or qemu.
     #[arg(long, default_value = "auto", value_parser = ["auto", "bwrap", "podman", "qemu"])]
     pub runner: String,
-    /// Run only the named test; repeat for several.
+    /// Run only the named test; repeat for several. Use OUTPUT/NAME when a
+    /// bare name is shared by several outputs.
     #[arg(long = "test", value_name = "NAME")]
     pub selected: Vec<String>,
     /// Test RPMs in this directory instead of building the recipe.

@@ -466,6 +466,11 @@ pub struct Output {
     pub generators: OutputGenerators,
     #[serde(default)]
     pub scriptlets: Scriptlets,
+    /// Tests for this output. An installed-stage test owned by an output is
+    /// prepared with that output and its runtime dependencies, not with every
+    /// sibling output.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tests: Vec<Test>,
 }
 
 /// Per-output switches for automatic `Provides`/`Requires` generation.

@@ -223,13 +223,15 @@ records `source-root.lock.json`; `--unsafe-host-root` is the explicit exception.
 Tests run after packaging. `stage: build` tests run in the build sandbox.
 `stage: installed` tests run in a fresh test root: `build.dependencies.tests`
 plus each test's `environment.contents.packages` are resolved from the same
-repositories, assembled offline, and the built RPMs are installed over it with
-real dependency checking, not `--nodeps` (`--run-tests`). Tests with different
-package sets get separate roots. The resolved test roots are written beside the
-RPMs as `<name>-<version>-<release>[.<n>].test-root.lock.json`;
-`--test-root-lock FILE` assembles a pinned lock offline and checks that the
-fixed test base environment is present; the lock is authoritative for the
-rest.
+repositories, assembled offline, and the selected built RPMs are installed over
+it with real dependency checking, not `--nodeps` (`--run-tests`). A
+recipe-level test selects every output. An output-level test selects its own
+output plus the sibling outputs that satisfy its RPM requirements. Tests with a
+different output or package set get separate roots. The resolved test roots are
+written beside the RPMs as
+`<name>-<version>-<release>[.<n>].test-root.lock.json`; `--test-root-lock FILE`
+assembles a pinned lock offline and checks that the fixed test base environment
+is present; the lock is authoritative for the rest.
 `--sbom FILE` overrides the build-level SPDX path; per-package documents are
 embedded in the RPMs.
 
@@ -403,20 +405,31 @@ This is the one place where ordering matters, and it is explicit: a contribution
 
 ## 11. Tests
 
-Tests are still a separate section with their own pipeline, dependencies and root:
+Tests are still a separate section with their own pipeline, dependencies and
+root. They may sit at the recipe level or under an output:
 
 ```yaml
-tests:
-  - name: import
-    stage: installed
-    pipeline:
-      - uses: python/import
-        with:
-          python: /usr/bin/python3.10
-          module: foo
+outputs:
+  - name: python-foo
+    tests:
+      - name: import
+        stage: installed
+        environment:
+          contents:
+            packages: [python3-pytest]
+        pipeline:
+          - uses: python/import
+            with:
+              python: /usr/bin/python3.10
+              module: foo
 ```
 
-Build-stage tests (`stage: build`) may reuse the build pipeline's environment. Installed-stage tests get a fresh root with the produced RPMs and declared test dependencies. Network is off in both.
+Build-stage tests (`stage: build`) may reuse the build pipeline's environment.
+Installed-stage tests get a fresh root with the selected built RPMs and
+declared test dependencies. A recipe-level test installs every output; an
+output-level test installs its output and the sibling outputs needed by its
+runtime dependencies. Network is off in both. Use `--test OUTPUT/NAME` when a
+test name is shared by several outputs.
 
 Test pipelines use the same `Step` type, the same step library and the same
 `pipelines/` directory as build. A local step used by both resolves to the same

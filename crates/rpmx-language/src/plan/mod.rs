@@ -13,7 +13,7 @@ mod expand;
 
 use expand::{
     base_scope, base_scope_without_cell, expand_dependencies, expand_outputs, expand_pipeline,
-    expand_steps, expand_tests,
+    expand_steps, expand_tests, ExpandedOutputs,
 };
 
 mod validate;
@@ -117,6 +117,11 @@ pub struct PlannedOutput {
 #[derive(Debug, Clone, Serialize)]
 pub struct PlannedTest {
     pub name: String,
+    /// Output that owns this test. `None` is a recipe-level test, which sees
+    /// every output; `Some` is an output-level test, which sees that output
+    /// and its runtime dependencies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output: Option<String>,
     pub stage: String,
     pub argv: Option<Vec<String>>,
     pub pipeline: Vec<PlannedStep>,
@@ -126,6 +131,32 @@ pub struct PlannedTest {
     /// Variables applied to every step of this test.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub environment: BTreeMap<String, String>,
+}
+
+impl PlannedTest {
+    /// The name users type for `--test`. An output-level test keeps its bare
+    /// name usable when it is unique, and can always be selected as
+    /// `<output>/<name>`.
+    pub fn qualified_name(&self) -> String {
+        match &self.output {
+            Some(output) => format!("{output}/{}", self.name),
+            None => self.name.clone(),
+        }
+    }
+
+    /// Match either the bare test name or `<output>/<name>`.
+    pub fn matches_selector(&self, selector: &str) -> bool {
+        if selector == self.name {
+            return true;
+        }
+        let Some(output) = &self.output else {
+            return false;
+        };
+        selector
+            .strip_prefix(output.as_str())
+            .and_then(|rest| rest.strip_prefix('/'))
+            == Some(self.name.as_str())
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -585,13 +616,24 @@ fn plan_cell(
             step.env.entry(key.clone()).or_insert(value);
         }
     }
-    let outputs = expand_outputs(&recipe.outputs, &scope)?;
-    let tests = expand_tests(
-        &recipe.tests,
+    let ExpandedOutputs {
+        outputs,
+        tests: output_tests,
+    } = expand_outputs(
+        &recipe.outputs,
         &scope,
         options.step_root,
         options.allow_builtin_override,
     )?;
+    let mut tests = expand_tests(
+        &recipe.tests,
+        &scope,
+        options.step_root,
+        options.allow_builtin_override,
+        None,
+        "tests",
+    )?;
+    tests.extend(output_tests);
 
     Ok(PlannedCell {
         id: cell.id.clone(),
@@ -638,6 +680,36 @@ tests:
         HOME: /tmp
     pipeline:
       - runs: "true"
+"#;
+
+    const OUTPUT_TEST_RECIPE: &str = r#"
+schema: 1
+package:
+  name: probe
+  version: "1.0"
+  release: 1
+  summary: probe
+  license: MIT
+build:
+  pipeline:
+    - runs: "true"
+outputs:
+  - name: one
+    metapackage: true
+    tests:
+      - name: smoke
+        stage: installed
+        argv: ["true"]
+  - name: two
+    metapackage: true
+    tests:
+      - name: smoke
+        stage: installed
+        argv: ["true"]
+tests:
+  - name: integration
+    stage: installed
+    argv: ["true"]
 "#;
 
     fn runs(text: &str) -> Step {
@@ -696,6 +768,33 @@ tests:
         assert_eq!(error.code, rpmx_base::error::codes::TEST_004);
         assert!(
             error.message.contains("installed-stage"),
+            "{}",
+            error.message
+        );
+    }
+
+    #[test]
+    fn output_tests_keep_their_owner_and_can_repeat_names() {
+        let recipe = crate::parse_recipe(OUTPUT_TEST_RECIPE).expect("recipe");
+        let plan = plan(&recipe, "x86_64").expect("plan");
+        let tests = &plan.cells[0].tests;
+        assert_eq!(tests.len(), 3);
+        assert_eq!(tests[0].qualified_name(), "integration");
+        assert_eq!(tests[1].qualified_name(), "one/smoke");
+        assert_eq!(tests[2].qualified_name(), "two/smoke");
+        assert!(tests[1].matches_selector("one/smoke"));
+        assert!(tests[1].matches_selector("smoke"));
+        assert!(!tests[1].matches_selector("two/smoke"));
+    }
+
+    #[test]
+    fn a_test_name_cannot_use_the_output_separator() {
+        let recipe = crate::parse_recipe(&TEST_RECIPE.replace("name: installed", "name: bad/name"))
+            .expect("recipe");
+        let error = plan(&recipe, "x86_64").expect_err("separator");
+        assert_eq!(error.code, rpmx_base::error::codes::TEST_001);
+        assert!(
+            error.message.contains("cannot contain '/'"),
             "{}",
             error.message
         );

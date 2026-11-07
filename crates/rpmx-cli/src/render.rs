@@ -126,7 +126,7 @@ pub fn plan(plan: &Plan) {
             println!("  output {}", output.name);
         }
         for test in &cell.tests {
-            println!("  test   {} ({})", test.name, test.stage);
+            println!("  test   {} ({})", test.qualified_name(), test.stage);
             if !test.packages.is_empty() {
                 println!("    root   {}", test.packages.join(", "));
             }

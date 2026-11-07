@@ -499,21 +499,12 @@ fn build_one(
             "--save-test-root needs an installed-stage test; there is no test root to keep",
         ));
     }
-    if !args.test.is_empty() {
-        let known: std::collections::BTreeSet<_> = plan
-            .cells
-            .iter()
-            .flat_map(|cell| cell.tests.iter().map(|test| test.name.as_str()))
-            .collect();
-        for name in &args.test {
-            if !known.contains(name.as_str()) {
-                return Err(Error::new(
-                    codes::TEST_004,
-                    format!("no test named '{name}' in this recipe"),
-                ));
-            }
-        }
-    }
+    let test_cells = plan
+        .cells
+        .iter()
+        .map(|cell| cell.tests.as_slice())
+        .collect::<Vec<_>>();
+    crate::commands::test_roots::validate_selectors(&test_cells, &args.test)?;
     if args.locked {
         crate::commands::lock::verify(
             &bundle,
