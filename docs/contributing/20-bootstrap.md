@@ -136,6 +136,10 @@ stages:
 
 Stage fields:
 
+Paths in the manifest resolve relative to the manifest file. Parent components
+are allowed, so a manifest in `.bootstrap/` can reference `../packages` and
+`../profiles/...`; absolute paths remain supported but are not required.
+
 - `profile`: required; a normal profile file, resolved relative to the
   manifest.
 - `packages`: package names, `all`, or both. Recipes are discovered by scanning

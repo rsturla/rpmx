@@ -14,6 +14,12 @@ does not promise a stable schema or CLI yet.
   paths, the effective timestamp and a `next:` command; `--json` exposes the
   same data. `RPMX-BOOTSTRAP-*` diagnostics have stable exit codes.
 
+- Bootstrap manifest paths resolve relative to the manifest file, including
+  parent components such as `../packages`, so a manifest can live in
+  `.bootstrap/` without absolute paths. Native stages assemble a normal dnf
+  root (with scriptlets and an RPM database); only cross sysroots use the
+  payload-only extractor.
+
 - Bundled components are discovered from vendor metadata and emitted as
   `bundled(...)` provides. Go reads `vendor/modules.txt`, Cargo reads
   `Cargo.lock` when a `vendor/` tree exists, and Node projects read

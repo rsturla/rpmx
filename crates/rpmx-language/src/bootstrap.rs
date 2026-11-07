@@ -1295,20 +1295,31 @@ fn resolve(base: &Path, raw: &str, field: &str) -> Result<PathBuf> {
         ));
     }
     let path = Path::new(raw);
-    if path
-        .components()
-        .any(|component| matches!(component, Component::ParentDir))
-    {
-        return Err(manifest_error(
-            codes::BOOTSTRAP_002,
-            format!("{field} path '{raw}' must not contain '..'"),
-        ));
-    }
-    if path.is_absolute() {
-        Ok(path.to_path_buf())
+    let resolved = if path.is_absolute() {
+        path.to_path_buf()
     } else {
-        Ok(base.join(path))
+        base.join(path)
+    };
+    Ok(normalize_path(&resolved))
+}
+
+/// Normalize `.` and `..` lexically. This keeps relative manifest paths such as
+/// `../packages` usable when the manifest lives in a subdirectory, and gives
+/// duplicate checks a stable spelling even when the target does not exist yet.
+fn normalize_path(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !normalized.pop() {
+                    normalized.push(component.as_os_str());
+                }
+            }
+            _ => normalized.push(component.as_os_str()),
+        }
     }
+    normalized
 }
 
 fn is_safe_name(name: &str) -> bool {
@@ -1462,6 +1473,43 @@ packages:
         assert_eq!(plan.stages[0].repo, "out/stage0/x86_64");
         assert_eq!(plan.stages[1].inputs, vec!["stage0"]);
         assert_eq!(plan.source_date_epoch, Some(1704067200));
+    }
+
+    #[test]
+    fn relative_parent_paths_resolve_from_a_nested_manifest() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        write_recipe(root, "gcc", "    tools: []");
+        write_profile(root, "stage0", false);
+        let manifest_dir = root.join(".bootstrap");
+        std::fs::create_dir(&manifest_dir).unwrap();
+        let manifest_path = manifest_dir.join("bootstrap.yaml");
+        std::fs::write(
+            &manifest_path,
+            r#"
+document: rpmx-bootstrap
+version: 1
+name: test
+archs: [x86_64]
+recipe-root: ../recipes
+source-date-epoch: 1704067200
+stages:
+  - name: stage0
+    profile: ../stage0.yaml
+    packages: [gcc]
+    output: out
+    seed: true
+"#,
+        )
+        .unwrap();
+
+        let manifest = super::load_manifest(&manifest_path).unwrap();
+        let plan =
+            plan_with_base(&manifest, &manifest_dir, &manifest_path, Some("x86_64")).unwrap();
+
+        assert_eq!(plan.stages[0].profile, "../stage0.yaml");
+        assert_eq!(plan.stages[0].repo, "out/x86_64");
+        assert!(plan.stages[0].recipes[0].ends_with("/recipes/gcc/package.yaml"));
     }
 
     #[test]

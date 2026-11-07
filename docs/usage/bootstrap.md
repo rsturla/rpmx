@@ -216,7 +216,9 @@ stages:
 ```
 
 `schema: 1` is accepted as an alias for `version: 1`. Unknown fields are
-errors. Stage paths are relative to the manifest.
+errors. Paths are resolved relative to the manifest; `..` is allowed, so a
+manifest in `.bootstrap/` can use `recipe-root: ../packages` and
+`profile: ../profiles/bootstrap.profile.yaml`.
 
 ### Stage fields
 

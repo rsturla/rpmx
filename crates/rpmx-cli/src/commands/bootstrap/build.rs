@@ -526,7 +526,7 @@ fn resolve_candidate_roots(
         &build_lock_path,
         requirement,
         build_arch,
-        crossing,
+        false,
         seed,
         cache,
         &candidate_args,
@@ -550,7 +550,7 @@ fn resolve_candidate_roots(
                 &sysroot_lock_path,
                 requirement,
                 target,
-                false,
+                true,
                 seed,
                 cache,
                 &candidate_args,
@@ -875,7 +875,7 @@ fn resolve_roots(
         &build_lock_path,
         requirement,
         build_arch,
-        crossing,
+        false,
         &seed,
         cache,
         args,
@@ -897,7 +897,7 @@ fn resolve_roots(
                 &sysroot_lock_path,
                 requirement,
                 target,
-                false,
+                true,
                 &seed,
                 cache,
                 args,
@@ -951,7 +951,7 @@ fn resolve_one_root(
     lock_path: &Path,
     requirement: &str,
     expected_arch: Arch,
-    mount_sysroot: bool,
+    sysroot: bool,
     seed: &Option<rpmx_core::bootstrap::Seed>,
     cache: &Path,
     args: &BootstrapBuildArgs,
@@ -997,36 +997,16 @@ fn resolve_one_root(
     lock.generation = seed.as_ref().and_then(|seed| seed.generation.clone());
     lock.requirement = Some(requirement.to_string());
 
-    let assembled = if mount_sysroot {
-        assemble(
-            &lock,
-            AssembleOptions {
-                cache,
-                work: assemble_work.path(),
-                root: &temp_root,
-            },
-        )?
-    } else {
-        assemble_sysroot(
-            &lock,
-            AssembleOptions {
-                cache,
-                work: assemble_work.path(),
-                root: &temp_root,
-            },
-        )?
+    let options = AssembleOptions {
+        cache,
+        work: assemble_work.path(),
+        root: &temp_root,
     };
-    if mount_sysroot {
-        std::fs::create_dir_all(assembled.join("sysroot")).map_err(|error| {
-            Error::new(
-                codes::ROOT_004,
-                format!(
-                    "cannot create {}: {error}",
-                    assembled.join("sysroot").display()
-                ),
-            )
-        })?;
-    }
+    let assembled = if sysroot {
+        assemble_sysroot(&lock, options)?
+    } else {
+        assemble(&lock, options)?
+    };
     lock.root_digest = Some(rpmx_core::tree::digest_root(&assembled)?);
     publish(&temp_root, root, args.force, "stage root")?;
     write_lock_atomic(lock_path, &lock)?;
