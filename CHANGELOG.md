@@ -5,6 +5,11 @@ does not promise a stable schema or CLI yet.
 
 ## Unreleased
 
+- Recipes can inherit `package.maintainers` from `rpmx-defaults.yaml` in the
+  recipe directory or a repository ancestor. The recipe wins when it declares
+  its own maintainers. The defaults file joins the recipe bundle, so the lock
+  and SRPM record it and a rebuild remains self-contained.
+
 - Bootstrap fixed-point passes hide every provider except the stage output,
   including the seed repositories. A package no longer needs an inflated
   release or epoch to outrank Fedora while the seed is still in the profile.

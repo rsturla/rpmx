@@ -81,6 +81,29 @@ package:
 `source-date-epoch` is strongly recommended: it drives file mtimes, SBOM dates
 and signature time. Without it the timestamp defaults to `0` and `lint` warns.
 
+#### Repository defaults
+
+A `rpmx-defaults.yaml` can supply package metadata that is identical for every
+recipe in a repository:
+
+```yaml
+schema: 1
+package:
+  maintainers:
+    - name: Example Linux maintainers
+      email: maintainers@example.org
+```
+
+rpmx looks in the recipe directory first, then each ancestor up to the
+repository root (the first directory containing `.git`). The recipe wins when
+it sets the field itself. The defaults file joins the recipe bundle, so it is
+recorded in the package lock and embedded in the SRPM; a rebuild does not need
+the original checkout.
+
+Keep repository defaults narrow. License, upstream URL, version, summary and
+CPE describe the upstream component and belong in the recipe. CPE must identify
+the upstream project, not the distribution package name.
+
 ### 5.2 Build root
 
 The recipe names the root in one of two ways.
