@@ -1,3 +1,4 @@
+pub mod bootstrap;
 pub mod bundle;
 pub mod matrix;
 pub mod model;
@@ -9,6 +10,10 @@ use std::path::Path;
 
 use rpmx_base::error::{codes, Result};
 
+pub use bootstrap::{
+    load_manifest, parse_manifest, plan_manifest, plan_with_base, BootstrapManifest, BootstrapPlan,
+    PlannedStage, Stage,
+};
 pub use bundle::{load_recipe_bundle, BundleFile, RecipeBundle};
 pub use model::Recipe;
 pub use plan::{

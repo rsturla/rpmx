@@ -1,0 +1,13 @@
+schema: 1
+package:
+  name: make
+  version: "1.0"
+  release: 1
+  summary: Build automation.
+  license: MIT
+build:
+  dependencies:
+    tools: [gcc]
+outputs:
+  - name: make
+    metapackage: true

@@ -1,6 +1,7 @@
 pub mod appliance;
 mod args;
 pub mod autoroot;
+pub mod bootstrap;
 pub mod build;
 pub mod bump;
 pub mod cache;

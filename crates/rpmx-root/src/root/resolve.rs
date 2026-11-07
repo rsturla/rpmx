@@ -135,6 +135,9 @@ pub fn resolve_profile(
             image,
             image_digest,
         }),
+        seed: None,
+        generation: None,
+        requirement: None,
     })
 }
 
@@ -343,6 +346,9 @@ fn write_repositories(work: &Path, repositories: &[Repository]) -> Result<Reposi
         );
         if let Some(key) = gpgkey {
             text.push_str(&format!("gpgkey={key}\n"));
+        }
+        if !repository.exclude.is_empty() {
+            text.push_str(&format!("exclude={}\n", repository.exclude.join(",")));
         }
         if let Some(auth) = &auth {
             if let Some(ca) = &auth.ca {
@@ -949,6 +955,7 @@ mod local_repository_tests {
             mirrorlist: None,
             gpgkey: None,
             repo_gpgcheck: false,
+            exclude: Vec::new(),
             auth: None,
         }
     }
@@ -1219,6 +1226,26 @@ mod local_repository_tests {
         write_repositories(work.path(), &[repository("rhel")]).expect("write");
         let text = std::fs::read_to_string(work.path().join("repos.d/rhel.repo")).expect("repo");
         assert!(text.contains("repo_gpgcheck=0"), "{text}");
+    }
+
+    #[test]
+    fn repository_excludes_are_written_to_the_repo_file() {
+        let work = tempfile::tempdir().expect("work");
+        std::fs::create_dir_all(work.path().join("repos.d")).expect("repos.d");
+        let mut repository_entry = repository("rhel");
+        repository_entry.exclude = vec!["glibc".to_string(), "gcc".to_string()];
+        write_repositories(work.path(), &[repository_entry]).expect("write");
+        let text = std::fs::read_to_string(work.path().join("repos.d/rhel.repo")).expect("repo");
+        assert!(text.contains("exclude=glibc,gcc"), "{text}");
+    }
+
+    #[test]
+    fn repository_excludes_are_absent_by_default() {
+        let work = tempfile::tempdir().expect("work");
+        std::fs::create_dir_all(work.path().join("repos.d")).expect("repos.d");
+        write_repositories(work.path(), &[repository("rhel")]).expect("write");
+        let text = std::fs::read_to_string(work.path().join("repos.d/rhel.repo")).expect("repo");
+        assert!(!text.contains("exclude="), "{text}");
     }
 
     #[test]

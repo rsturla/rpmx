@@ -1,0 +1,10 @@
+schema: 1
+package:
+  name: glibc
+  version: "1.0"
+  release: 1
+  summary: C library.
+  license: MIT
+outputs:
+  - name: glibc
+    metapackage: true

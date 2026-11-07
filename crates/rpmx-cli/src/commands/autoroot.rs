@@ -213,7 +213,16 @@ pub fn requirement(
     let profile = profile.for_target(arch)?;
     let cross = if crossing {
         let declared = profile.cross().expect("crossing implies a cross block");
-        let mut toolchain = rpmx_core::guest::CrossToolchain::new(profile.triple()?);
+        let triple = profile.triple()?;
+        // A native bootstrap may use the seed's native command names when the
+        // profile does not name a triple. An explicit triple always selects
+        // the GNU `<triple>-*` wrappers, which the ladder's cross toolchain
+        // needs for target CRT and libgcc discovery.
+        let mut toolchain = if declared.bootstrap && declared.triple.is_none() {
+            rpmx_core::guest::CrossToolchain::native(triple)
+        } else {
+            rpmx_core::guest::CrossToolchain::new(triple)
+        };
         toolchain.cflags = declared.cflags.clone();
         toolchain.cxxflags = declared.cxxflags.clone();
         toolchain.ldflags = declared.ldflags.clone();
@@ -281,6 +290,7 @@ pub fn ensure(
     let Some(requirement) = requirement(recipe, plan, recipe_path, profile, arch)? else {
         return Ok(None);
     };
+    let mount_sysroot = requirement.sysroot.is_some();
     let mut root = ensure_root(
         &requirement.profile,
         &requirement.name,
@@ -289,6 +299,7 @@ pub fn ensure(
         offline,
         refresh,
         Assembly::Install,
+        mount_sysroot,
     )?;
     if let Some(sysroot) = &requirement.sysroot {
         let mut assembled = ensure_root(
@@ -299,9 +310,11 @@ pub fn ensure(
             offline,
             refresh,
             Assembly::Extract,
+            false,
         )?;
         // The build root stays read-only at run time, so the sysroot mount
-        // point has to exist before the sandbox starts.
+        // point has to exist before the sandbox starts. New roots create it
+        // before their digest; this keeps an older cache usable as well.
         let mount = root.root.join("sysroot");
         std::fs::create_dir_all(&mount).map_err(|error| {
             Error::new(
@@ -336,6 +349,7 @@ fn ensure_root(
     offline: bool,
     refresh: bool,
     assembly: Assembly,
+    mount_sysroot: bool,
 ) -> Result<AutomaticRoot, Error> {
     // Verify the root against its own profile, never the caller's target: a
     // cross build root is host-arch and would otherwise never cache-hit.
@@ -441,6 +455,9 @@ fn ensure_root(
             },
         )?,
     };
+    if mount_sysroot {
+        create_sysroot_mount(&assembled)?;
+    }
     document.root_digest = Some(digest_root(&assembled)?);
     // The lock is written last: a concurrent reader sees either a complete
     // root and lock, or no lock and rebuilds.
@@ -458,7 +475,25 @@ fn ensure_root(
     })
 }
 
+/// Create the guest sysroot mount point before a root digest is computed.
+///
+/// The sandbox mounts the target sysroot at a fixed guest path, and the
+/// assembled build root is mounted read-only, so the directory must already
+/// exist. Creating it before the digest keeps a cache hit from looking newer
+/// than its lock.
+fn create_sysroot_mount(root: &Path) -> Result<(), Error> {
+    let relative = rpmx_core::guest::SYSROOT.trim_start_matches('/');
+    let mount = root.join(relative);
+    std::fs::create_dir_all(&mount).map_err(|error| {
+        Error::new(
+            codes::ROOT_004,
+            format!("cannot create {}: {error}", mount.display()),
+        )
+    })
+}
+
 /// Assemble a host build root described by an SRPM-embedded lock.
+#[allow(clippy::too_many_arguments)]
 pub fn ensure_from_lock(
     lock: &RootLock,
     cache: Option<&Path>,
@@ -467,6 +502,7 @@ pub fn ensure_from_lock(
     needs_appliance: bool,
     override_root: Option<&Path>,
     allow_resolve: bool,
+    mount_sysroot: bool,
 ) -> Result<AssembledRoots, Error> {
     ensure_with(
         lock,
@@ -477,6 +513,7 @@ pub fn ensure_from_lock(
         override_root,
         allow_resolve,
         Assembly::Install,
+        mount_sysroot,
     )
 }
 
@@ -499,6 +536,7 @@ pub fn ensure_sysroot_from_lock(
         None,
         false,
         Assembly::Extract,
+        false,
     )?
     .root)
 }
@@ -513,6 +551,7 @@ fn ensure_with(
     override_root: Option<&Path>,
     allow_resolve: bool,
     assembly: Assembly,
+    mount_sysroot: bool,
 ) -> Result<AssembledRoots, Error> {
     let cas = match cache {
         Some(path) => path.to_path_buf(),
@@ -629,6 +668,9 @@ fn ensure_with(
             },
         )?,
     };
+    if mount_sysroot {
+        create_sysroot_mount(&assembled)?;
+    }
     let actual = digest_root(&assembled)?;
     if actual != digest {
         return Err(Error::new(
@@ -971,6 +1013,7 @@ fn repository(source: &RootRepository) -> Repository {
         mirrorlist: source.mirrorlist.clone(),
         gpgkey: source.gpgkey.clone(),
         repo_gpgcheck: source.repo_gpgcheck,
+        exclude: Vec::new(),
         auth: None,
     }
 }
@@ -1062,14 +1105,14 @@ fn path_is_under(path: &Path, root: &Path) -> bool {
 }
 
 /// Packages the plan needs, split by the root that owns them.
-struct RequiredPackages {
+pub(crate) struct RequiredPackages {
     /// Build-root tools: the compiler, generators, `make`.
-    build: BTreeSet<String>,
+    pub(crate) build: BTreeSet<String>,
     /// Target headers and libraries, plus everything a test root needs.
-    target: BTreeSet<String>,
+    pub(crate) target: BTreeSet<String>,
 }
 
-fn required_packages(plan: &Plan) -> RequiredPackages {
+pub(crate) fn required_packages(plan: &Plan) -> RequiredPackages {
     let mut build = BTreeSet::new();
     let mut target = BTreeSet::new();
     if let Some(source) = &plan.source_assembly {
@@ -1388,6 +1431,118 @@ outputs:
         assert_ne!(
             requirement.digest, sysroot.digest,
             "the two roots need distinct cache identities"
+        );
+    }
+
+    #[test]
+    fn a_native_bootstrap_resolves_two_roots_with_native_tools() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let native = rpmx_core::Arch::current().expect("host").as_str();
+        let profile_path = directory.path().join("bootstrap.yaml");
+        std::fs::write(
+            &profile_path,
+            format!(
+                r#"
+document: rpmx-profile
+version: 1
+name: bootstrap
+releasever: "44"
+archs: [{native}]
+repositories:
+  - id: base
+    baseurl: https://example.invalid/fedora
+packages:
+  install: [glibc, glibc-devel]
+cross:
+  host: {native}
+  bootstrap: true
+  packages: [seed-gcc, seed-make]
+"#
+            ),
+        )
+        .expect("profile");
+
+        let recipe = recipe(
+            r#"
+schema: 1
+package:
+  name: p
+  version: "1"
+  release: 1
+  summary: p
+  license: MIT
+build:
+  dependencies:
+    tools: [make]
+    host: [zlib-devel]
+  pipeline:
+    - uses: strip
+outputs:
+  - name: p
+    metapackage: true
+"#,
+        );
+        let plan = plan(&recipe);
+        let path = directory.path().join("package.yaml");
+        let requirement = super::requirement(&recipe, &plan, &path, Some(&profile_path), native)
+            .expect("requirement")
+            .expect("root");
+
+        let toolchain = requirement.cross.as_ref().expect("toolchain");
+        assert!(toolchain.native, "no triple means native command names");
+        assert_eq!(toolchain.cc, "gcc");
+        assert_eq!(
+            toolchain.triple,
+            rpmx_core::Arch::parse(native).unwrap().triple()
+        );
+
+        assert_eq!(requirement.profile.archs, vec![native.to_string()]);
+        assert!(requirement
+            .profile
+            .packages
+            .install
+            .contains(&"seed-gcc".to_string()));
+        assert!(requirement
+            .profile
+            .packages
+            .install
+            .contains(&"make".to_string()));
+        assert!(!requirement
+            .profile
+            .packages
+            .install
+            .contains(&"zlib-devel".to_string()));
+
+        let sysroot = requirement.sysroot.expect("sysroot");
+        assert_eq!(sysroot.profile.archs, vec![native.to_string()]);
+        assert!(sysroot
+            .profile
+            .packages
+            .install
+            .contains(&"zlib-devel".to_string()));
+        assert!(!sysroot
+            .profile
+            .packages
+            .install
+            .contains(&"seed-gcc".to_string()));
+        assert_ne!(
+            requirement.digest, sysroot.digest,
+            "the two roots need distinct cache identities"
+        );
+    }
+
+    #[test]
+    fn the_sysroot_mount_point_is_covered_by_the_root_digest() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let root = directory.path().join("root");
+        std::fs::create_dir_all(&root).expect("root");
+        let before = rpmx_core::tree::digest_root(&root).expect("digest");
+        super::create_sysroot_mount(&root).expect("mount point");
+        assert!(root.join("sysroot").is_dir());
+        let after = rpmx_core::tree::digest_root(&root).expect("digest");
+        assert_ne!(
+            before, after,
+            "the mount point must be created before the digest is published"
         );
     }
 

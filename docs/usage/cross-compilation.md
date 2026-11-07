@@ -39,6 +39,8 @@ cross:
 - `cross.host` names the build-root architecture. It must be the machine rpmx
   runs on; the default is the current host.
 - `cross.triple` overrides the GNU triple (default: the target's).
+- `cross.bootstrap: true` allows the build root and the sysroot to share an
+  architecture (see [Native bootstrap](#native-bootstrap)).
 - `cross.cflags`, `cross.cxxflags`, `cross.ldflags` add the distribution's own
   toolchain flags.
 
@@ -95,13 +97,43 @@ Two checks make a broken cross build fail instead of shipping:
   and it catches both a missing dependency and a host library linked by
   mistake.
 
+## Native bootstrap
+
+A normal native profile has one root: rpmx runs `dnf install` in it and builds
+against it. A bootstrap needs the opposite: a small seed build root with the
+compiler, and a separate target sysroot with the replacement libc and headers,
+even when both are the same architecture. Declare that explicitly:
+
+```yaml
+archs: [x86_64]
+packages:
+  install: [glibc, glibc-devel, zlib-devel]   # target sysroot
+cross:
+  bootstrap: true
+  packages: [bash, coreutils, make, gcc, binutils]  # seed build root
+```
+
+`cross.bootstrap: true` permits `cross.host == archs`; without it the same
+profile is rejected with `ROOT_006`, just like an accidental same-architecture
+cross profile. The two roots still have different package lists and different
+cache identities.
+
+When the profile has no explicit `cross.triple`, a bootstrap uses the seed's
+native command names (`gcc`, `g++`, `ar`, `ld`, `strip`, `objcopy`) with the
+target triple kept for `--host` and for the SRPM's recorded provenance. Setting
+`cross.triple` selects `<triple>-*` wrappers instead; a bootstrap ladder uses
+that form once its newly built cross toolchain exists. The SRPM lock records
+which form was used, so `rpmx rebuild` recreates the same environment.
+
 ## One profile, one build strategy
 
 A `cross` block describes how one profile builds its target. A profile whose
 `archs` include the host cannot also build the host: deriving a build root for
 it fails with a message naming the profile. Build the host with a native
 profile and each foreign target with a cross profile; `--arch all` on a cross
-profile therefore selects that profile's targets only.
+profile therefore selects that profile's targets only. The one exception is
+`cross.bootstrap: true`, which deliberately keeps two same-architecture roots
+separate.
 
 The sysroot is a link-time artefact. Its payloads are unpacked without running
 scriptlets, so it has no `ld.so.cache` or alternatives database; that is fine

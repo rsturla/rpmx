@@ -1,0 +1,10 @@
+schema: 1
+package:
+  name: binutils
+  version: "1.0"
+  release: 1
+  summary: Linker and binary utilities.
+  license: MIT
+outputs:
+  - name: binutils
+    metapackage: true

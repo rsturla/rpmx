@@ -53,6 +53,18 @@ pub struct RootLock {
     pub root_digest: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub builder: Option<LockedBuilder>,
+    /// Seed provenance recorded by a bootstrap stage. It is metadata, outside
+    /// `closure_digest`, so a new generation label does not invalidate a root.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seed: Option<String>,
+    /// Seed generation recorded by a bootstrap stage, outside `closure_digest`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generation: Option<String>,
+    /// Digest of the effective bootstrap requirement (profile plus stage
+    /// extras). It lets a later stage run reuse a root without re-resolving and
+    /// is deliberately outside `closure_digest`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requirement: Option<String>,
 }
 
 impl RootLock {
@@ -392,6 +404,9 @@ impl ApplianceLock {
             closure_digest: self.closure_digest.clone(),
             root_digest: None,
             builder: Some(self.builder.clone()),
+            seed: None,
+            generation: None,
+            requirement: None,
         }
     }
 }
@@ -420,6 +435,15 @@ pub fn closure_digest(
     for repository in sorted_repos {
         let (kind, url) = repository.location();
         material.push_str(&format!("repo:{}:{kind}:{url}\n", repository.id));
+        if !repository.exclude.is_empty() {
+            let mut exclude = repository.exclude.clone();
+            exclude.sort();
+            material.push_str(&format!(
+                "exclude:{}:{}\n",
+                repository.id,
+                exclude.join(",")
+            ));
+        }
     }
 
     for (arch, entries) in packages {
@@ -504,4 +528,46 @@ pub fn write_lock(path: &Path, lock: &RootLock) -> Result<()> {
             format!("cannot write {}: {error}", path.display()),
         )
     })
+}
+
+#[cfg(test)]
+mod closure_digest_tests {
+    use super::closure_digest;
+    use crate::profile::Repository;
+    use std::collections::BTreeMap;
+
+    fn repository(id: &str) -> Repository {
+        Repository {
+            id: id.to_string(),
+            baseurl: Some(format!("https://example.invalid/{id}")),
+            metalink: None,
+            mirrorlist: None,
+            gpgkey: None,
+            repo_gpgcheck: false,
+            exclude: Vec::new(),
+            auth: None,
+        }
+    }
+
+    #[test]
+    fn an_empty_exclude_does_not_change_the_closure_digest() {
+        let plain = repository("fedora");
+        let mut empty = repository("fedora");
+        empty.exclude = Vec::new();
+        assert_eq!(
+            closure_digest("44", &["x86_64".to_string()], &[plain], &BTreeMap::new()),
+            closure_digest("44", &["x86_64".to_string()], &[empty], &BTreeMap::new())
+        );
+    }
+
+    #[test]
+    fn a_non_empty_exclude_changes_the_closure_digest() {
+        let plain = repository("fedora");
+        let mut filtered = repository("fedora");
+        filtered.exclude = vec!["gcc".to_string(), "glibc".to_string()];
+        assert_ne!(
+            closure_digest("44", &["x86_64".to_string()], &[plain], &BTreeMap::new()),
+            closure_digest("44", &["x86_64".to_string()], &[filtered], &BTreeMap::new())
+        );
+    }
 }

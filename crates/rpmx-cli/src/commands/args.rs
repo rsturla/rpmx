@@ -407,6 +407,66 @@ pub struct PlanArgs {
 }
 
 #[derive(Debug, clap::Args)]
+pub struct BootstrapPlanArgs {
+    /// Bootstrap manifest. (default: ./bootstrap.yaml).
+    #[arg(default_value = "bootstrap.yaml")]
+    pub manifest: PathBuf,
+    /// Architecture to plan (default: every architecture in the manifest).
+    #[arg(long)]
+    pub arch: Option<String>,
+}
+
+#[derive(Debug, Clone, clap::Args)]
+pub struct BootstrapBuildArgs {
+    /// Bootstrap manifest. (default: ./bootstrap.yaml).
+    #[arg(default_value = "bootstrap.yaml")]
+    pub manifest: PathBuf,
+    /// Architecture to build (required when the manifest declares several).
+    #[arg(long)]
+    pub arch: Option<String>,
+    /// Build only this stage; its input outputs, repositories and locks must exist.
+    #[arg(long)]
+    pub stage: Option<String>,
+    /// Verify and use the stage locks instead of resolving roots.
+    #[arg(long)]
+    pub locked: bool,
+    /// Do not use the network; fail when a stage root is not cached.
+    #[arg(long)]
+    pub offline: bool,
+    /// Re-resolve stage roots instead of using a matching cached root.
+    #[arg(long, conflicts_with_all = ["locked", "offline"])]
+    pub refresh: bool,
+    /// Replace a non-empty stage output or root.
+    #[arg(long)]
+    pub force: bool,
+    /// Runner: auto, bwrap, podman or qemu.
+    #[arg(long, default_value = "auto", value_parser = ["auto", "bwrap", "podman", "qemu"])]
+    pub runner: String,
+    /// Content-addressed acquisition proxy.
+    #[arg(long)]
+    pub proxy: Option<String>,
+    /// Do not run the recipes' tests.
+    #[arg(long)]
+    pub no_tests: bool,
+    /// Skip installed-stage tests, which execute target binaries.
+    #[arg(long)]
+    pub skip_installed: bool,
+    #[command(flatten)]
+    pub runtime: RuntimeArgs,
+    #[command(flatten)]
+    pub signing: OptionalSigningArgs,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct BootstrapRebuildArgs {
+    #[command(flatten)]
+    pub rebuild: RebuildArgs,
+    /// Write the replacement SRPM here. The input SRPM is never modified.
+    #[arg(long, value_name = "DIR")]
+    pub srpm_out: PathBuf,
+}
+
+#[derive(Debug, clap::Args)]
 pub struct FetchArgs {
     /// Recipe whose sources should be fetched. (default: ./package.yaml).
     #[arg(default_value = "package.yaml")]

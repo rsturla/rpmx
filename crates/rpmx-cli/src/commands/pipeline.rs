@@ -163,6 +163,8 @@ impl BuildPipeline<'_> {
                     test_root_lock: self.test_root_lock,
                     signing: self.signing,
                     quiet: true,
+                    replace_root_lock: false,
+                    srpm_out: None,
                 })?;
                 output.rpms.extend(rebuilt.rpms);
                 output.evidence.extend(rebuilt.evidence);

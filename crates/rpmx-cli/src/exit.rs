@@ -26,6 +26,14 @@ pub fn code_for(code: Code) -> u8 {
         // Installed-test setup or execution failed.
         return TEST;
     }
+    if code == codes::BOOTSTRAP_005 {
+        // The ladder built, but its fixed point did not converge.
+        return BUILD;
+    }
+    if code == codes::BOOTSTRAP_006 {
+        // A stage lock is missing or has drifted.
+        return LOCK_DRIFT;
+    }
     if code == codes::SRPM_011
         || code == codes::SRPM_012
         || code == codes::ROOT_013
@@ -46,7 +54,8 @@ pub fn code_for(code: Code) -> u8 {
         "POLICY" | "SIGN" => POLICY,
         "SBOM" | "EXTRACT" => EVIDENCE,
         "YAML" | "SCHEMA" | "PLAN" | "OUTPUT" | "STEP" | "TEMPLATE" | "MATRIX" | "TOOL"
-        | "INCLUDE" | "ASSEMBLY" | "SOURCE" | "STAGE" | "LINT" | "INIT" | "BUNDLED" => RECIPE,
+        | "INCLUDE" | "ASSEMBLY" | "SOURCE" | "STAGE" | "LINT" | "INIT" | "BUNDLED"
+        | "BOOTSTRAP" => RECIPE,
         _ => INTERNAL,
     }
 }
@@ -86,6 +95,13 @@ mod tests {
         assert_eq!(code_for(codes::CLI_001), 2);
         assert_eq!(code_for(codes::CLI_007), 2);
         assert_eq!(code_for(codes::BUNDLED_003), 2);
+        assert_eq!(code_for(codes::BOOTSTRAP_001), 2);
+        assert_eq!(code_for(codes::BOOTSTRAP_004), 2);
+        assert_eq!(code_for(codes::BOOTSTRAP_007), 2);
+        assert_eq!(code_for(codes::BOOTSTRAP_008), 2);
+        assert_eq!(code_for(codes::BOOTSTRAP_009), 2);
+        assert_eq!(code_for(codes::BOOTSTRAP_005), 5);
+        assert_eq!(code_for(codes::BOOTSTRAP_006), 3);
         assert_eq!(code_for(codes::BUILD_007), 6);
         assert_eq!(code_for(codes::SRPM_011), 3);
         assert_eq!(code_for(codes::SRPM_012), 3);

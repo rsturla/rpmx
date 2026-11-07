@@ -24,6 +24,9 @@ fn root_lock(arch: &str) -> rpmx_core::root::RootLock {
         closure_digest: "sha512:00".to_string(),
         root_digest: Some("sha512:00".to_string()),
         builder: None,
+        seed: None,
+        generation: None,
+        requirement: None,
     }
 }
 
@@ -63,6 +66,7 @@ fn source_package_contains_recipe_lock_manifest_and_sources() {
         sysroot_lock: None,
         cross: None,
         sbom: true,
+        replaced: None,
     })
     .expect("prepare SRPM");
 
@@ -98,6 +102,7 @@ fn source_package_rejects_reserved_source_names() {
         sysroot_lock: None,
         cross: None,
         sbom: true,
+        replaced: None,
     })
     .expect_err("reserved name is rejected");
     assert_eq!(error.code, "RPMX-SRPM-007");
@@ -164,6 +169,7 @@ outputs:
         sysroot_lock: None,
         cross: None,
         sbom: true,
+        replaced: None,
     })
     .expect("prepare SRPM");
 
@@ -323,6 +329,7 @@ fn source_package_embeds_included_recipe_fragments() {
         sysroot_lock: None,
         cross: None,
         sbom: true,
+        replaced: None,
     })
     .expect("prepare SRPM");
 
@@ -593,6 +600,7 @@ fn a_cross_source_package_embeds_the_sysroot_and_toolchain() {
         sysroot_lock: Some(&sysroot),
         cross: Some(&toolchain),
         sbom: true,
+        replaced: None,
     })
     .expect("prepare cross SRPM");
 
@@ -630,6 +638,7 @@ fn a_cross_source_package_embeds_the_sysroot_and_toolchain() {
         sysroot_lock: None,
         cross: None,
         sbom: true,
+        replaced: None,
     })
     .expect("prepare native SRPM");
     let lock: serde_json::Value = serde_json::from_slice(

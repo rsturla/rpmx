@@ -17,8 +17,11 @@ pub(super) struct RebuildState {
     pub(super) extracted: rpmx_rpm::extract::ExtractedSrpm,
     pub(super) package_lock: rpmx_core::srpm::PackageLock,
     pub(super) bundled: rpmx_core::components::Inventory,
+    pub(super) bundle: rpmx_core::RecipeBundle,
     pub(super) recipe: rpmx_core::Recipe,
+    pub(super) plan: rpmx_core::Plan,
     pub(super) cell: rpmx_core::plan::PlannedCell,
+    pub(super) pipelines: PathBuf,
     pub(super) build: PathBuf,
     pub(super) stage: PathBuf,
     pub(super) active_lock: Option<rpmx_core::root::RootLock>,
@@ -37,6 +40,8 @@ pub(super) struct RebuildState {
     pub(super) sysroot_lock: Option<rpmx_core::root::RootLock>,
     /// Architecture the package is for: the sysroot's for a cross SRPM.
     pub(super) target: String,
+    /// Old embedded roots replaced by `rpmx bootstrap rebuild`.
+    pub(super) replaced: Option<rpmx_core::srpm::ReplacedLock>,
 }
 
 pub(super) fn prepare(
@@ -216,17 +221,37 @@ pub(super) fn prepare(
         Some(path) => Some(load_lock(path)?),
         None => None,
     };
+    let root_differs = match (&requested_lock, &embedded_lock) {
+        (Some(requested), Some(embedded)) => {
+            requested.closure_digest != embedded.closure_digest
+                || requested.root_digest != embedded.root_digest
+        }
+        _ => false,
+    };
     if let (Some(requested), Some(embedded)) = (&requested_lock, &embedded_lock) {
-        if requested.closure_digest != embedded.closure_digest
-            || requested.root_digest != embedded.root_digest
-        {
+        if root_differs && !request.replace_root_lock {
             return Err(Error::new(
                 codes::ROOT_016,
                 "--root-lock differs from the root lock embedded in the SRPM \
                  (closure or root digest)",
             ));
         }
+        if root_differs && request.replace_root_lock {
+            rpmx_core::output::warning(
+                "bootstrap",
+                format!(
+                    "replacing embedded root lock {} with {}",
+                    embedded.root_digest.as_deref().unwrap_or("<none>"),
+                    requested.root_digest.as_deref().unwrap_or("<none>")
+                ),
+            );
+        }
     }
+    let replaced_root = if root_differs {
+        embedded_lock.clone()
+    } else {
+        None
+    };
     let allow_appliance_resolve = requested_lock.is_some();
     let active_lock = requested_lock.or(embedded_lock);
     if let Some(lock) = &active_lock {
@@ -286,6 +311,7 @@ pub(super) fn prepare(
                     needs_appliance,
                     request.runner_asset_root,
                     allow_appliance_resolve,
+                    embedded_cross.is_some(),
                 )?;
                 assembled_appliance = roots.appliance;
                 roots.root
@@ -320,6 +346,7 @@ pub(super) fn prepare(
         None
     };
 
+    let replaced_sysroot = cross_lock_and_arch.as_ref().map(|(lock, _)| lock.clone());
     let (sysroot, cross, sysroot_lock) = match (&embedded_cross, cross_lock_and_arch) {
         (Some(recorded), Some((lock, arch))) => {
             let root = crate::commands::autoroot::ensure_sysroot_from_lock(
@@ -328,7 +355,11 @@ pub(super) fn prepare(
                 request.offline,
                 &arch,
             )?;
-            let mut toolchain = rpmx_core::guest::CrossToolchain::new(&recorded.triple);
+            let mut toolchain = if recorded.native {
+                rpmx_core::guest::CrossToolchain::native(&recorded.triple)
+            } else {
+                rpmx_core::guest::CrossToolchain::new(&recorded.triple)
+            };
             toolchain.cflags = recorded.cflags.clone();
             toolchain.cxxflags = recorded.cxxflags.clone();
             toolchain.ldflags = recorded.ldflags.clone();
@@ -337,13 +368,29 @@ pub(super) fn prepare(
         _ => (None, None, None),
     };
 
+    let replaced = if request.replace_root_lock {
+        let root = replaced_root.as_ref().map(lock_identity);
+        let cross = replaced_sysroot.as_ref().map(lock_identity);
+        if root.is_none() && cross.is_none() {
+            None
+        } else {
+            Some(rpmx_core::srpm::ReplacedLock { root, cross })
+        }
+    } else {
+        None
+    };
+
+    let recipe = bundle.recipe.clone();
     Ok(RebuildState {
         work,
         extracted,
         package_lock,
         bundled,
-        recipe: bundle.recipe,
+        bundle,
+        recipe,
+        plan,
         cell: selected_cell,
+        pipelines,
         build,
         stage,
         active_lock,
@@ -357,5 +404,14 @@ pub(super) fn prepare(
         cross,
         sysroot_lock,
         target: target_arch,
+        replaced,
     })
+}
+
+fn lock_identity(lock: &rpmx_core::root::RootLock) -> rpmx_core::srpm::LockIdentity {
+    rpmx_core::srpm::LockIdentity {
+        closure_digest: lock.closure_digest.clone(),
+        root_digest: lock.root_digest.clone(),
+        profile: Some(lock.profile.clone()),
+    }
 }

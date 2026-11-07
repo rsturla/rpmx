@@ -1,0 +1,36 @@
+document: rpmx-bootstrap
+version: 1
+name: eternal
+archs: [x86_64]
+recipe-root: recipes
+roots: roots
+locks: locks
+source-date-epoch: 1704067200
+max-iterations: 3
+
+seed:
+  name: fedora-44
+  image: registry.fedoraproject.org/fedora:44
+  releasever: "44"
+  generation: "2026.01"
+
+stages:
+  - name: stage0
+    profile: profiles/seed.profile.yaml
+    packages: [filesystem, binutils, glibc, gcc, make, bash]
+    output: out/stage0
+    seed: true
+    extra-tools: [python3, texinfo]
+    extra-sysroot: []
+
+  - name: stage1
+    profile: profiles/stage1.profile.yaml
+    packages: [filesystem, binutils, glibc, gcc, make, bash]
+    output: out/stage1
+    fixed-point: [binutils, glibc, gcc]
+
+  - name: stage2
+    profile: profiles/final.profile.yaml
+    packages: all
+    output: out
+    fixed-point: [binutils, glibc, gcc]

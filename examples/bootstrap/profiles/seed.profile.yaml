@@ -1,0 +1,15 @@
+document: rpmx-profile
+version: 1
+name: bootstrap-seed
+releasever: "44"
+archs: [x86_64]
+repositories:
+  - id: seed
+    baseurl: https://example.invalid/seed
+packages:
+  install: [glibc, glibc-devel]
+cross:
+  host: x86_64
+  bootstrap: true
+  triple: x86_64-linux-gnu
+  packages: [bash, coreutils, gcc, make, python3]

@@ -59,14 +59,29 @@ pub struct RebuildRequest<'a> {
     pub test_root_lock: Option<&'a Path>,
     pub signing: &'a OptionalSigningArgs,
     pub quiet: bool,
+    /// Skip the embedded-lock comparison and record the old roots in the new
+    /// SRPM. Only the bootstrap rebuild path sets this.
+    pub replace_root_lock: bool,
+    /// Write a replacement SRPM here after the binary rebuild.
+    pub srpm_out: Option<&'a Path>,
 }
 
 pub struct RebuildOutput {
     pub rpms: Vec<PathBuf>,
+    pub srpms: Vec<PathBuf>,
     pub evidence: Vec<PathBuf>,
 }
 
 pub fn run(args: RebuildArgs) -> Result<Vec<PathBuf>, Error> {
+    run_with(args, false, None).map(|output| output.rpms)
+}
+
+/// Run a rebuild with the bootstrap replacement semantics.
+pub fn run_with(
+    args: RebuildArgs,
+    replace_root_lock: bool,
+    srpm_out: Option<&Path>,
+) -> Result<RebuildOutput, Error> {
     if let Some(path) = args.junit.as_deref() {
         let _ = std::fs::remove_file(path);
     }
@@ -116,8 +131,9 @@ pub fn run(args: RebuildArgs) -> Result<Vec<PathBuf>, Error> {
         test_root_lock: args.test_root_lock.as_deref(),
         signing: &args.signing,
         quiet: args.quiet,
+        replace_root_lock,
+        srpm_out,
     })
-    .map(|output| output.rpms)
 }
 
 pub fn execute(request: RebuildRequest<'_>) -> Result<RebuildOutput, Error> {
@@ -147,6 +163,10 @@ pub fn execute(request: RebuildRequest<'_>) -> Result<RebuildOutput, Error> {
         cross,
         sysroot_lock,
         target,
+        bundle,
+        plan,
+        pipelines,
+        replaced,
     } = state;
     let output = request.output.to_path_buf();
     let run_tests = request.run_tests;
@@ -476,10 +496,33 @@ pub fn execute(request: RebuildRequest<'_>) -> Result<RebuildOutput, Error> {
             repository.push(signature);
         }
     }
+    let srpms = if let Some(srpm_out) = request.srpm_out {
+        write_replacement_srpm(
+            srpm_out,
+            request.file,
+            work.path(),
+            &bundle,
+            &plan,
+            &pipelines,
+            &bundled,
+            active_lock.as_ref(),
+            sysroot_lock.as_ref(),
+            effective_cross,
+            &replaced,
+            sbom_enabled,
+            extracted.source_date_epoch,
+            signing.as_ref(),
+            signature_timestamp,
+        )?
+    } else {
+        Vec::new()
+    };
+
     report::print_artifacts(
         quiet,
         json,
         &written,
+        &srpms,
         &evidence,
         &repository,
         signing.as_ref().map(|key| key.fingerprint()),
@@ -490,7 +533,7 @@ pub fn execute(request: RebuildRequest<'_>) -> Result<RebuildOutput, Error> {
             format!(
                 "{} in {} · {}",
                 rpmx_core::output::count(
-                    written.len() + evidence.len() + repository.len(),
+                    written.len() + srpms.len() + evidence.len() + repository.len(),
                     "artifact",
                     "artifacts"
                 ),
@@ -501,6 +544,116 @@ pub fn execute(request: RebuildRequest<'_>) -> Result<RebuildOutput, Error> {
     }
     Ok(RebuildOutput {
         rpms: written,
+        srpms,
         evidence,
     })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn write_replacement_srpm(
+    output: &Path,
+    input: &Path,
+    work: &Path,
+    bundle: &rpmx_core::RecipeBundle,
+    plan: &rpmx_core::Plan,
+    pipelines: &Path,
+    bundled: &rpmx_core::components::Inventory,
+    root_lock: Option<&rpmx_core::root::RootLock>,
+    sysroot_lock: Option<&rpmx_core::root::RootLock>,
+    cross: Option<&rpmx_core::guest::CrossToolchain>,
+    replaced: &Option<rpmx_core::srpm::ReplacedLock>,
+    sbom: bool,
+    source_date_epoch: u32,
+    signing: Option<&rpmx_rpm::sign::SigningKey>,
+    timestamp: Option<u32>,
+) -> Result<Vec<PathBuf>, Error> {
+    // The build pipeline may have modified its workspace. Re-extract the
+    // original snapshot so the replacement SRPM carries pristine sources.
+    let sources = work.join("srpm-source");
+    let snapshot = work.join("RPMX-SOURCE.tar.gz");
+    if sources.exists() {
+        std::fs::remove_dir_all(&sources).map_err(|error| {
+            Error::new(
+                codes::SRPM_002,
+                format!("cannot clear {}: {error}", sources.display()),
+            )
+        })?;
+    }
+    std::fs::create_dir_all(&sources).map_err(|error| {
+        Error::new(
+            codes::SRPM_002,
+            format!("cannot create {}: {error}", sources.display()),
+        )
+    })?;
+    if snapshot.exists() {
+        rpmx_core::source::unpack_snapshot(&snapshot, &sources)?;
+    }
+    // `prepare_source_packages` reads the inventory from the source tree and
+    // then excludes it from the source snapshot, exactly as the original SRPM
+    // writer did.
+    std::fs::write(
+        sources.join(rpmx_core::components::INVENTORY_FILE),
+        bundled.to_json()?,
+    )
+    .map_err(|error| {
+        Error::new(
+            codes::SRPM_002,
+            format!("cannot write the bundled inventory: {error}"),
+        )
+    })?;
+    let recipe_bytes = bundle.root_file().bytes.clone();
+    let includes: Vec<rpmx_core::source_package::RecipeInclude> = bundle
+        .included_files()
+        .map(|file| rpmx_core::source_package::RecipeInclude {
+            name: file.name.clone(),
+            bytes: file.bytes.clone(),
+        })
+        .collect();
+    let packages = rpmx_core::source_package::prepare_source_packages(
+        rpmx_core::source_package::SourcePackageOptions {
+            recipe: &bundle.recipe,
+            plan,
+            recipe_bytes: &recipe_bytes,
+            recipe_digest: Some(bundle.digest()),
+            recipe_includes: &includes,
+            step_root: Some(pipelines),
+            sources: &sources,
+            source_date_epoch,
+            root_lock,
+            sysroot_lock,
+            cross,
+            sbom,
+            replaced: replaced.as_ref(),
+        },
+    )?;
+    std::fs::create_dir_all(output).map_err(|error| {
+        Error::new(
+            codes::SRPM_002,
+            format!("cannot create {}: {error}", output.display()),
+        )
+    })?;
+    let input = std::fs::canonicalize(input).ok();
+    let mut written = Vec::new();
+    for package in packages {
+        let path = output.join(format!(
+            "{}-{}-{}.src.rpm",
+            package.name, package.version, package.release
+        ));
+        if input.as_deref() == std::fs::canonicalize(&path).ok().as_deref() {
+            return Err(Error::new(
+                codes::SRPM_002,
+                format!(
+                    "refusing to overwrite the input SRPM {}; choose a different --srpm-out",
+                    input
+                        .as_deref()
+                        .unwrap_or(input.as_deref().unwrap_or(Path::new("")))
+                        .display()
+                ),
+            ));
+        }
+        let path = crate::commands::emit::source(&package, output, signing, timestamp)?;
+        rpmx_core::output::wrote(&path);
+        written.push(path);
+    }
+    Ok(written)
 }

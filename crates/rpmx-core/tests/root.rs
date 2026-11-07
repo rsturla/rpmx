@@ -29,6 +29,7 @@ fn repository() -> Repository {
         mirrorlist: None,
         gpgkey: None,
         repo_gpgcheck: false,
+        exclude: Vec::new(),
         auth: None,
     }
 }
@@ -56,6 +57,9 @@ fn lock() -> RootLock {
         closure_digest: digest,
         root_digest: None,
         builder: None,
+        seed: None,
+        generation: None,
+        requirement: None,
     }
 }
 

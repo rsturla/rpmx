@@ -1,0 +1,13 @@
+schema: 1
+package:
+  name: gcc
+  version: "1.0"
+  release: 1
+  summary: C and C++ compiler.
+  license: MIT
+build:
+  dependencies:
+    tools: [glibc]
+outputs:
+  - name: gcc
+    metapackage: true
