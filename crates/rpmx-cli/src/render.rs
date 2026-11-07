@@ -74,6 +74,17 @@ pub fn bootstrap_plan(plan: &BootstrapPlan) {
         if !stage.fixed_point.is_empty() {
             println!("  fixed  {}", stage.fixed_point.join(", "));
         }
+        if !stage.replaces.is_empty() {
+            println!(
+                "  replace {}",
+                stage
+                    .replaces
+                    .iter()
+                    .map(|(package, seeds)| format!("{package} -> {}", seeds.join(", ")))
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            );
+        }
         println!("  order  {}", stage.order.join(", "));
     }
     if let Some(stage) = plan.stages.first() {
