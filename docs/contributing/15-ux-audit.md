@@ -695,7 +695,7 @@ packages 209 (bash, coreutils, gcc, make, ...)
 
 **Acceptance.**
 
-- From a clean checkout with no profile flags:
+- From a clean checkout with no package-owned compiler policy:
   `rpmx build examples/zstd/package.yaml` succeeds.
 - Adding `strace` to `build.dependencies.tools` changes the resolved root
   requirement digest and installs `strace` on the next build.

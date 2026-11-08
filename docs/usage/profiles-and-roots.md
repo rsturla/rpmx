@@ -27,10 +27,6 @@ options:
 paths:
   prefix: /usr
   libdir: /usr/lib64
-flags:
-  cflags: [-O2, -g, -fstack-protector-strong]
-  cxxflags: [-O2, -g, -fstack-protector-strong]
-  ldflags: [-Wl,-z,relro,-z,now]
 sbom: true
 ```
 
@@ -42,39 +38,26 @@ and `paths.libdir` set the install layout: the executor exports them as
 records them in the root lock. `libdir` must be inside `prefix`. Module streams
 and `reinstall` are rejected today.
 
-`flags.cflags`, `flags.cxxflags` and `flags.ldflags` are the distribution's
-toolchain flags. They apply to native and cross builds and are exported as
-`CFLAGS`, `CXXFLAGS` and `LDFLAGS` before a recipe's own values. A recipe can
-add flags through `build.environment`, or remove exact flags it cannot compile
-with through `build.flags.exclude`. The resolved set, including any
-exclusions, is recorded in the package lock and SRPM, so an exception is
-visible rather than a silent weakening of the profile's hardening.
-`flags.arch` adds flags for one target, which keeps x86-only options such as
-`-fcf-protection` out of an aarch64 build:
-
-```yaml
-flags:
-  cflags: [-O2, -fstack-protector-strong]
-  ldflags: [-Wl,-z,relro,-z,now]
-  arch:
-    x86_64:
-      cflags: [-fcf-protection=full]
-    aarch64:
-      cflags: [-mbranch-protection=standard]
-```
-
-The resolved flags are recorded in the package lock and the SRPM, so
-`rpmx rebuild` reproduces them without the profile.
+A profile does not contain compiler or linker flags. Distribution build
+policy belongs in a package in the root: the package installs compiler specs
+or wrapper scripts, and every build that installs it inherits that policy.
+This keeps the profile a description of *where packages come from and which
+ones are installed*, not a second place where hardening or optimisation is
+configured. Cross-only toolchain quirks still live in `cross.cflags`,
+`cross.cxxflags` and `cross.ldflags`.
 
 ### Local repositories
 
-`baseurl` may point at a host directory:
+`baseurl` may point at a host directory. A `file://` path may be absolute, or
+relative to the profile file; rpmx resolves it when it loads the profile:
 
 ```yaml
 repositories:
   - id: local
     baseurl: file:///srv/rpmx/packages
     gpgkey: file:///srv/rpmx/keys/repo.asc
+  - id: toolchain
+    baseurl: file://../.work/toolchain-repo
 ```
 
 rpmx mounts the directory read-only into the resolver container and rewrites

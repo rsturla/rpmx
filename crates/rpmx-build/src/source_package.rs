@@ -33,8 +33,6 @@ pub struct SourcePackageOptions<'a> {
     pub sysroot_lock: Option<&'a RootLock>,
     /// Toolchain a cross build used, recorded so rebuild needs no profile.
     pub cross: Option<&'a CrossToolchain>,
-    /// Distribution flags every step saw, recorded so rebuild reproduces them.
-    pub flags: Option<&'a rpmx_base::guest::BuildFlags>,
     pub sbom: bool,
     /// Old root identities replaced by a bootstrap rebuild.
     pub replaced: Option<&'a srpm::ReplacedLock>,
@@ -151,7 +149,6 @@ pub fn prepare_source_packages(
             srpm::LockBuildRef {
                 root_lock: lock_root,
                 cross: cross.as_ref(),
-                flags: options.flags,
                 build: &build,
                 replaced: options.replaced,
             },

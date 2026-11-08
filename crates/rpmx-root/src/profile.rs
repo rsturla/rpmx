@@ -1,5 +1,3 @@
-use std::collections::BTreeMap;
-
 use serde::{Deserialize, Serialize};
 
 use rpmx_base::error::{codes, Error, Result};
@@ -41,9 +39,6 @@ pub struct Profile {
     /// Install layout used by every step in this build.
     #[serde(default)]
     pub paths: Paths,
-    /// Distribution toolchain flags. They apply to native and cross builds.
-    #[serde(default, skip_serializing_if = "Flags::is_empty")]
-    pub flags: Flags,
     /// Emit SPDX SBOMs (per package and build-level) with each build.
     #[serde(default = "default_sbom")]
     pub sbom: bool,
@@ -67,129 +62,6 @@ impl Default for Paths {
             libdir: default_libdir(),
         }
     }
-}
-
-/// Toolchain flags a profile applies to every build.
-///
-/// `cflags`, `cxxflags` and `ldflags` are common to every architecture. The
-/// `arch` map adds flags for one target, which is how a distribution applies
-/// x86-only hardening such as `-fcf-protection` without breaking aarch64.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Flags {
-    #[serde(default)]
-    pub cflags: Vec<String>,
-    #[serde(default)]
-    pub cxxflags: Vec<String>,
-    #[serde(default)]
-    pub ldflags: Vec<String>,
-    #[serde(default)]
-    pub arch: BTreeMap<String, ArchFlags>,
-}
-
-/// Architecture-specific additions to a profile's [`Flags`].
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ArchFlags {
-    #[serde(default)]
-    pub cflags: Vec<String>,
-    #[serde(default)]
-    pub cxxflags: Vec<String>,
-    #[serde(default)]
-    pub ldflags: Vec<String>,
-}
-
-impl Flags {
-    pub fn is_empty(&self) -> bool {
-        self.cflags.is_empty()
-            && self.cxxflags.is_empty()
-            && self.ldflags.is_empty()
-            && self.arch.is_empty()
-    }
-
-    /// Resolve the common flags plus the selected target's additions.
-    ///
-    /// The profile has already been reduced to one target by `for_target`, so
-    /// the caller passes the canonical architecture name.
-    pub fn for_arch(&self, arch: &str) -> rpmx_base::guest::BuildFlags {
-        let mut resolved = rpmx_base::guest::BuildFlags {
-            cflags: self.cflags.clone(),
-            cxxflags: self.cxxflags.clone(),
-            ldflags: self.ldflags.clone(),
-        };
-        let Some(extra) = self
-            .arch
-            .iter()
-            .find_map(|(name, extra)| (normalize_arch(name).ok() == Some(arch)).then_some(extra))
-        else {
-            return resolved;
-        };
-        resolved.cflags.extend(extra.cflags.iter().cloned());
-        resolved.cxxflags.extend(extra.cxxflags.iter().cloned());
-        resolved.ldflags.extend(extra.ldflags.iter().cloned());
-        resolved
-    }
-
-    fn validate(&self, archs: &[String]) -> Result<()> {
-        for (field, flags) in [
-            ("flags.cflags", &self.cflags),
-            ("flags.cxxflags", &self.cxxflags),
-            ("flags.ldflags", &self.ldflags),
-        ] {
-            validate_flags(field, flags)?;
-        }
-        let allowed = archs
-            .iter()
-            .map(|arch| normalize_arch(arch))
-            .collect::<Result<Vec<_>>>()?;
-        let mut seen = std::collections::BTreeSet::new();
-        for (name, extra) in &self.arch {
-            let arch = normalize_arch(name).map_err(|error| {
-                Error::new(
-                    codes::ROOT_006,
-                    format!(
-                        "flags.arch names an invalid architecture '{name}': {}",
-                        error.message
-                    ),
-                )
-            })?;
-            if !allowed.contains(&arch) {
-                return Err(Error::new(
-                    codes::ROOT_006,
-                    format!(
-                        "flags.arch names {arch}, which this profile does not build; expected one of {}",
-                        archs.join(", ")
-                    ),
-                ));
-            }
-            if !seen.insert(arch) {
-                return Err(Error::new(
-                    codes::ROOT_006,
-                    format!("flags.arch names {arch} more than once"),
-                ));
-            }
-            for (field, flags) in [
-                ("flags.arch.cflags", &extra.cflags),
-                ("flags.arch.cxxflags", &extra.cxxflags),
-                ("flags.arch.ldflags", &extra.ldflags),
-            ] {
-                validate_flags(field, flags)?;
-            }
-        }
-        Ok(())
-    }
-}
-
-fn validate_flags(field: &str, flags: &[String]) -> Result<()> {
-    for flag in flags {
-        if flag.trim().is_empty() {
-            return Err(Error::new(
-                codes::ROOT_006,
-                format!("{field} must not contain an empty flag"),
-            ));
-        }
-    }
-    Ok(())
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -329,7 +201,65 @@ pub fn load_profile(path: &std::path::Path) -> Result<Profile> {
             format!("cannot read profile {}: {error}", path.display()),
         )
     })?;
-    parse_profile(&text)
+    let mut profile = parse_profile(&text)?;
+    profile.resolve_local_paths(path)?;
+    Ok(profile)
+}
+
+impl Profile {
+    /// Resolve `file://` repository paths relative to the profile.
+    ///
+    /// A profile is often checked out with a local bootstrap repository next to
+    /// it. Absolute host paths do not survive a CI checkout, so a relative
+    /// `file://` path is anchored at the profile's directory and stored as the
+    /// absolute path the resolver mounts.
+    fn resolve_local_paths(&mut self, profile: &std::path::Path) -> Result<()> {
+        let profile = std::fs::canonicalize(profile).map_err(|error| {
+            Error::new(
+                codes::ROOT_006,
+                format!("cannot resolve profile {}: {error}", profile.display()),
+            )
+        })?;
+        let directory = profile
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new("."));
+        for repository in &mut self.repositories {
+            for (field, value) in [
+                ("baseurl", &mut repository.baseurl),
+                ("gpgkey", &mut repository.gpgkey),
+            ] {
+                if let Some(url) = value.as_deref() {
+                    if let Some(relative) = relative_local_path(url) {
+                        let joined = directory.join(relative);
+                        // The repository may be produced by a bootstrap step
+                        // after the profile is parsed (lint, plan, and the
+                        // toolchain build all load it first). Resolve the path
+                        // now, but leave the existence check to the resolver.
+                        let resolved = std::fs::canonicalize(&joined)
+                            .or_else(|_| std::path::absolute(&joined))
+                            .map_err(|error| {
+                                Error::new(
+                                    codes::ROOT_006,
+                                    format!(
+                                        "repository '{}' {field} resolves to {}: {error}",
+                                        repository.id,
+                                        joined.display()
+                                    ),
+                                )
+                            })?;
+                        *value = Some(format!("file://{}", resolved.display()));
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+fn relative_local_path(value: &str) -> Option<&std::path::Path> {
+    let path = value.strip_prefix("file://")?;
+    let path = std::path::Path::new(path);
+    (!path.is_absolute()).then_some(path)
 }
 
 impl Profile {
@@ -459,7 +389,6 @@ impl Profile {
                 "profile must install at least one package",
             ));
         }
-        self.flags.validate(&self.archs)?;
         self.validate_cross()?;
         if !self.packages.reinstall.is_empty() {
             return Err(Error::new(
@@ -863,7 +792,7 @@ pub fn normalize_arch(arch: &str) -> Result<&'static str> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_profile;
+    use super::{load_profile, parse_profile};
     use rpmx_base::error::codes;
 
     fn profile(id: &str) -> String {
@@ -880,6 +809,41 @@ packages:
   install: [bash]
 "#
         )
+    }
+
+    #[test]
+    fn a_relative_local_repository_is_resolved_against_the_profile() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let profile_dir = directory.path().join("profiles");
+        let repository = directory.path().join("toolchain");
+        std::fs::create_dir_all(&profile_dir).expect("profile dir");
+        std::fs::create_dir_all(&repository).expect("repository");
+        let path = profile_dir.join("bootstrap.yaml");
+        let text =
+            profile("toolchain").replace("https://example.invalid/fedora", "file://../toolchain");
+        std::fs::write(&path, text).expect("profile");
+
+        let loaded = load_profile(&path).expect("profile");
+        assert_eq!(
+            loaded.repositories[0].baseurl,
+            Some(format!(
+                "file://{}",
+                repository.canonicalize().unwrap().display()
+            ))
+        );
+    }
+
+    #[test]
+    fn a_missing_relative_repository_is_left_for_the_resolver() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let path = directory.path().join("bootstrap.yaml");
+        let text =
+            profile("toolchain").replace("https://example.invalid/fedora", "file://../missing");
+        std::fs::write(&path, text).expect("profile");
+
+        let loaded = load_profile(&path).expect("profile");
+        let baseurl = loaded.repositories[0].baseurl.as_deref().expect("baseurl");
+        assert!(baseurl.ends_with("/missing"), "{baseurl}");
     }
 
     #[test]
@@ -929,44 +893,6 @@ packages:
         let profile = parse_profile(&text).expect("valid profile");
         assert_eq!(profile.paths.prefix, "/opt");
         assert_eq!(profile.paths.libdir, "/opt/lib");
-    }
-
-    #[test]
-    fn profile_flags_are_common_per_arch_and_resolved_for_one_target() {
-        let text = profile("base").replace(
-            "packages:",
-            "flags:\n  cflags: [-O2, -fstack-protector-strong]\n  ldflags: [\"-Wl,-z,relro\"]\n  arch:\n    x86_64:\n      cflags: [-fcf-protection=full]\npackages:",
-        );
-        let profile = parse_profile(&text).expect("valid flags");
-        let flags = profile.flags.for_arch(profile.arch());
-        assert_eq!(
-            flags.cflags,
-            vec!["-O2", "-fstack-protector-strong", "-fcf-protection=full"]
-        );
-        assert_eq!(flags.ldflags, vec!["-Wl,-z,relro"]);
-        assert!(flags.cxxflags.is_empty());
-    }
-
-    #[test]
-    fn flags_for_an_architecture_the_profile_does_not_build_are_rejected() {
-        let text = profile("base").replace(
-            "packages:",
-            "flags:\n  arch:\n    aarch64:\n      cflags: [-mbranch-protection=standard]\npackages:",
-        );
-        let error = parse_profile(&text).expect_err("wrong arch");
-        assert_eq!(error.code, codes::ROOT_006);
-        assert!(
-            error.message.contains("does not build"),
-            "{}",
-            error.message
-        );
-    }
-
-    #[test]
-    fn an_empty_flag_is_rejected() {
-        let text = profile("base").replace("packages:", "flags:\n  cflags: [\" \"]\npackages:");
-        let error = parse_profile(&text).expect_err("empty flag");
-        assert_eq!(error.code, codes::ROOT_006);
     }
 
     #[test]

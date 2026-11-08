@@ -37,10 +37,6 @@ pub struct PackageLock {
     /// half of what the build linked against.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sysroot: Option<LockedRoot>,
-    /// Toolchain flags the build applies. Changing a distribution's hardening
-    /// policy is a build-input change, so `--locked` must see it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub flags: Option<rpmx_core::guest::BuildFlags>,
     pub sources: Vec<LockedSource>,
     pub cells: Vec<LockedCell>,
 }
@@ -293,7 +289,7 @@ pub fn build(
     active_root: Option<&rpmx_core::root::RootLock>,
     active_sysroot: Option<&rpmx_core::root::RootLock>,
 ) -> Result<PackageLock, Error> {
-    let (root, sysroot, flags) =
+    let (root, sysroot) =
         match autoroot::requirement(&bundle.recipe, plan, &bundle.root, profile, arch)? {
             Some(requirement) => {
                 let resolved = active_root
@@ -318,8 +314,7 @@ pub fn build(
                         root_digest: resolved.as_ref().and_then(|lock| lock.root_digest.clone()),
                     }
                 });
-                let flags = (!requirement.flags.is_empty()).then(|| requirement.flags.clone());
-                (Some(root), sysroot, flags)
+                (Some(root), sysroot)
             }
             // An explicitly supplied root is a lock input even when the recipe
             // does not describe one.
@@ -331,7 +326,6 @@ pub fn build(
                     closure_digest: Some(lock.closure_digest.clone()),
                     root_digest: lock.root_digest.clone(),
                 }),
-                None,
                 None,
             ),
         };
@@ -395,7 +389,6 @@ pub fn build(
         },
         root,
         sysroot,
-        flags,
         sources: bundle
             .recipe
             .sources
@@ -515,9 +508,6 @@ fn differences(old: &PackageLock, new: &PackageLock) -> String {
     }
     if old.sysroot != new.sysroot {
         fields.push("sysroot");
-    }
-    if old.flags != new.flags {
-        fields.push("flags");
     }
     if old.sources != new.sources {
         fields.push("sources");

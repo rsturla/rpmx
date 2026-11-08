@@ -1,0 +1,97 @@
+name: test/compiler-hardening-check
+version: 1
+summary: Check that a compiler wrapper produces hardened executables
+inputs:
+  cc:
+    type: string
+    default: cc
+needs:
+  tools: [bash, binutils, coreutils, findutils, gcc, grep, sed]
+run:
+  runs: |
+    set -eu
+    work=$(mktemp -d)
+    trap 'rm -rf "$work"' EXIT
+    cd "$work"
+
+    cat > hello.c <<'EOF'
+    #include <stdio.h>
+    #include <string.h>
+
+    int main(int argc, char **argv) {
+        char buffer[4096];
+        strcpy(buffer, argc > 1 ? argv[1] : "hardening");
+        puts(buffer);
+        return 0;
+    }
+    EOF
+
+    cc="${inputs.cc}"
+    : "${CFLAGS:=}"
+    : "${LDFLAGS:=}"
+    failures=0
+    fail() {
+      echo "compiler-hardening-check: $1" >&2
+      failures=$((failures + 1))
+    }
+
+    check_common() {
+      file=$1
+      type=$(readelf -h "$file" | sed -n 's/^[[:space:]]*Type:[[:space:]]*//p')
+      case "$type" in
+        *DYN*) ;;
+        *) fail "$file is not position-independent ($type)" ;;
+      esac
+      if ! readelf -lW "$file" | grep -q 'GNU_STACK'; then
+        fail "$file has no GNU_STACK program header"
+      elif readelf -lW "$file" | grep -q 'GNU_STACK.*RWE'; then
+        fail "$file has an executable stack"
+      fi
+      if ! readelf -lW "$file" | grep -q 'GNU_RELRO'; then
+        fail "$file has no GNU_RELRO segment"
+      fi
+      if ! readelf -dW "$file" | grep -Eq 'BIND_NOW|FLAGS(_1)?[^:]*NOW'; then
+        fail "$file is not linked with BIND_NOW"
+      fi
+      case "$RPMX_TARGET_ARCH" in
+        x86_64)
+          if ! readelf -nW "$file" | grep -q 'IBT'; then
+            fail "$file has no x86 IBT property"
+          fi
+          if ! readelf -nW "$file" | grep -q 'SHSTK'; then
+            fail "$file has no x86 SHSTK property"
+          fi
+          ;;
+        aarch64)
+          if ! readelf -nW "$file" | grep -q 'BTI'; then
+            fail "$file has no aarch64 BTI property"
+          fi
+          ;;
+      esac
+      if ! readelf -nW "$file" | grep -q 'Build ID:'; then
+        fail "$file has no build ID note"
+      fi
+    }
+
+    # The wrapper must harden a normal executable. The stack buffer and the
+    # strcpy call make both the stack protector and fortify observable.
+    $cc $CFLAGS -O2 -o hello hello.c $LDFLAGS
+    check_common hello
+    if ! readelf -sW hello | grep -q '__stack_chk_fail'; then
+      fail "hello has no stack-protector reference"
+    fi
+    if ! readelf -sW hello | grep -Eq '__[[:alnum:]_]+_chk(@|$)'; then
+      fail "hello has no fortified libc reference"
+    fi
+
+    # A shared library must still link. This catches an unconditional -pie in
+    # LDFLAGS, which turns a -shared link into an executable link.
+    printf 'int compiler_hardening_probe;\n' > shared.c
+    $cc $CFLAGS -fPIC -shared -o libprobe.so shared.c $LDFLAGS
+    check_common libprobe.so
+
+    if [ "$failures" -ne 0 ]; then
+      echo "compiler-hardening-check: $failures failure(s) for $cc" >&2
+      exit 1
+    fi
+    echo "compiler-hardening-check: $cc produced hardened executables and shared libraries"

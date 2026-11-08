@@ -5,14 +5,11 @@ does not promise a stable schema or CLI yet.
 
 ## Unreleased
 
-- Profiles can declare `flags.cflags`, `flags.cxxflags` and `flags.ldflags`,
-  with optional per-architecture additions under `flags.arch`. The sandbox
-  exports them for native and cross builds, a recipe's own values extend them,
-  and the package lock and SRPM record the resolved flags so `rpmx rebuild`
-  reproduces them without the profile. A recipe can remove exact flags it
-  cannot compile with through `build.flags.exclude`; the exclusion runs after
-  the profile and architecture flags are merged, and the resolved set still
-  lands in the lock and SRPM.
+- **Breaking:** profiles no longer accept `flags` and recipes no longer accept
+  `build.flags`. Distribution compiler and linker policy is package-owned:
+  install the package that supplies the compiler specs or wrapper scripts in
+  the build root. `cross.cflags`, `cross.cxxflags` and `cross.ldflags` remain
+  for cross-only toolchain quirks.
 
 - `source-date-epoch` is no longer required in every recipe. When it is omitted,
   rpmx uses the newest mtime from the source archives, or the pinned git commit
@@ -29,6 +26,13 @@ does not promise a stable schema or CLI yet.
   PIE, NX, RELRO, BIND_NOW, stack protector, fortified libc, the target's
   CFI/branch-protection property and build IDs. `paths` narrows the scan and
   `skip` disables individual checks where the package cannot satisfy them.
+- Added `test/compiler-hardening-check`, which compiles a probe with the
+  configured compiler wrapper, checks the resulting executable's hardening
+  properties, and verifies that a shared-library link still succeeds. It is
+  meant for compiler-options packages such as `openssf-compiler-options`.
+- A profile's local `file://` repository and key paths may be relative to the
+  profile file. `load_profile` anchors them at the profile directory, so a
+  checked-out bootstrap repository works without an absolute CI path.
 
 - Source fetches use separate resolve, connect, response, read and body
   timeouts instead of one 60-second request budget. Transport failures retry

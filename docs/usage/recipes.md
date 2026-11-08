@@ -179,27 +179,23 @@ available in `files.include` and `files.exclude`:
 `tools` entries are **package names**, not command names. Use `bash` rather
 than `sh`, `gcc` rather than `cc`.
 
-#### Toolchain flag exceptions
+#### Compiler policy
 
-A profile supplies the distribution's `CFLAGS`, `CXXFLAGS` and `LDFLAGS`.
-When a package genuinely cannot compile with one of those flags, name the
-exact string under `build.flags.exclude`:
+A recipe does not remove or replace distribution build flags. Compiler
+hardening, optimisation and the target ISA baseline are installed by a
+package in the build root, usually as compiler specs or wrapper scripts. A
+recipe that must opt out sets the package's documented environment variable,
+for example:
 
 ```yaml
 build:
-  flags:
-    exclude:
-      - -fzero-init-padding-bits=all
+  environment:
+    GCC_SPEC_FILE: no-hardening.spec
 ```
 
-The exclusion runs after the profile's common and architecture-specific flags
-are merged, and before the recipe's own `environment` values are appended. It
-removes the exact string from all three lists. Use it narrowly: prefer a
-compiler option that disables one behaviour; exclude the flag only when the
-compiler or source cannot parse it.
-
-Because exclusions are resolved into the package lock and SRPM, `rpmx rebuild`
-reproduces both the profile and the exception without the original checkout.
+Because the policy package is part of the root closure, it is recorded in the
+root lock, the package lock and the SRPM. `rpmx rebuild` therefore reproduces
+the same compiler policy without the original checkout.
 
 ### 5.3 Build dependencies
 
@@ -599,7 +595,7 @@ The step writes `$PREFIX/lib/debug/<path>.debug`, strips the binary and adds
 always a missing `-g`, so an opt-in cannot silently produce an empty package.
 Packages with no ELF (noarch, metapackages) omit both the step and the output.
 The step uses `$OBJCOPY`/`$STRIP`, so it keeps working in a cross build; a
-recipe's `CFLAGS` extend the profile's flags rather than replacing them.
+recipe's `CFLAGS` extend the cross flags rather than replacing them.
 
 ### 5.9 Tests
 
@@ -694,6 +690,24 @@ Use this for packages whose output should carry the full profile. It is not a
 distro-wide gate: packages with hand-written assembly, static binaries or
 language runtimes may legitimately need a skip, and a noarch package has no ELF
 to check.
+
+`test/compiler-hardening-check` is the companion for a package that supplies a
+compiler wrapper or spec. It compiles an executable and a shared object through
+the configured `cc`, then checks the resulting ELF properties:
+
+```yaml
+tests:
+  - name: compiler
+    stage: installed
+    pipeline:
+      - uses: test/compiler-hardening-check
+        with:
+          cc: gcc-13
+```
+
+The shared-object step matters: a wrapper that appends `-pie` to every link
+will fail a `-shared` link, while a wrapper that reads the link mode from a GCC
+spec can add `-pie` only to executables.
 - `test.environment.contents.packages` lists packages installed only for that
   test's root. This mirrors Wolfi/melange test environments. Tests with the
   same output and package set share a root; a different set gets a separate

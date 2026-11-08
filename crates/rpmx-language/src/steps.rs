@@ -138,6 +138,10 @@ const BUILTINS: &[(&str, &str)] = &[
         "test/hardening-check",
         include_str!("../pipelines/test/hardening-check.yaml"),
     ),
+    (
+        "test/compiler-hardening-check",
+        include_str!("../pipelines/test/compiler-hardening-check.yaml"),
+    ),
     ("make", include_str!("../pipelines/make.yaml")),
     ("make/build", include_str!("../pipelines/make/build.yaml")),
     ("make/check", include_str!("../pipelines/make/check.yaml")),

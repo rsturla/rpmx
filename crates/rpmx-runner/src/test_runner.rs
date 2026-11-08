@@ -21,7 +21,6 @@ pub struct TestSandboxConfig<'a> {
     pub timeout: NonZeroU64,
     pub prefix: &'a str,
     pub libdir: &'a str,
-    pub flags: Option<&'a rpmx_base::guest::BuildFlags>,
 }
 
 /// Run build-stage tests in the build sandbox, then installed-stage tests in a
@@ -70,7 +69,6 @@ pub fn run_planned_tests(
         target: settings.target_arch,
         sysroot: None,
         cross: None,
-        flags: settings.flags,
         workspace: settings.workspace,
         stage: settings.stage,
         root: Some(root),
