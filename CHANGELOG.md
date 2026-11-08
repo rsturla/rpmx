@@ -9,7 +9,10 @@ does not promise a stable schema or CLI yet.
   with optional per-architecture additions under `flags.arch`. The sandbox
   exports them for native and cross builds, a recipe's own values extend them,
   and the package lock and SRPM record the resolved flags so `rpmx rebuild`
-  reproduces them without the profile.
+  reproduces them without the profile. A recipe can remove exact flags it
+  cannot compile with through `build.flags.exclude`; the exclusion runs after
+  the profile and architecture flags are merged, and the resolved set still
+  lands in the lock and SRPM.
 
 - `source-date-epoch` is no longer required in every recipe. When it is omitted,
   rpmx uses the newest mtime from the source archives, or the pinned git commit

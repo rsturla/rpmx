@@ -179,6 +179,28 @@ available in `files.include` and `files.exclude`:
 `tools` entries are **package names**, not command names. Use `bash` rather
 than `sh`, `gcc` rather than `cc`.
 
+#### Toolchain flag exceptions
+
+A profile supplies the distribution's `CFLAGS`, `CXXFLAGS` and `LDFLAGS`.
+When a package genuinely cannot compile with one of those flags, name the
+exact string under `build.flags.exclude`:
+
+```yaml
+build:
+  flags:
+    exclude:
+      - -fzero-init-padding-bits=all
+```
+
+The exclusion runs after the profile's common and architecture-specific flags
+are merged, and before the recipe's own `environment` values are appended. It
+removes the exact string from all three lists. Use it narrowly: prefer a
+compiler option that disables one behaviour; exclude the flag only when the
+compiler or source cannot parse it.
+
+Because exclusions are resolved into the package lock and SRPM, `rpmx rebuild`
+reproduces both the profile and the exception without the original checkout.
+
 ### 5.3 Build dependencies
 
 ```yaml

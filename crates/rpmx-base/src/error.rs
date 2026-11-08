@@ -280,6 +280,8 @@ pub mod codes {
         PLAN_011 = "RPMX-PLAN-011",
         /// A dist tag contains characters that are not allowed.
         PLAN_012 = "RPMX-PLAN-012",
+        /// A recipe declares an invalid toolchain flag override.
+        PLAN_013 = "RPMX-PLAN-013",
         /// Repository files cannot be read, created, copied, or written.
         REPO_001 = "RPMX-REPO-001",
         /// The repository input directory contains no RPM files.

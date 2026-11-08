@@ -45,8 +45,11 @@ and `reinstall` are rejected today.
 `flags.cflags`, `flags.cxxflags` and `flags.ldflags` are the distribution's
 toolchain flags. They apply to native and cross builds and are exported as
 `CFLAGS`, `CXXFLAGS` and `LDFLAGS` before a recipe's own values. A recipe can
-add flags but cannot silently remove the profile's hardening. `flags.arch`
-adds flags for one target, which keeps x86-only options such as
+add flags through `build.environment`, or remove exact flags it cannot compile
+with through `build.flags.exclude`. The resolved set, including any
+exclusions, is recorded in the package lock and SRPM, so an exception is
+visible rather than a silent weakening of the profile's hardening.
+`flags.arch` adds flags for one target, which keeps x86-only options such as
 `-fcf-protection` out of an aarch64 build:
 
 ```yaml
