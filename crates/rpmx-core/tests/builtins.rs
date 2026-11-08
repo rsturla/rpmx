@@ -117,6 +117,24 @@ outputs:
 }
 
 #[test]
+fn hardening_check_walks_the_stage_and_honours_skips() {
+    let plan = plan_with(
+        "    - uses: test/hardening-check\n      with:\n        paths: [\"/usr/bin/demo\"]\n        skip: [fortify]",
+    );
+    let step = &plan.cells[0].pipeline[0];
+    assert_eq!(step.command.as_deref(), Some("sh"));
+    let script = &step.args[1];
+    assert!(script.contains("readelf -h"), "{script}");
+    assert!(script.contains("GNU_RELRO"), "{script}");
+    assert!(script.contains("BIND_NOW"), "{script}");
+    assert!(script.contains("__stack_chk_fail"), "{script}");
+    assert!(script.contains("skip=\" fortify \""), "{script}");
+    assert!(script.contains("no fortified libc reference"), "{script}");
+    assert!(script.contains("ELF file(s) passed"), "{script}");
+    assert!(step.builtin);
+}
+
+#[test]
 fn debuginfo_keeps_debug_sections_and_fails_when_there_are_none() {
     let plan = plan_with("    - uses: debuginfo");
     let script = &plan.cells[0].pipeline[0].args[1];

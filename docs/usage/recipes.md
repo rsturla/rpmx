@@ -479,6 +479,8 @@ is what you want. `strip` is a step. `go/build`, `go/test`, `go/vendor`,
 `python/install-wheel` are also available. `license/copy` copies one or more
 license files into `$STAGE$PREFIX/share/licenses/<output>/` for each output, so
 a split package does not duplicate the loop or accidentally share one path.
+`test/hardening-check` checks the staged ELF files for PIE, NX, RELRO,
+BIND_NOW, stack protector, fortify, CFI/branch protection and build IDs.
 
 A named local step is a YAML file under `pipelines/`:
 
@@ -663,6 +665,35 @@ outputs:
   block; the same name may be reused by different outputs or matrix cells. A
   test name cannot contain `/`.
 - `--junit FILE` writes JUnit XML.
+
+#### Hardening check
+
+A package can assert that its staged ELF files carry the profile's hardening:
+
+```yaml
+tests:
+  - name: hardening
+    stage: build
+    pipeline:
+      - uses: test/hardening-check
+```
+
+The step walks all of `$STAGE` and fails if an executable or shared object is
+missing PIE, NX, RELRO, BIND_NOW, stack-protector, fortified libc, the target's
+CFI/branch-protection property, or a build ID. Narrow it with `paths` and opt
+out of individual checks with `skip`:
+
+```yaml
+      - uses: test/hardening-check
+        with:
+          paths: [/usr/bin/hello]
+          skip: [fortify, cf-protection]
+```
+
+Use this for packages whose output should carry the full profile. It is not a
+distro-wide gate: packages with hand-written assembly, static binaries or
+language runtimes may legitimately need a skip, and a noarch package has no ELF
+to check.
 - `test.environment.contents.packages` lists packages installed only for that
   test's root. This mirrors Wolfi/melange test environments. Tests with the
   same output and package set share a root; a different set gets a separate

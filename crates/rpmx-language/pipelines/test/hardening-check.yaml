@@ -1,0 +1,112 @@
+name: test/hardening-check
+version: 1
+summary: Check staged ELF files for the distribution hardening properties
+inputs:
+  paths:
+    type: list<string>
+    default: ["/"]
+  skip:
+    type: list<string>
+    default: []
+needs:
+  tools: [binutils, coreutils, findutils, grep, sed]
+run:
+  runs: |
+    set -eu
+    skip=" ${inputs.skip} "
+    enabled() {
+      case "$skip" in
+        *" $1 "*) return 1 ;;
+        *) return 0 ;;
+      esac
+    }
+    list=$(mktemp)
+    trap 'rm -f "$list"' EXIT
+    for path in ${inputs.paths}; do
+      tree="$STAGE$path"
+      [ -e "$tree" ] || continue
+      find "$tree" -type f >> "$list"
+    done
+    files=0
+    failures=0
+    filefail() {
+      echo "hardening-check: $rel: $1" >&2
+      failures=$((failures + 1))
+    }
+    while IFS= read -r file; do
+      if ! readelf -h "$file" >/dev/null 2>&1; then
+        continue
+      fi
+      type=$(readelf -h "$file" | sed -n 's/^[[:space:]]*Type:[[:space:]]*//p')
+      rel=${file#"$STAGE"}
+      case "$type" in
+        *DYN*|*EXEC*) ;;
+        *) continue ;;
+      esac
+      files=$((files + 1))
+
+      if enabled pie; then
+        case "$type" in
+          *EXEC*) filefail "not position-independent (ET_EXEC)" ;;
+        esac
+      fi
+      if enabled nx; then
+        if ! readelf -lW "$file" | grep -q 'GNU_STACK'; then
+          filefail "no GNU_STACK program header"
+        elif readelf -lW "$file" | grep -q 'GNU_STACK.*RWE'; then
+          filefail "executable stack"
+        fi
+      fi
+      if enabled relro; then
+        if ! readelf -lW "$file" | grep -q 'GNU_RELRO'; then
+          filefail "no GNU_RELRO segment"
+        fi
+      fi
+      if enabled bind-now; then
+        if ! readelf -dW "$file" | grep -Eq 'BIND_NOW|FLAGS(_1)?[^:]*NOW'; then
+          filefail "not linked with BIND_NOW"
+        fi
+      fi
+      if enabled stack-protector; then
+        if ! readelf -sW "$file" | grep -q '__stack_chk_fail'; then
+          filefail "no stack-protector reference"
+        fi
+      fi
+      if enabled fortify; then
+        if ! readelf -sW "$file" | grep -Eq '__[[:alnum:]_]+_chk(@|$)'; then
+          filefail "no fortified libc reference"
+        fi
+      fi
+      if enabled cf-protection; then
+        case "$RPMX_TARGET_ARCH" in
+          x86_64)
+            if ! readelf -nW "$file" | grep -q 'IBT'; then
+              filefail "no x86 IBT property"
+            fi
+            if ! readelf -nW "$file" | grep -q 'SHSTK'; then
+              filefail "no x86 SHSTK property"
+            fi
+            ;;
+          aarch64)
+            if ! readelf -nW "$file" | grep -q 'BTI'; then
+              filefail "no aarch64 BTI property"
+            fi
+            ;;
+        esac
+      fi
+      if enabled build-id; then
+        if ! readelf -nW "$file" | grep -q 'Build ID:'; then
+          filefail "no build ID note"
+        fi
+      fi
+    done < "$list"
+
+    if [ "$files" -eq 0 ]; then
+      echo "hardening-check: no ELF files found under ${inputs.paths}" >&2
+      exit 1
+    fi
+    if [ "$failures" -ne 0 ]; then
+      echo "hardening-check: $failures failure(s) across $files ELF file(s)" >&2
+      exit 1
+    fi
+    echo "hardening-check: $files ELF file(s) passed"

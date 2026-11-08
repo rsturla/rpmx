@@ -25,6 +25,10 @@ does not promise a stable schema or CLI yet.
   Build and check steps use the sandbox `$JOBS` instead of a hardcoded `-j1`.
 - Added `license/copy`, which installs per-output license copies under
   `$PREFIX/share/licenses/<output>/` without repeating a shell loop.
+- Added `test/hardening-check`, which walks the staged ELF files and checks
+  PIE, NX, RELRO, BIND_NOW, stack protector, fortified libc, the target's
+  CFI/branch-protection property and build IDs. `paths` narrows the scan and
+  `skip` disables individual checks where the package cannot satisfy them.
 
 - Source fetches use separate resolve, connect, response, read and body
   timeouts instead of one 60-second request budget. Transport failures retry
