@@ -433,10 +433,24 @@ rpmx steps list
 rpmx steps show cmake/configure
 ```
 
-Bundles such as `cmake`, `meson`, `autotools`, `make`, `python` expand to
-several steps. `strip` is a step. `go/build`, `go/test`, `go/vendor`,
+The standard build systems have individual reusable steps:
+
+| Build system | Steps |
+| --- | --- |
+| autotools | `autotools/configure`, `autotools/build`, `autotools/check`, `autotools/install` |
+| Make | `make/build`, `make/check`, `make/install` |
+| CMake | `cmake/configure`, `cmake/build`, `cmake/check`, `cmake/install` |
+| Meson | `meson/setup`, `meson/compile`, `meson/test`, `meson/install` |
+
+Prefer the individual steps. They get their own progress line, can be skipped
+or reordered, and take their own `with:` inputs. The single-name `autotools`,
+`make`, `cmake`, `meson` and `python` steps are convenience wrappers that run
+their fixed sequence in one shell step; use them only when that exact sequence
+is what you want. `strip` is a step. `go/build`, `go/test`, `go/vendor`,
 `go/bump`, `cargo/vendor`, `npm/ci`, `python/build-wheel` and
-`python/install-wheel` are available.
+`python/install-wheel` are also available. `license/copy` copies one or more
+license files into `$STAGE$PREFIX/share/licenses/<output>/` for each output, so
+a split package does not duplicate the loop or accidentally share one path.
 
 A named local step is a YAML file under `pipelines/`:
 

@@ -1,9 +1,16 @@
 name: make/build
-version: 1
+version: 2
 summary: Run make
+inputs:
+  dir:
+    type: string
+    default: .
+  args:
+    type: list<string>
+    default: []
 needs:
   tools: [make]
 run:
   cwd: "${source.dir}"
   runs: |
-    make -j1
+    make -C "${inputs.dir}" -j"$JOBS" ${inputs.args}

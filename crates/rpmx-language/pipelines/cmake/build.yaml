@@ -1,9 +1,13 @@
 name: cmake/build
-version: 1
+version: 2
 summary: Build a CMake project
+inputs:
+  args:
+    type: list<string>
+    default: []
 needs:
   tools: [cmake]
 run:
   cwd: "${source.dir}"
   runs: |
-    cmake --build build --parallel 1
+    cmake --build build --parallel "$JOBS" ${inputs.args}

@@ -1,0 +1,31 @@
+name: license/copy
+version: 1
+summary: Copy license files into one directory per output
+inputs:
+  files:
+    type: list<string>
+    required: true
+  outputs:
+    type: list<string>
+    required: true
+  dir:
+    type: string
+    default: "${prefix}/share/licenses"
+needs:
+  tools: [coreutils]
+run:
+  cwd: "${source.dir}"
+  runs: |
+    set -eu
+    for output in ${inputs.outputs}; do
+      case "$output" in
+        ''|.*|..|*/*|*\\*)
+          echo "license/copy: invalid output '$output'" >&2
+          exit 2
+          ;;
+      esac
+      install -d "$STAGE${inputs.dir}/$output"
+      for file in ${inputs.files}; do
+        install -m 0644 "$file" "$STAGE${inputs.dir}/$output/"
+      done
+    done

@@ -5,6 +5,13 @@ does not promise a stable schema or CLI yet.
 
 ## Unreleased
 
+- The autotools, Make, CMake and Meson steps accept `dir` and pass their full
+  argument list through to configure/build/install. `autotools/configure`
+  supports out-of-tree builds and derives `--host`/`--build` in a cross build.
+  Build and check steps use the sandbox `$JOBS` instead of a hardcoded `-j1`.
+- Added `license/copy`, which installs per-output license copies under
+  `$PREFIX/share/licenses/<output>/` without repeating a shell loop.
+
 - Source fetches use separate resolve, connect, response, read and body
   timeouts instead of one 60-second request budget. Transport failures retry
   three times with backoff; digest mismatches do not. Multiple `https`
