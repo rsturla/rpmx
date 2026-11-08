@@ -358,14 +358,20 @@ impl Profile {
             ] {
                 if let Some(url) = value.as_deref() {
                     if let Some(relative) = relative_local_path(url) {
-                        let resolved =
-                            std::fs::canonicalize(directory.join(relative)).map_err(|error| {
+                        let joined = directory.join(relative);
+                        // The repository may be produced by a bootstrap step
+                        // after the profile is parsed (lint, plan, and the
+                        // toolchain build all load it first). Resolve the path
+                        // now, but leave the existence check to the resolver.
+                        let resolved = std::fs::canonicalize(&joined)
+                            .or_else(|_| std::path::absolute(&joined))
+                            .map_err(|error| {
                                 Error::new(
                                     codes::ROOT_006,
                                     format!(
                                         "repository '{}' {field} resolves to {}: {error}",
                                         repository.id,
-                                        directory.join(relative).display()
+                                        joined.display()
                                     ),
                                 )
                             })?;
@@ -957,16 +963,16 @@ packages:
     }
 
     #[test]
-    fn a_missing_relative_repository_is_rejected_at_load_time() {
+    fn a_missing_relative_repository_is_left_for_the_resolver() {
         let directory = tempfile::tempdir().expect("tempdir");
         let path = directory.path().join("bootstrap.yaml");
         let text =
             profile("toolchain").replace("https://example.invalid/fedora", "file://../missing");
         std::fs::write(&path, text).expect("profile");
 
-        let error = load_profile(&path).expect_err("missing repository");
-        assert_eq!(error.code, codes::ROOT_006);
-        assert!(error.message.contains("resolves to"), "{}", error.message);
+        let loaded = load_profile(&path).expect("profile");
+        let baseurl = loaded.repositories[0].baseurl.as_deref().expect("baseurl");
+        assert!(baseurl.ends_with("/missing"), "{baseurl}");
     }
 
     #[test]
