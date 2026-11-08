@@ -1,6 +1,6 @@
 //! Checks that need the assembled package, not just the recipe.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use rpmx_core::error::codes;
 use rpmx_core::package_spec::BinaryPackageSpec;
@@ -21,9 +21,9 @@ pub struct Finding {
 
 /// Inspect a built package's files.
 pub fn check(packages: &[BinaryPackageSpec]) -> Vec<Finding> {
-    let names: BTreeSet<&str> = packages
+    let packages_by_name: BTreeMap<&str, &BinaryPackageSpec> = packages
         .iter()
-        .map(|package| package.name.as_str())
+        .map(|package| (package.name.as_str(), package))
         .collect();
     let mut findings = Vec::new();
     for (index, package) in packages.iter().enumerate() {
@@ -32,7 +32,7 @@ pub fn check(packages: &[BinaryPackageSpec]) -> Vec<Finding> {
         }
         check_output_name(package, &mut findings);
         check_output_files(package, &mut findings);
-        check_output_dependencies(package, &names, &mut findings);
+        check_output_dependencies(package, &packages_by_name, &mut findings);
         for require in &package.dependencies.requires {
             if require.starts_with("bundled(") {
                 findings.push(Finding {
@@ -97,7 +97,10 @@ fn check_output_name(package: &BinaryPackageSpec, findings: &mut Vec<Finding>) {
 fn check_output_files(package: &BinaryPackageSpec, findings: &mut Vec<Finding>) {
     if package.name.ends_with("-devel") {
         for file in &package.files {
-            if is_libdir_file(&file.path) && file.path.ends_with(".a") {
+            if is_libdir_file(&file.path)
+                && file.path.ends_with(".a")
+                && !is_linker_plugin_archive(&file.path)
+            {
                 findings.push(Finding {
                     path: package.name.clone(),
                     severity: Severity::Error,
@@ -129,15 +132,10 @@ fn check_output_files(package: &BinaryPackageSpec, findings: &mut Vec<Finding>) 
 
 fn check_output_dependencies(
     package: &BinaryPackageSpec,
-    names: &BTreeSet<&str>,
+    packages: &BTreeMap<&str, &BinaryPackageSpec>,
     findings: &mut Vec<Finding>,
 ) {
-    let requires: BTreeSet<&str> = package
-        .dependencies
-        .requires
-        .iter()
-        .map(|require| require.split_whitespace().next().unwrap_or(require))
-        .collect();
+    let requires = requirement_names(package);
 
     if let Some(base) = package.name.strip_suffix("-libs") {
         if requires.contains(base) {
@@ -150,21 +148,23 @@ fn check_output_dependencies(
                 ),
             });
         }
-        if names.contains(base) && !requires.contains(package.name.as_str()) {
-            findings.push(Finding {
-                path: package.name.clone(),
-                severity: Severity::Error,
-                message: format!(
-                    "command package '{}' must depend on runtime library output '{}'",
-                    base, package.name
-                ),
-            });
+        if let Some(command) = packages.get(base) {
+            if !requirement_names(command).contains(package.name.as_str()) {
+                findings.push(Finding {
+                    path: package.name.clone(),
+                    severity: Severity::Error,
+                    message: format!(
+                        "command package '{}' must depend on runtime library output '{}'",
+                        base, package.name
+                    ),
+                });
+            }
         }
     }
 
     if let Some(base) = package.name.strip_suffix("-devel") {
         let libs = format!("{base}-libs");
-        if names.contains(libs.as_str()) && !requires.contains(libs.as_str()) {
+        if packages.contains_key(libs.as_str()) && !requires.contains(libs.as_str()) {
             findings.push(Finding {
                 path: package.name.clone(),
                 severity: Severity::Error,
@@ -189,6 +189,15 @@ fn check_output_dependencies(
             });
         }
     }
+}
+
+fn requirement_names(package: &BinaryPackageSpec) -> BTreeSet<&str> {
+    package
+        .dependencies
+        .requires
+        .iter()
+        .map(|require| require.split_whitespace().next().unwrap_or(require))
+        .collect()
 }
 
 type FileCategory = (&'static str, &'static str, &'static str, fn(&str) -> bool);
@@ -288,6 +297,10 @@ fn is_libdir_file(path: &str) -> bool {
 fn is_compiler_runtime_archive(path: &str) -> bool {
     let name = path.rsplit('/').next().unwrap_or(path);
     name.starts_with("libgcc") || name == "libgcov.a"
+}
+
+fn is_linker_plugin_archive(path: &str) -> bool {
+    path.contains("/bfd-plugins/") && path.ends_with(".a")
 }
 
 /// The per-path rules, exposed for tests.
@@ -579,11 +592,34 @@ mod tests {
             "{messages:?}"
         );
         assert!(
-            messages
-                .iter()
-                .any(|message| message.contains("must depend on runtime library")),
+            messages.iter().any(|message| message.contains(
+                "command package 'demo' must depend on runtime library output 'demo-libs'"
+            )),
             "{messages:?}"
         );
+    }
+
+    #[test]
+    fn a_command_package_that_depends_on_its_runtime_library_is_accepted() {
+        let findings = check(&[
+            package("demo", &[], &["demo-libs = 1.0-1"]),
+            package("demo-libs", &["/usr/lib64/libdemo.so.1"], &[]),
+            package("demo-devel", &["/usr/include/demo.h"], &["demo-libs"]),
+        ]);
+        assert!(errors(&findings).is_empty(), "{findings:?}");
+    }
+
+    #[test]
+    fn linker_plugin_archives_stay_in_development_outputs() {
+        let findings = check(&[
+            package("binutils", &[], &[]),
+            package(
+                "binutils-devel",
+                &["/usr/lib64/bfd-plugins/libdep.a"],
+                &["binutils"],
+            ),
+        ]);
+        assert!(errors(&findings).is_empty(), "{findings:?}");
     }
 
     #[test]
