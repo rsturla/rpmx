@@ -297,7 +297,18 @@ fn is_libdir_file(path: &str) -> bool {
 
 fn is_compiler_runtime_archive(path: &str) -> bool {
     let name = path.rsplit('/').next().unwrap_or(path);
-    name.starts_with("libgcc") || name == "libgcov.a"
+    name.starts_with("libgcc")
+        || matches!(
+            name,
+            "libgcov.a"
+                | "libatomic.a"
+                | "libgomp.a"
+                | "libitm.a"
+                | "libquadmath.a"
+                | "libssp.a"
+                | "libgfortran.a"
+                | "libgfortranbegin.a"
+        )
 }
 
 fn is_linker_plugin_archive(path: &str) -> bool {
@@ -675,6 +686,10 @@ mod tests {
             &[
                 "/usr/lib/gcc/x86_64-linux/16/libgcc.a",
                 "/usr/lib/gcc/x86_64-linux/16/libgcov.a",
+                "/usr/lib64/libatomic.a",
+                "/usr/lib64/libgomp.a",
+                "/usr/lib64/libitm.a",
+                "/usr/lib64/libquadmath.a",
             ],
             &[],
         );
