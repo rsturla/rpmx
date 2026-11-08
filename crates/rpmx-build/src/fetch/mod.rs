@@ -60,6 +60,8 @@ pub struct FetchedSource {
     pub path: PathBuf,
     /// How to unpack the cached payload into the workspace.
     pub extract: Option<Extract>,
+    /// Newest mtime carried by an extractable source archive.
+    pub source_date_epoch: Option<u32>,
 }
 
 pub struct FetchOptions<'a> {
@@ -93,12 +95,7 @@ pub fn fetch_sources(recipe: &Recipe, options: FetchOptions<'_>) -> Result<Vec<F
             )
         })?;
         if path.exists() {
-            fetched.push(FetchedSource {
-                name: source.name.clone(),
-                digest: source.digest.clone(),
-                path,
-                extract: extract_spec(source),
-            });
+            fetched.push(fetched_source(source, path)?);
             continue;
         }
         if options.offline {
@@ -134,14 +131,21 @@ pub fn fetch_sources(recipe: &Recipe, options: FetchOptions<'_>) -> Result<Vec<F
                 )
             },
         )?;
-        fetched.push(FetchedSource {
-            name: source.name.clone(),
-            digest: source.digest.clone(),
-            path,
-            extract: extract_spec(source),
-        });
+        fetched.push(fetched_source(source, path)?);
     }
     Ok(fetched)
+}
+
+fn fetched_source(source: &Source, path: PathBuf) -> Result<FetchedSource> {
+    let extract = extract_spec(source);
+    let source_date_epoch = crate::archive::latest_mtime(&path, extract.as_ref())?;
+    Ok(FetchedSource {
+        name: source.name.clone(),
+        digest: source.digest.clone(),
+        path,
+        extract,
+        source_date_epoch,
+    })
 }
 
 /// Download a source and report the digest of what arrived.
@@ -245,7 +249,7 @@ fn digest_hex(source: &Source) -> Result<&str> {
     Ok(hex)
 }
 
-fn extract_spec(source: &Source) -> Option<Extract> {
+pub fn extract_spec(source: &Source) -> Option<Extract> {
     if let Some(extract) = &source.extract {
         return Some(extract.clone());
     }

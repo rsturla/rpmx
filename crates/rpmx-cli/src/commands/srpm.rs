@@ -50,8 +50,8 @@ pub fn run(args: SrpmArgs, pipeline_dir: Option<&Path>) -> Result<Vec<PathBuf>, 
         .unwrap_or_else(|| rpmx_core::arch::native_arch().to_string()),
     };
     let work;
-    let sources = match args.sources.as_deref() {
-        Some(path) => path.to_path_buf(),
+    let (sources, source_date_epoch) = match args.sources.as_deref() {
+        Some(path) => (path.to_path_buf(), args.source_date_epoch),
         None => {
             work = crate::commands::WorkDir::new("srpm-source")?;
             let output = work.path().join("source");
@@ -61,32 +61,33 @@ pub fn run(args: SrpmArgs, pipeline_dir: Option<&Path>) -> Result<Vec<PathBuf>, 
                     format!("cannot create {}: {error}", output.display()),
                 )
             })?;
-            crate::commands::source::execute(crate::commands::source::SourceRequest {
-                file: &args.file,
-                arch: &arch,
-                exec: rpmx_core::arch::Arch::parse(&arch)?,
-                sysroot: None,
-                cross: None,
-                runner: &args.runner,
-                policy,
-                profile: args.policy.profile.as_deref(),
-                cache: args.runtime.cache.cache.as_deref(),
-                proxy: args.proxy.as_deref(),
-                offline: args.offline,
-                locked: false,
-                root_lock: args.root_lock.as_deref(),
-                root: args.root.as_deref(),
-                runner_asset_root: None,
-                unsafe_host_root: args.unsafe_host_root,
-                verify_root: true,
-                output: &output,
-                source_date_epoch: args.source_date_epoch,
-                jobs: args.runtime.jobs,
-                step_timeout: args.runtime.step_timeout,
-                quiet: true,
-                pipeline_dir,
-            })?;
-            output
+            let source =
+                crate::commands::source::execute(crate::commands::source::SourceRequest {
+                    file: &args.file,
+                    arch: &arch,
+                    exec: rpmx_core::arch::Arch::parse(&arch)?,
+                    sysroot: None,
+                    cross: None,
+                    runner: &args.runner,
+                    policy,
+                    profile: args.policy.profile.as_deref(),
+                    cache: args.runtime.cache.cache.as_deref(),
+                    proxy: args.proxy.as_deref(),
+                    offline: args.offline,
+                    locked: false,
+                    root_lock: args.root_lock.as_deref(),
+                    root: args.root.as_deref(),
+                    runner_asset_root: None,
+                    unsafe_host_root: args.unsafe_host_root,
+                    verify_root: true,
+                    output: &output,
+                    source_date_epoch: args.source_date_epoch,
+                    jobs: args.runtime.jobs,
+                    step_timeout: args.runtime.step_timeout,
+                    quiet: true,
+                    pipeline_dir,
+                })?;
+            (output, Some(source.source_date_epoch))
         }
     };
     execute(SrpmRequest {
@@ -95,7 +96,7 @@ pub fn run(args: SrpmArgs, pipeline_dir: Option<&Path>) -> Result<Vec<PathBuf>, 
         sources: &sources,
         output: &args.output,
         arch: &arch,
-        source_date_epoch: args.source_date_epoch,
+        source_date_epoch,
         cell: args.cell.as_deref(),
         root_lock: args.root_lock.as_deref(),
         exec: rpmx_core::arch::Arch::parse(&arch)?,
@@ -148,8 +149,11 @@ pub fn execute(request: SrpmRequest<'_>) -> Result<Vec<PathBuf>, Error> {
             return Err(Error::new(codes::BUILD_002, format!("no such cell '{id}'")));
         }
     }
-    let source_date_epoch =
-        crate::commands::source_date_epoch(&bundle.recipe, request.source_date_epoch);
+    let source_date_epoch = request
+        .source_date_epoch
+        .or(bundle.recipe.package.source_date_epoch)
+        .or(bundle.source_date_epoch_default)
+        .unwrap_or(0);
     let signature_timestamp = crate::commands::signature_timestamp(
         request.signing.signing_timestamp,
         source_date_epoch,
