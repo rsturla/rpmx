@@ -451,7 +451,6 @@ fn run_installed(
         target,
         sysroot: None,
         cross: None,
-        flags: None,
         workspace: &workspace,
         stage: &stage,
         root: Some(&test_root_path),
@@ -475,7 +474,6 @@ fn run_installed(
         timeout,
         prefix: &lock.prefix,
         libdir: &lock.libdir,
-        flags: None,
     };
     let mut outcomes = Vec::new();
     for test in selected {

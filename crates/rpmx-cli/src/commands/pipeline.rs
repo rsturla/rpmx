@@ -72,13 +72,6 @@ impl BuildPipeline<'_> {
                 format!("cannot create {}: {error}", self.output.display()),
             )
         })?;
-        let declared = rpmx_core::load_recipe_bundle(self.file)?;
-        let flags = crate::commands::autoroot::flags(
-            &declared.recipe,
-            &declared.root,
-            self.profile,
-            self.arch,
-        )?;
         let work = crate::commands::WorkDir::new("build")?;
         let source_output = work.path().join("source");
         std::fs::create_dir_all(&source_output).map_err(|error| {
@@ -134,7 +127,6 @@ impl BuildPipeline<'_> {
                 exec: self.exec,
                 sysroot_lock: self.sysroot_lock,
                 cross: self.cross,
-                flags: (!flags.is_empty()).then_some(&flags),
                 signing: self.signing,
                 quiet: true,
                 pipeline_dir: self.pipeline_dir,

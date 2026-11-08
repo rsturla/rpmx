@@ -41,12 +41,9 @@ cross:
 - `cross.triple` overrides the GNU triple (default: the target's).
 - `cross.bootstrap: true` allows the build root and the sysroot to share an
   architecture (see [Native bootstrap](#native-bootstrap)).
-- `flags.cflags`, `flags.cxxflags` and `flags.ldflags` at the top level are
-  the distribution's toolchain flags. They apply to every build, including a
-  cross build, and `flags.arch` can add target-specific options.
-- `cross.cflags`, `cross.cxxflags`, `cross.ldflags` add toolchain quirks that
-  belong only to the cross build. They are appended after the profile's common
-  flags.
+- `cross.cflags`, `cross.cxxflags` and `cross.ldflags` add toolchain quirks
+  that belong only to the cross build. Distribution-wide compiler policy comes
+  from a package in the build root, not from the profile.
 
 Step dependencies choose their root automatically. `needs.tools` and
 `build.dependencies.tools` are build-root packages; `needs.host`,
@@ -165,8 +162,8 @@ for a host that is not the current one.
 
 ## Rebuilding
 
-A cross SRPM carries `sysroot.lock.json` and a `cross` block naming it, the
-triple and the toolchain flags. `rpmx rebuild package.src.rpm` therefore needs
+A cross SRPM carries `sysroot.lock.json` and a `cross` block naming it and the
+triple. `rpmx rebuild package.src.rpm` therefore needs
 no profile: it assembles the target sysroot from the embedded lock (payloads
 only, no emulation), runs the same native toolchain, and packages for the
 sysroot's architecture. Without `--arch`, the output goes to

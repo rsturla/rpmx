@@ -4,7 +4,7 @@
 
 **`RPMX-ROOT-016: a full build requires --root-lock and --root`**  
 The recipe has no `build.root` and no `--profile`. Add a root or pass explicit
-root flags.
+root options.
 
 **`RPMX-ROOT-016: root ... is not cached ...` with `--offline`**  
 Resolve once without `--offline`, or use the root lock that produced the cache.

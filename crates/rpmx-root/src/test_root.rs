@@ -83,7 +83,6 @@ pub fn prepare(options: TestRootOptions<'_>) -> Result<PreparedTestRoot> {
             prefix: lock.prefix.clone(),
             libdir: lock.libdir.clone(),
         },
-        flags: Default::default(),
         sbom: false,
     };
 

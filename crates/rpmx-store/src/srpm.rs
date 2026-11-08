@@ -285,8 +285,6 @@ pub struct LockBuild {
 pub struct LockBuildRef<'a> {
     pub root_lock: Option<&'a LockRoot>,
     pub cross: Option<&'a LockCross>,
-    /// Distribution compiler/linker flags used by the build.
-    pub flags: Option<&'a rpmx_base::guest::BuildFlags>,
     pub build: &'a LockBuild,
     /// Old root identities replaced by a bootstrap rebuild.
     pub replaced: Option<&'a ReplacedLock>,
@@ -331,10 +329,6 @@ pub struct PackageLock {
     /// embedded sysroot lock, so `rpmx rebuild` needs no profile.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cross: Option<LockCross>,
-    /// Distribution compiler/linker flags. Present even for a native build, so
-    /// `rpmx rebuild` reproduces the same hardening without a profile.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub flags: Option<rpmx_base::guest::BuildFlags>,
     pub build: LockBuild,
     /// Present when a bootstrap rebuild replaced an embedded root lock.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -410,7 +404,6 @@ pub fn lock_json(
             .collect(),
         root_lock: context.root_lock.cloned(),
         cross: context.cross.cloned(),
-        flags: context.flags.cloned(),
         build: context.build.clone(),
         replaced: context.replaced.cloned(),
     };
@@ -514,7 +507,6 @@ mod tests {
             LockBuildRef {
                 root_lock: None,
                 cross: None,
-                flags: None,
                 build: &build,
                 replaced: Some(&replaced),
             },

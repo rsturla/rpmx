@@ -176,31 +176,10 @@ pub struct Build {
     pub dependencies: Dependencies,
     #[serde(default)]
     pub environment: BTreeMap<String, String>,
-    /// Explicit exceptions to the profile's toolchain flags. A recipe may
-    /// remove a flag it cannot compile with, but the removal is visible here
-    /// and the resolved flags are still recorded in the lock and SRPM.
-    #[serde(default, skip_serializing_if = "BuildFlagOverrides::is_empty")]
-    pub flags: BuildFlagOverrides,
     /// Build root source. Either a named profile or an inline environment.
     /// When absent, `--profile` supplies the root.
     #[serde(default)]
     pub root: Option<RootSpec>,
-}
-
-/// Per-recipe changes to the profile's toolchain flags.
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct BuildFlagOverrides {
-    /// Flags removed verbatim from `CFLAGS`, `CXXFLAGS` and `LDFLAGS` after
-    /// the profile and architecture flags are merged.
-    #[serde(default)]
-    pub exclude: Vec<String>,
-}
-
-impl BuildFlagOverrides {
-    fn is_empty(&self) -> bool {
-        self.exclude.is_empty()
-    }
 }
 
 /// Where the build root comes from.

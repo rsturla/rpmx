@@ -19,8 +19,8 @@ use expand::{
 mod validate;
 
 use validate::{
-    validate_build_flags, validate_cpe, validate_outputs, validate_rpm_component, validate_schema,
-    validate_sources, validate_step, validate_steps, validate_tool,
+    validate_cpe, validate_outputs, validate_rpm_component, validate_schema, validate_sources,
+    validate_step, validate_steps, validate_tool,
 };
 
 pub const SCHEMA_VERSION: u32 = 1;
@@ -225,7 +225,6 @@ pub fn plan_with_options(recipe: &Recipe, options: PlanOptions<'_>) -> Result<Pl
     let dist_tag = options.dist_tag.map(normalize_dist_tag).transpose()?;
     let build_release = options.build_release;
     validate_schema(recipe)?;
-    validate_build_flags(recipe)?;
     validate_cpe(recipe)?;
     validate_steps(recipe)?;
     validate_sources(recipe)?;
@@ -738,31 +737,6 @@ outputs:
         .expect("recipe");
         let plan = plan(&recipe, "x86_64").expect("main output needs no selectors");
         assert!(plan.cells[0].outputs[0].files.is_empty());
-    }
-
-    #[test]
-    fn empty_toolchain_flag_exclusions_are_rejected() {
-        let recipe = crate::parse_recipe(
-            r#"
-schema: 1
-package:
-  name: probe
-  version: "1.0"
-  release: 1
-  summary: probe
-  license: MIT
-build:
-  flags:
-    exclude: [" "]
-outputs:
-  - name: probe
-    metapackage: true
-"#,
-        )
-        .expect("recipe");
-        let error = plan(&recipe, "x86_64").expect_err("empty exclusion");
-        assert_eq!(error.code, rpmx_base::error::codes::PLAN_013);
-        assert_eq!(error.path.as_deref(), Some("build.flags.exclude[0]"));
     }
 
     #[test]

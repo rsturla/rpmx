@@ -172,7 +172,6 @@ fn patches_are_applied_and_removed_from_the_workspace() {
         target: rpmx_core::arch::Arch::current().expect("target arch"),
         sysroot: None,
         cross: None,
-        flags: None,
         workspace: work.path(),
         stage: stage.path(),
         root: None,

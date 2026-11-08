@@ -126,7 +126,6 @@ pub(super) fn run(options: TestRunOptions<'_>) -> Result<Vec<PathBuf>, Error> {
         timeout: options.timeout,
         prefix,
         libdir,
-        flags: None,
     };
     let mut outcomes = Vec::new();
     for test in &tests {

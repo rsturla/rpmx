@@ -101,19 +101,6 @@ pub(crate) fn validate_schema(recipe: &Recipe) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn validate_build_flags(recipe: &Recipe) -> Result<()> {
-    for (index, flag) in recipe.build.flags.exclude.iter().enumerate() {
-        if flag.trim().is_empty() {
-            return Err(Error::new(
-                codes::PLAN_013,
-                "build.flags.exclude must not contain an empty flag",
-            )
-            .at(format!("build.flags.exclude[{index}]")));
-        }
-    }
-    Ok(())
-}
-
 pub(crate) fn validate_cpe(recipe: &Recipe) -> Result<()> {
     let Some(cpe) = &recipe.package.cpe else {
         return Ok(());
