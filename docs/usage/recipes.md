@@ -145,6 +145,23 @@ The inline `packages` are merged with everything the recipe needs.
 If `build.root` is absent, `--profile FILE` supplies the root. If neither is
 present, `build`/`test` fail with `RPMX-ROOT-016`.
 
+The first output is always the main package. It receives every staged file
+that no later output claims, matching Wolfi/melange and keeping the recipe
+focused on the build plus the deliberate subpackage splits. File presets are
+available in `files.include` and `files.exclude`:
+
+| Preset | Expands to |
+| --- | --- |
+| `@dev` | headers, static libraries, unversioned `.so` linker scripts, pkg-config, aclocal and CMake files |
+| `@headers` | `/usr/include/**` |
+| `@static` | `/usr/lib*/lib*.a` |
+| `@pkgconfig` | `/usr/lib*/pkgconfig/**`, `/usr/share/pkgconfig/**` |
+| `@doc` | `/usr/share/doc/**` |
+| `@man` | `/usr/share/man/**` |
+| `@info` | `/usr/share/info/**` |
+| `@locales` | `/usr/share/i18n/**`, `/usr/share/locale/**` |
+| `@debug` | `/usr/lib/debug/**`, `/usr/lib*/*.debug` |
+
 **What goes into the root.** The profile's `packages.install`, plus:
 
 - `build.dependencies.tools`
@@ -496,11 +513,15 @@ outputs:
 
 Rules:
 
-- Every staged path must be claimed by exactly one output; an unclaimed file is
-  an error.
-- A path claimed by two outputs is an error.
-- An output whose selectors match no staged files is an error.
+- The **first output is the main package**. It may omit `files.include`; it
+  receives every staged path that no later output claims.
+- A path claimed by two outputs is an error (`RPMX-OUTPUT-011`).
+- An output after the main package whose selectors match no staged files is an
+  error (`RPMX-OUTPUT-012`).
 - `metapackage: true` allows an output with no files.
+- A subpackage can use `@dev`, `@doc`, `@man`, `@info`, `@locales`, `@static`,
+  `@pkgconfig`, `@headers` or `@debug` in `files.include` instead of spelling
+  out every path. Presets expand during planning.
 - `scripts` are raw shell and remain the escape hatch. Typed actions are not yet
   implemented.
 

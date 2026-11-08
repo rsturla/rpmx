@@ -254,6 +254,8 @@ pub mod codes {
         OUTPUT_017 = "RPMX-OUTPUT-017",
         /// An output sets attributes for a path that no packaged file matches.
         OUTPUT_018 = "RPMX-OUTPUT-018",
+        /// An output uses an unknown file preset.
+        OUTPUT_019 = "RPMX-OUTPUT-019",
         /// Two cells produce the same source package.
         PLAN_001 = "RPMX-PLAN-001",
         /// Two cells produce an output with the same name.

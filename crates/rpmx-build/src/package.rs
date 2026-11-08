@@ -130,6 +130,15 @@ pub fn matcher(patterns: &[String]) -> Result<Option<GlobSet>> {
 }
 
 pub fn split(stage: &[StagedFile], outputs: &[OutputSpec]) -> Result<Vec<SplitOutput>> {
+    if outputs.is_empty() {
+        if stage.is_empty() {
+            return Ok(Vec::new());
+        }
+        return Err(Error::new(
+            codes::OUTPUT_010,
+            "the recipe defines no outputs to claim the staged payload",
+        ));
+    }
     let sets = outputs
         .iter()
         .map(|output| {
@@ -158,12 +167,8 @@ pub fn split(stage: &[StagedFile], outputs: &[OutputSpec]) -> Result<Vec<SplitOu
         }
 
         match matches.as_slice() {
-            [] => {
-                return Err(Error::new(
-                    codes::OUTPUT_010,
-                    format!("file '{}' is not claimed by any output", file.path),
-                ));
-            }
+            // The first output is the main package.
+            [] => assigned[0].push(file.clone()),
             [index] => assigned[*index].push(file.clone()),
             _ => {
                 let names = matches

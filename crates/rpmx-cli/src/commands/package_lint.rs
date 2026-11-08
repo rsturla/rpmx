@@ -20,7 +20,10 @@ pub struct Finding {
 /// Inspect a built package's files.
 pub fn check(packages: &[BinaryPackageSpec]) -> Vec<Finding> {
     let mut findings = Vec::new();
-    for package in packages {
+    for (index, package) in packages.iter().enumerate() {
+        if index == 0 {
+            check_main_package(package, &mut findings);
+        }
         for require in &package.dependencies.requires {
             if require.starts_with("bundled(") {
                 findings.push(Finding {
@@ -57,6 +60,87 @@ pub fn check(packages: &[BinaryPackageSpec]) -> Vec<Finding> {
         }
     }
     findings
+}
+
+type FileCategory = (&'static str, &'static str, &'static str, fn(&str) -> bool);
+
+fn check_main_package(package: &BinaryPackageSpec, findings: &mut Vec<Finding>) {
+    let categories: &[FileCategory] = &[
+        (
+            "development header",
+            "development headers",
+            "use files.include: [\"@headers\"] or [\"@dev\"]",
+            |path| path.starts_with("/usr/include/"),
+        ),
+        (
+            "static library",
+            "static libraries",
+            "use files.include: [\"@static\"] or [\"@dev\"]",
+            |path| is_libdir_file(path) && path.ends_with(".a"),
+        ),
+        (
+            "pkg-config or CMake file",
+            "pkg-config or CMake files",
+            "use files.include: [\"@pkgconfig\"] or [\"@dev\"]",
+            |path| {
+                (is_libdir_path(path) && (path.contains("/pkgconfig/") || path.contains("/cmake/")))
+                    || path.starts_with("/usr/share/pkgconfig/")
+                    || path.starts_with("/usr/share/cmake/")
+            },
+        ),
+        (
+            "documentation file",
+            "documentation files",
+            "use files.include: [\"@doc\", \"@info\", \"@man\"]",
+            |path| {
+                path.starts_with("/usr/share/man/")
+                    || path.starts_with("/usr/share/info/")
+                    || path.starts_with("/usr/share/doc/")
+                    || path.starts_with("/usr/share/gtk-doc/")
+                    || path.starts_with("/usr/share/help/")
+            },
+        ),
+        (
+            "locale source file",
+            "locale source files",
+            "use files.include: [\"@locales\"]",
+            |path| path.starts_with("/usr/share/i18n/"),
+        ),
+    ];
+
+    for (singular, plural, advice, matches) in categories {
+        let matching = package.files.iter().filter(|file| matches(&file.path));
+        let count = matching.clone().count();
+        if count == 0 {
+            continue;
+        }
+        let noun = if count == 1 { singular } else { plural };
+        let examples = matching
+            .take(3)
+            .map(|file| file.path.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        findings.push(Finding {
+            path: package.name.clone(),
+            severity: Severity::Warning,
+            message: format!(
+                "main package '{}' ships {count} {noun} (for example {examples}); {advice}",
+                package.name
+            ),
+        });
+    }
+}
+
+fn is_libdir_path(path: &str) -> bool {
+    path.starts_with("/usr/lib/") || path.starts_with("/usr/lib64/")
+}
+
+fn is_libdir_file(path: &str) -> bool {
+    is_libdir_path(path)
+        && path
+            .rsplit('/')
+            .next()
+            .is_some_and(|name| name.starts_with("lib"))
 }
 
 /// The per-path rules, exposed for tests.
@@ -129,8 +213,8 @@ pub fn enforce(findings: &[Finding]) -> Result<(), Error> {
 
 #[cfg(test)]
 mod tests {
-    use super::{check, check_file, Severity};
-    use rpmx_core::package_spec::BinaryPackageSpec;
+    use super::{check, check_file, check_main_package, Severity};
+    use rpmx_core::package_spec::{BinaryPackageFile, BinaryPackageSpec};
 
     #[test]
     fn a_bundled_provide_must_not_be_required() {
@@ -157,6 +241,44 @@ mod tests {
         assert!(check(&[package])
             .iter()
             .any(|finding| finding.severity == Severity::Error));
+    }
+
+    #[test]
+    fn the_main_package_reports_development_files_with_a_preset_hint() {
+        let package = BinaryPackageSpec {
+            name: "demo".to_string(),
+            version: "1.0".to_string(),
+            release: "1".to_string(),
+            epoch: None,
+            arch: "x86_64".to_string(),
+            summary: "demo".to_string(),
+            license: "MIT".to_string(),
+            description: "demo".to_string(),
+            url: None,
+            source_rpm: "demo-1.0-1.src.rpm".to_string(),
+            source_date_epoch: 1,
+            files: vec![BinaryPackageFile {
+                config: false,
+                noreplace: false,
+                doc: false,
+                license: false,
+                path: "/usr/include/demo.h".to_string(),
+                data: Vec::new(),
+                mode: 0o644,
+                target: None,
+                user: None,
+                group: None,
+                caps: None,
+            }],
+            directories: Vec::new(),
+            dependencies: rpmx_core::model::DependencySet::default(),
+            scriptlets: Default::default(),
+        };
+        let mut findings = Vec::new();
+        check_main_package(&package, &mut findings);
+        assert!(findings.iter().any(|finding| {
+            finding.severity == Severity::Warning && finding.message.contains("@headers")
+        }));
     }
 
     #[test]

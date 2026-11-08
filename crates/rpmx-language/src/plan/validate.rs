@@ -359,11 +359,12 @@ pub(crate) fn validate_outputs(recipe: &Recipe) -> Result<()> {
             return Err(Error::new(codes::OUTPUT_002, "output name is empty")
                 .at(format!("outputs[{index}].name")));
         }
-        if output.files.include.is_empty() && !output.metapackage {
+        if output.files.include.is_empty() && !output.metapackage && index != 0 {
             return Err(Error::new(
                 codes::OUTPUT_003,
                 format!(
-                    "output '{}' has no file selectors; set metapackage: true if that is intended",
+                    "output '{}' has no file selectors; only the first output may rely on the \
+                     main-package fallback",
                     output.name
                 ),
             )

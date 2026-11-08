@@ -5,6 +5,16 @@ does not promise a stable schema or CLI yet.
 
 ## Unreleased
 
+- The first output is now the main package and receives staged files that no
+  other output claims, matching Wolfi/melange. There is no second ownership
+  mode: strictness is lint policy, not recipe configuration.
+  Outputs can use `@dev`, `@doc`, `@man`, `@info`, `@locales`, `@static`,
+  `@pkgconfig`, `@headers` and `@debug` file presets instead of enumerating
+  every installed path. Build output reports each output's file count and
+  payload size, and package lint warns when the main package collects
+  development or documentation payload and suggests the matching preset.
+  `rpmx explain files` shows which output is the main package.
+
 - Tests can be declared under an output. An installed-stage output test
   prepares a root with that output and the sibling outputs that provide its
   runtime dependencies, instead of installing every output. Recipe-level tests

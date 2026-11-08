@@ -59,6 +59,7 @@ INFO build    [x86_64] step [1/3] runs
 INFO build    [x86_64] step [2/3] make
 INFO [x86_64] gcc -O2 -Wall -Wextra -Werror -o hello hello.c
 INFO build    [x86_64] step [3/3] strip
+INFO package  [x86_64] hello · 9 files · 41.2 KiB
 INFO package  [x86_64] hello · 0.1s
 INFO wrote    [x86_64] packages/x86_64/hello-0.1.0-1.fc44.x86_64.rpm
 INFO index    [x86_64] 1 package in packages/x86_64
@@ -74,7 +75,10 @@ stdout carries only the artifact list, one path per line, or the single
 package and each step's duration; `--color=auto|always|never` controls ANSI
 color; `--debug` runs `runs:` scripts with `set -x` and echoes the command.
 A failing step adds the command, cwd, a hint, and `--keep-workdir` leaves the
-workspace.
+workspace. Packaging reports every output's file count and payload size. If the
+main package receives development headers, static libraries, pkg-config/CMake
+files, documentation or locale source data, the package lint warns and names
+the matching `@dev`, `@static`, `@pkgconfig`, `@doc` or `@locales` preset.
 
 ### Artifacts
 

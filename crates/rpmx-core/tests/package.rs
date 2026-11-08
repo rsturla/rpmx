@@ -28,7 +28,7 @@ fn stage_files_are_assigned_to_one_output() {
 }
 
 #[test]
-fn unclaimed_stage_file_is_an_error() {
+fn unclaimed_stage_files_default_to_the_main_output() {
     let dir = stage();
     let files = scan_stage(dir.path()).expect("scan");
     let outputs = [OutputSpec {
@@ -37,8 +37,11 @@ fn unclaimed_stage_file_is_an_error() {
         exclude: vec![],
         metapackage: false,
     }];
-    let error = split(&files, &outputs).expect_err("doc file is unclaimed");
-    assert_eq!(error.code, "RPMX-OUTPUT-010");
+    let split = split(&files, &outputs).expect("main split");
+    assert!(split[0]
+        .files
+        .iter()
+        .any(|file| file.path == "/usr/share/doc/demo/README"));
 }
 
 #[test]

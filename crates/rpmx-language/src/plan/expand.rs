@@ -154,12 +154,20 @@ pub(crate) fn expand_outputs(
         // once would expand test values twice and lose the per-test scope.
         let mut raw = output.clone();
         let output_tests = std::mem::take(&mut raw.tests);
-        let output: Output = expand_typed(
+        let mut output: Output = expand_typed(
             &raw,
             scope,
             &format!("outputs[{index}]"),
             codes::PLAN_005,
             codes::PLAN_006,
+        )?;
+        expand_file_presets(
+            &mut output.files.include,
+            &format!("outputs[{index}].files.include"),
+        )?;
+        expand_file_presets(
+            &mut output.files.exclude,
+            &format!("outputs[{index}].files.exclude"),
         )?;
         if output.name.trim().is_empty() {
             return Err(
@@ -259,6 +267,53 @@ fn validate_bundled(output: &Output) -> Result<()> {
             }
         }
     }
+    Ok(())
+}
+
+fn file_preset(name: &str) -> Option<&'static [&'static str]> {
+    match name {
+        "@dev" => Some(&[
+            "/usr/include/**",
+            "/usr/lib*/lib*.a",
+            "/usr/lib*/lib*.so",
+            "/usr/lib*/pkgconfig/**",
+            "/usr/share/pkgconfig/**",
+            "/usr/share/aclocal/**",
+            "/usr/lib*/cmake/**",
+            "/usr/share/cmake/**",
+        ]),
+        "@headers" => Some(&["/usr/include/**"]),
+        "@static" => Some(&["/usr/lib*/lib*.a"]),
+        "@pkgconfig" => Some(&["/usr/lib*/pkgconfig/**", "/usr/share/pkgconfig/**"]),
+        "@doc" => Some(&["/usr/share/doc/**"]),
+        "@man" => Some(&["/usr/share/man/**"]),
+        "@info" => Some(&["/usr/share/info/**"]),
+        "@locales" => Some(&["/usr/share/i18n/**", "/usr/share/locale/**"]),
+        "@debug" => Some(&["/usr/lib/debug/**", "/usr/lib*/*.debug"]),
+        _ => None,
+    }
+}
+
+fn expand_file_presets(patterns: &mut Vec<String>, path: &str) -> Result<()> {
+    let mut expanded = Vec::with_capacity(patterns.len());
+    for pattern in patterns.drain(..) {
+        if let Some(preset) = file_preset(&pattern) {
+            expanded.extend(preset.iter().map(|value| (*value).to_string()));
+            continue;
+        }
+        if pattern.starts_with('@') {
+            return Err(Error::new(
+                codes::OUTPUT_019,
+                format!(
+                    "unknown file preset '{pattern}'; known presets: @dev, @headers, @static, \
+                     @pkgconfig, @doc, @man, @info, @locales, @debug"
+                ),
+            )
+            .at(path));
+        }
+        expanded.push(pattern);
+    }
+    *patterns = expanded;
     Ok(())
 }
 

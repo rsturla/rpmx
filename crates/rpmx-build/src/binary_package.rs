@@ -271,6 +271,54 @@ outputs:
     }
 
     #[test]
+    fn unclaimed_payload_goes_to_the_main_output() {
+        let stage = tempfile::tempdir().expect("stage");
+        std::fs::create_dir_all(stage.path().join("usr/bin")).expect("bin");
+        std::fs::create_dir_all(stage.path().join("usr/share/doc/demo")).expect("doc");
+        std::fs::write(stage.path().join("usr/bin/demo"), b"bin").expect("binary");
+        std::fs::write(stage.path().join("usr/share/doc/demo/README"), b"doc").expect("doc");
+
+        let recipe = r#"
+schema: 1
+package:
+  name: demo
+  version: "1"
+  release: 1
+  summary: demo
+  license: MIT
+outputs:
+  - name: demo
+  - name: demo-doc
+    files:
+      include: ["@doc"]
+"#;
+        let (recipe, cell) = plan(recipe, "x86_64");
+        let packages = prepare_binary_packages(BinaryPackageOptions {
+            recipe: &recipe,
+            cell: &cell,
+            stage: stage.path(),
+            arch: "x86_64",
+            source_date_epoch: 1,
+            bundled: &rpmx_components::Inventory::empty(),
+        })
+        .expect("packages");
+
+        let main = packages
+            .iter()
+            .find(|package| package.name == "demo")
+            .expect("main");
+        assert!(main.files.iter().any(|file| file.path == "/usr/bin/demo"));
+        let doc = packages
+            .iter()
+            .find(|package| package.name == "demo-doc")
+            .expect("doc");
+        assert!(doc
+            .files
+            .iter()
+            .any(|file| file.path == "/usr/share/doc/demo/README"));
+    }
+
+    #[test]
     fn a_staged_binary_for_another_architecture_is_rejected() {
         let host = rpmx_base::arch::Arch::current().expect("host");
         let other = match host {

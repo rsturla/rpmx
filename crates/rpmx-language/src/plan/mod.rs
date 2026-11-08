@@ -720,6 +720,76 @@ tests:
     }
 
     #[test]
+    fn the_first_output_may_use_the_main_package_fallback() {
+        let recipe = crate::parse_recipe(
+            r#"
+schema: 1
+package:
+  name: probe
+  version: "1.0"
+  release: 1
+  summary: probe
+  license: MIT
+outputs:
+  - name: probe
+"#,
+        )
+        .expect("recipe");
+        let plan = plan(&recipe, "x86_64").expect("main output needs no selectors");
+        assert!(plan.cells[0].outputs[0].files.is_empty());
+    }
+
+    #[test]
+    fn file_presets_expand_to_globs() {
+        let recipe = crate::parse_recipe(
+            r#"
+schema: 1
+package:
+  name: probe
+  version: "1.0"
+  release: 1
+  summary: probe
+  license: MIT
+outputs:
+  - name: probe
+    metapackage: true
+  - name: probe-dev
+    files:
+      include: ["@headers", "/usr/lib64/libprobe.so"]
+"#,
+        )
+        .expect("recipe");
+        let plan = plan(&recipe, "x86_64").expect("plan");
+        assert_eq!(
+            plan.cells[0].outputs[1].files,
+            ["/usr/include/**", "/usr/lib64/libprobe.so"]
+        );
+    }
+
+    #[test]
+    fn an_unknown_file_preset_is_actionable() {
+        let recipe = crate::parse_recipe(
+            r#"
+schema: 1
+package:
+  name: probe
+  version: "1.0"
+  release: 1
+  summary: probe
+  license: MIT
+outputs:
+  - name: probe
+    files:
+      include: ["@nope"]
+"#,
+        )
+        .expect("recipe");
+        let error = plan(&recipe, "x86_64").expect_err("unknown preset");
+        assert_eq!(error.code, "RPMX-OUTPUT-019");
+        assert!(error.message.contains("@nope"), "{}", error.message);
+    }
+
+    #[test]
     fn anonymous_steps_are_numbered_not_named_after_their_script() {
         let labels = step_labels(
             &[

@@ -193,6 +193,21 @@ fn arch_output(args: &BuildArgs, arch: &str) -> PathBuf {
     output_path(args.output.as_deref(), arch)
 }
 
+fn human_bytes(bytes: usize) -> String {
+    const UNITS: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
+    let mut value = bytes as f64;
+    let mut unit = 0;
+    while value >= 1024.0 && unit + 1 < UNITS.len() {
+        value /= 1024.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{bytes} B")
+    } else {
+        format!("{value:.1} {}", UNITS[unit])
+    }
+}
+
 fn output_path(base: Option<&Path>, arch: &str) -> PathBuf {
     base.unwrap_or_else(|| Path::new("packages")).join(arch)
 }
@@ -305,18 +320,22 @@ fn package_stage(
             source_date_epoch,
             bundled: &bundled,
         })?;
-        rpmx_core::output::phase(
-            "package",
-            format!(
-                "{} · {}",
-                arch,
-                packages
-                    .iter()
-                    .map(|package| package.name.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ),
-        );
+        for package in &packages {
+            let bytes = package
+                .files
+                .iter()
+                .map(|file| file.data.len())
+                .sum::<usize>();
+            rpmx_core::output::phase(
+                "package",
+                format!(
+                    "{arch} · {} · {} · {}",
+                    package.name,
+                    rpmx_core::output::count(package.files.len(), "file", "files"),
+                    human_bytes(bytes)
+                ),
+            );
+        }
         if !args.no_lint {
             let findings = crate::commands::package_lint::check(&packages);
             crate::commands::package_lint::enforce(&findings)?;
@@ -787,6 +806,14 @@ mod tests {
             output_path(Some(Path::new("/tmp/out")), "x86_64"),
             PathBuf::from("/tmp/out/x86_64")
         );
+    }
+
+    #[test]
+    fn byte_counts_are_human_readable() {
+        assert_eq!(human_bytes(0), "0 B");
+        assert_eq!(human_bytes(1023), "1023 B");
+        assert_eq!(human_bytes(1024), "1.0 KiB");
+        assert_eq!(human_bytes(1024 * 1024 + 512 * 1024), "1.5 MiB");
     }
 
     #[test]
