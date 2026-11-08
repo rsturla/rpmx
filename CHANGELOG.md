@@ -29,6 +29,9 @@ does not promise a stable schema or CLI yet.
   PIE, NX, RELRO, BIND_NOW, stack protector, fortified libc, the target's
   CFI/branch-protection property and build IDs. `paths` narrows the scan and
   `skip` disables individual checks where the package cannot satisfy them.
+- A profile's local `file://` repository and key paths may be relative to the
+  profile file. `load_profile` anchors them at the profile directory, so a
+  checked-out bootstrap repository works without an absolute CI path.
 
 - Source fetches use separate resolve, connect, response, read and body
   timeouts instead of one 60-second request budget. Transport failures retry

@@ -68,13 +68,16 @@ The resolved flags are recorded in the package lock and the SRPM, so
 
 ### Local repositories
 
-`baseurl` may point at a host directory:
+`baseurl` may point at a host directory. A `file://` path may be absolute, or
+relative to the profile file; rpmx resolves it when it loads the profile:
 
 ```yaml
 repositories:
   - id: local
     baseurl: file:///srv/rpmx/packages
     gpgkey: file:///srv/rpmx/keys/repo.asc
+  - id: toolchain
+    baseurl: file://../.work/toolchain-repo
 ```
 
 rpmx mounts the directory read-only into the resolver container and rewrites
