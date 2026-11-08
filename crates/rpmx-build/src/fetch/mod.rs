@@ -8,6 +8,51 @@ use rpmx_language::model::{Extract, Locator, Recipe, Source};
 mod git;
 mod http;
 
+/// A stalled connection should fail quickly enough to retry, but receiving a
+/// large source archive over a slow mirror is not itself a failure.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
+const RESPONSE_TIMEOUT: Duration = Duration::from_secs(30);
+const READ_TIMEOUT: Duration = Duration::from_secs(60);
+const BODY_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+const FETCH_ATTEMPTS: u32 = 3;
+
+fn agent() -> ureq::Agent {
+    ureq::Agent::config_builder()
+        .timeout_resolve(Some(CONNECT_TIMEOUT))
+        .timeout_connect(Some(CONNECT_TIMEOUT))
+        .timeout_recv_response(Some(RESPONSE_TIMEOUT))
+        .timeout_per_read(Some(READ_TIMEOUT))
+        .timeout_recv_body(Some(BODY_TIMEOUT))
+        .build()
+        .into()
+}
+
+/// Retry only transport failures. A digest mismatch, a missing source or a
+/// malformed locator will not improve by waiting.
+fn fetch_once_or_retry<T>(source: &str, mut operation: impl FnMut() -> Result<T>) -> Result<T> {
+    let mut delay = Duration::from_secs(1);
+    for attempt in 1..=FETCH_ATTEMPTS {
+        match operation() {
+            Ok(value) => return Ok(value),
+            Err(error) if error.code == codes::FETCH_003 && attempt < FETCH_ATTEMPTS => {
+                rpmx_base::output::warning(
+                    "fetch",
+                    format!(
+                        "{source}: {}; retrying in {}s ({}/{FETCH_ATTEMPTS})",
+                        error.message,
+                        delay.as_secs(),
+                        attempt + 1
+                    ),
+                );
+                std::thread::sleep(delay);
+                delay *= 2;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    unreachable!("the final attempt returns its result")
+}
+
 #[derive(Debug, Clone)]
 pub struct FetchedSource {
     pub name: String,
@@ -25,10 +70,7 @@ pub struct FetchOptions<'a> {
 }
 
 pub fn fetch_sources(recipe: &Recipe, options: FetchOptions<'_>) -> Result<Vec<FetchedSource>> {
-    let agent: ureq::Agent = ureq::Agent::config_builder()
-        .timeout_global(Some(Duration::from_secs(60)))
-        .build()
-        .into();
+    let agent = agent();
 
     let temp_dir = options.cache.join("tmp");
     std::fs::create_dir_all(&temp_dir).map_err(|error| {
@@ -70,7 +112,9 @@ pub fn fetch_sources(recipe: &Recipe, options: FetchOptions<'_>) -> Result<Vec<F
         }
 
         let staged = if let Some(proxy) = options.proxy {
-            match http::proxy_get(&agent, proxy, hex, &temp_dir) {
+            match fetch_once_or_retry(&source.name, || {
+                http::proxy_get(&agent, proxy, hex, &temp_dir)
+            }) {
                 Ok(Some(staged)) => staged,
                 Ok(None) => {
                     fetch_from_locators(&agent, source, options.base_dir, options.cache, &temp_dir)?
@@ -104,10 +148,7 @@ pub fn fetch_sources(recipe: &Recipe, options: FetchOptions<'_>) -> Result<Vec<F
 ///
 /// `rpmx bump` uses this to update a recipe before the new digest is known.
 pub fn fetch_digest(source: &Source, base_dir: &Path, cache: &Path) -> Result<String> {
-    let agent: ureq::Agent = ureq::Agent::config_builder()
-        .timeout_global(Some(Duration::from_secs(60)))
-        .build()
-        .into();
+    let agent = agent();
     let temp_dir = cache.join("tmp");
     std::fs::create_dir_all(&temp_dir).map_err(|error| {
         Error::new(
@@ -117,7 +158,9 @@ pub fn fetch_digest(source: &Source, base_dir: &Path, cache: &Path) -> Result<St
     })?;
     let mut last_error = None;
     for locator in &source.locators {
-        match fetch_locator(&agent, source, locator, base_dir, cache, &temp_dir) {
+        match fetch_once_or_retry(&source.name, || {
+            fetch_locator(&agent, source, locator, base_dir, cache, &temp_dir)
+        }) {
             Ok(staged) => {
                 return if source.digest.starts_with("sha256:") {
                     sha256_file(staged.as_ref())
@@ -233,7 +276,9 @@ fn fetch_from_locators(
     }
     let mut last_error = None;
     for locator in &source.locators {
-        match fetch_locator(agent, source, locator, base_dir, cache, temp_dir) {
+        match fetch_once_or_retry(&source.name, || {
+            fetch_locator(agent, source, locator, base_dir, cache, temp_dir)
+        }) {
             Ok(staged) => {
                 match verify_payload(source, &staged, &format!(" from {} locator", locator.kind)) {
                     Ok(()) => return Ok(staged),

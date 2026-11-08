@@ -175,6 +175,11 @@ signing key is given it also writes `repomd.xml.asc`.
 unreferenced blobs older than `--older-than-hours` (default 24). Always run
 `--dry-run` first.
 
+Source downloads have separate resolve, connect, response, per-read and body
+timeouts. Transport failures are retried three times with backoff; a digest
+mismatch is not. List several `https` locators for the same digest so a slow
+mirror is an alternate path, not a failed build.
+
 Cache locations:
 
 - CAS: `$XDG_CACHE_HOME/rpmx/cas` (or `~/.cache/rpmx/cas`).

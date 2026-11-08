@@ -5,6 +5,11 @@ does not promise a stable schema or CLI yet.
 
 ## Unreleased
 
+- Source fetches use separate resolve, connect, response, read and body
+  timeouts instead of one 60-second request budget. Transport failures retry
+  three times with backoff; digest mismatches do not. Multiple `https`
+  locators for the same digest are tried in order.
+
 - The first output is now the main package and receives staged files that no
   other output claims, matching Wolfi/melange. There is no second ownership
   mode: strictness is lint policy, not recipe configuration.
