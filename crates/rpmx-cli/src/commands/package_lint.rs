@@ -99,8 +99,7 @@ fn check_output_files(package: &BinaryPackageSpec, findings: &mut Vec<Finding>) 
         for file in &package.files {
             if is_libdir_file(&file.path)
                 && file.path.ends_with(".a")
-                && !is_linker_plugin_archive(&file.path)
-                && !is_glibc_link_time_archive(&file.path)
+                && !allows_static_archives(package)
             {
                 findings.push(Finding {
                     path: package.name.clone(),
@@ -209,9 +208,8 @@ fn check_main_package(package: &BinaryPackageSpec, findings: &mut Vec<Finding>) 
         .iter()
         .filter(|file| is_libdir_file(&file.path) && file.path.ends_with(".a"))
         .map(|file| file.path.as_str())
-        .filter(|path| !is_compiler_runtime_archive(path))
         .collect();
-    if !static_libraries.is_empty() {
+    if !static_libraries.is_empty() && !allows_static_archives(package) {
         findings.push(Finding {
             path: package.name.clone(),
             severity: Severity::Error,
@@ -295,21 +293,12 @@ fn is_libdir_file(path: &str) -> bool {
             .is_some_and(|name| name.starts_with("lib"))
 }
 
-fn is_compiler_runtime_archive(path: &str) -> bool {
-    let name = path.rsplit('/').next().unwrap_or(path);
-    name.starts_with("libgcc") || name == "libgcov.a"
-}
-
-fn is_linker_plugin_archive(path: &str) -> bool {
-    path.contains("/bfd-plugins/") && path.ends_with(".a")
-}
-
-fn is_glibc_link_time_archive(path: &str) -> bool {
-    let name = path.rsplit('/').next().unwrap_or(path);
-    matches!(
-        name,
-        "libc_nonshared.a" | "libanl.a" | "libdl.a" | "libpthread.a" | "librt.a" | "libutil.a"
-    )
+fn allows_static_archives(package: &BinaryPackageSpec) -> bool {
+    package
+        .lint
+        .allow
+        .iter()
+        .any(|allow| allow == "static-archive")
 }
 
 /// The per-path rules, exposed for tests.
@@ -428,6 +417,7 @@ mod tests {
                 requires: requires.iter().map(|value| (*value).to_string()).collect(),
                 ..Default::default()
             },
+            lint: Default::default(),
             scriptlets: Default::default(),
         }
     }
@@ -460,6 +450,7 @@ mod tests {
                 requires: vec!["bundled(zlib)".to_string()],
                 ..Default::default()
             },
+            lint: Default::default(),
             scriptlets: Default::default(),
         };
         assert!(check(&[package])
@@ -496,6 +487,7 @@ mod tests {
             }],
             directories: Vec::new(),
             dependencies: rpmx_core::model::DependencySet::default(),
+            lint: Default::default(),
             scriptlets: Default::default(),
         };
         let mut findings = Vec::new();
@@ -534,6 +526,7 @@ mod tests {
             }],
             directories: Vec::new(),
             dependencies: rpmx_core::model::DependencySet::default(),
+            lint: Default::default(),
             scriptlets: Default::default(),
         };
         let mut findings = Vec::new();
@@ -619,44 +612,16 @@ mod tests {
     }
 
     #[test]
-    fn glibc_link_time_archives_stay_in_development_outputs() {
-        let findings = check(&[
-            package("glibc-2.44", &[], &[]),
-            package(
-                "glibc-2.44-devel",
-                &[
-                    "/usr/lib64/libc_nonshared.a",
-                    "/usr/lib64/libpthread.a",
-                    "/usr/lib64/libc.a",
-                ],
-                &["glibc >= 2.44"],
-            ),
-        ]);
-        let messages = errors(&findings);
-        assert!(
-            messages
-                .iter()
-                .any(|message| message.contains("/usr/lib64/libc.a")),
-            "{messages:?}"
+    fn a_recipe_can_allow_static_archives() {
+        let mut main = package("gcc-16", &["/usr/lib64/libatomic.a"], &[]);
+        main.lint.allow.push("static-archive".to_string());
+        let mut development = package(
+            "binutils-devel",
+            &["/usr/lib64/bfd-plugins/libdep.a"],
+            &["binutils"],
         );
-        assert!(
-            !messages
-                .iter()
-                .any(|message| message.contains("libc_nonshared.a")),
-            "{messages:?}"
-        );
-    }
-
-    #[test]
-    fn linker_plugin_archives_stay_in_development_outputs() {
-        let findings = check(&[
-            package("binutils", &[], &[]),
-            package(
-                "binutils-devel",
-                &["/usr/lib64/bfd-plugins/libdep.a"],
-                &["binutils"],
-            ),
-        ]);
+        development.lint.allow.push("static-archive".to_string());
+        let findings = check(&[main, package("binutils", &[], &[]), development]);
         assert!(errors(&findings).is_empty(), "{findings:?}");
     }
 
@@ -666,26 +631,6 @@ mod tests {
             .iter()
             .any(|finding| finding.severity == Severity::Error));
         assert!(check_file("/usr/libexec/findutils/frcode", 0o755, false, false).is_empty());
-    }
-
-    #[test]
-    fn compiler_runtime_archives_are_allowed_in_the_main_package() {
-        let package = package(
-            "gcc-16",
-            &[
-                "/usr/lib/gcc/x86_64-linux/16/libgcc.a",
-                "/usr/lib/gcc/x86_64-linux/16/libgcov.a",
-            ],
-            &[],
-        );
-        let mut findings = Vec::new();
-        check_main_package(&package, &mut findings);
-        assert!(
-            !findings
-                .iter()
-                .any(|finding| finding.severity == Severity::Error),
-            "{findings:?}"
-        );
     }
 
     #[test]

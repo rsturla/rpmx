@@ -46,6 +46,7 @@ pub struct BinaryPackageSpec {
     pub files: Vec<BinaryPackageFile>,
     pub directories: Vec<BinaryPackageDirectory>,
     pub dependencies: rpmx_language::model::DependencySet,
+    pub lint: rpmx_language::model::OutputLint,
     pub scriptlets: Scriptlets,
 }
 

@@ -74,6 +74,7 @@ fn spec() -> BinaryPackageSpec {
             obsoletes: vec!["old-demo < 1.0".to_string()],
             conflicts: vec!["demo-server".to_string()],
         },
+        lint: Default::default(),
         scriptlets: rpmx_core::model::Scriptlets {
             post: Some("echo installed\n".to_string()),
             ..Default::default()

@@ -42,6 +42,7 @@ fn spec() -> BinaryPackageSpec {
             obsoletes: Vec::new(),
             conflicts: Vec::new(),
         },
+        lint: Default::default(),
         scriptlets: Default::default(),
     }
 }
