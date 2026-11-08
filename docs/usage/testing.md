@@ -54,8 +54,9 @@ same output and `test.environment.contents.packages` set share a root; a
 different output or set gets its own root. A recipe-level installed test sees
 every output. An output-level installed test sees that output plus the sibling
 outputs that provide its runtime dependencies, so a missing `Requires` between
-outputs is not hidden by installing the whole output set. If a test root cannot
-install its packages, add the missing runtime packages to that test's
+outputs is not hidden by installing the whole output set. Strong runtime
+requirements of the selected RPMs are resolved into the test root automatically
+from the root's repositories. If install still fails, add the missing package to that test's
 `environment.contents.packages` (or the package-wide
 `build.dependencies.tests`) or pass `--test-root-lock` on `build`/`rebuild`.
 
