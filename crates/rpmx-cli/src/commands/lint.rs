@@ -358,6 +358,35 @@ fn check(
         }
     }
 
+    for (index, output) in recipe.outputs.iter().enumerate() {
+        if output.name.ends_with("-dev") {
+            diagnostics.push(
+                Diagnostic::error(
+                    codes::LINT_022,
+                    "names/convention",
+                    format!(
+                        "output '{}' uses '-dev'; development outputs must use '-devel'",
+                        output.name
+                    ),
+                )
+                .at(format!("outputs[{index}].name")),
+            );
+        }
+        if output.name.ends_with("-common") {
+            diagnostics.push(
+                Diagnostic::error(
+                    codes::LINT_022,
+                    "names/convention",
+                    format!(
+                        "output '{}' uses '-common'; split shared data by function or keep it in the owner",
+                        output.name
+                    ),
+                )
+                .at(format!("outputs[{index}].name")),
+            );
+        }
+    }
+
     for patch in &recipe.patches {
         if !recipe_dir.join(&patch.file).is_file() {
             diagnostics.push(
@@ -569,6 +598,23 @@ tests:
         assert!(codes.contains(&codes::LINT_014.as_str()), "{codes:?}");
         assert!(codes.contains(&codes::LINT_016.as_str()), "{codes:?}");
         assert!(codes.contains(&codes::LINT_020.as_str()), "{codes:?}");
+    }
+
+    #[test]
+    fn development_and_common_output_suffixes_are_errors() {
+        let recipe = RECIPE.replace(
+            "  - name: probe\n    metapackage: true",
+            "  - name: probe-dev\n    metapackage: true\n  - name: probe-common\n    metapackage: true",
+        );
+        let diagnostics = diagnostics(&recipe);
+        assert_eq!(
+            diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.code == codes::LINT_022.as_str())
+                .count(),
+            2,
+            "{diagnostics:?}"
+        );
     }
 
     #[test]

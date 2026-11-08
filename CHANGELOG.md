@@ -10,6 +10,14 @@ does not promise a stable schema or CLI yet.
   absorb a static-library output. Recipes that relied on `@dev` for static
   archives must add `@static` to the output that owns them.
 
+- Package lint now blocks the output conventions that used to be review-only:
+  `-dev` and `-common` output names, static archives outside `-static`
+  (except compiler runtime archives in the compiler's main output), headers or
+  unversioned `.so` links in `-static`, `-static` without a matching `-devel`
+  dependency, `-libs` depending on its command package, and a command package
+  that does not depend on its `-libs` output. Private helpers directly under
+  `/usr/libexec` are also an error.
+
 - **Breaking:** profiles no longer accept `flags` and recipes no longer accept
   `build.flags`. Distribution compiler and linker policy is package-owned:
   install the package that supplies the compiler specs or wrapper scripts in

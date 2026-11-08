@@ -1,5 +1,7 @@
 //! Checks that need the assembled package, not just the recipe.
 
+use std::collections::BTreeSet;
+
 use rpmx_core::error::codes;
 use rpmx_core::package_spec::BinaryPackageSpec;
 use rpmx_core::Error;
@@ -19,11 +21,18 @@ pub struct Finding {
 
 /// Inspect a built package's files.
 pub fn check(packages: &[BinaryPackageSpec]) -> Vec<Finding> {
+    let names: BTreeSet<&str> = packages
+        .iter()
+        .map(|package| package.name.as_str())
+        .collect();
     let mut findings = Vec::new();
     for (index, package) in packages.iter().enumerate() {
         if index == 0 {
             check_main_package(package, &mut findings);
         }
+        check_output_name(package, &mut findings);
+        check_output_files(package, &mut findings);
+        check_output_dependencies(package, &names, &mut findings);
         for require in &package.dependencies.requires {
             if require.starts_with("bundled(") {
                 findings.push(Finding {
@@ -62,21 +71,154 @@ pub fn check(packages: &[BinaryPackageSpec]) -> Vec<Finding> {
     findings
 }
 
+fn check_output_name(package: &BinaryPackageSpec, findings: &mut Vec<Finding>) {
+    if package.name.ends_with("-dev") {
+        findings.push(Finding {
+            path: package.name.clone(),
+            severity: Severity::Error,
+            message: format!(
+                "output '{}' uses '-dev'; development outputs must use '-devel'",
+                package.name
+            ),
+        });
+    }
+    if package.name.ends_with("-common") {
+        findings.push(Finding {
+            path: package.name.clone(),
+            severity: Severity::Error,
+            message: format!(
+                "output '{}' uses '-common'; split shared data by function or keep it in the owner",
+                package.name
+            ),
+        });
+    }
+}
+
+fn check_output_files(package: &BinaryPackageSpec, findings: &mut Vec<Finding>) {
+    if package.name.ends_with("-devel") {
+        for file in &package.files {
+            if is_libdir_file(&file.path) && file.path.ends_with(".a") {
+                findings.push(Finding {
+                    path: package.name.clone(),
+                    severity: Severity::Error,
+                    message: format!(
+                        "development output '{}' ships static archive '{}'; move it to a -static output",
+                        package.name, file.path
+                    ),
+                });
+            }
+        }
+    }
+    if package.name.ends_with("-static") {
+        for file in &package.files {
+            if file.path.starts_with("/usr/include/")
+                || (is_libdir_file(&file.path) && file.path.ends_with(".so"))
+            {
+                findings.push(Finding {
+                    path: package.name.clone(),
+                    severity: Severity::Error,
+                    message: format!(
+                        "static output '{}' ships non-static development file '{}'",
+                        package.name, file.path
+                    ),
+                });
+            }
+        }
+    }
+}
+
+fn check_output_dependencies(
+    package: &BinaryPackageSpec,
+    names: &BTreeSet<&str>,
+    findings: &mut Vec<Finding>,
+) {
+    let requires: BTreeSet<&str> = package
+        .dependencies
+        .requires
+        .iter()
+        .map(|require| require.split_whitespace().next().unwrap_or(require))
+        .collect();
+
+    if let Some(base) = package.name.strip_suffix("-libs") {
+        if requires.contains(base) {
+            findings.push(Finding {
+                path: package.name.clone(),
+                severity: Severity::Error,
+                message: format!(
+                    "runtime library output '{}' must not depend on command package '{}'",
+                    package.name, base
+                ),
+            });
+        }
+        if names.contains(base) && !requires.contains(package.name.as_str()) {
+            findings.push(Finding {
+                path: package.name.clone(),
+                severity: Severity::Error,
+                message: format!(
+                    "command package '{}' must depend on runtime library output '{}'",
+                    base, package.name
+                ),
+            });
+        }
+    }
+
+    if let Some(base) = package.name.strip_suffix("-devel") {
+        let libs = format!("{base}-libs");
+        if names.contains(libs.as_str()) && !requires.contains(libs.as_str()) {
+            findings.push(Finding {
+                path: package.name.clone(),
+                severity: Severity::Error,
+                message: format!(
+                    "development output '{}' must depend on runtime library output '{}'",
+                    package.name, libs
+                ),
+            });
+        }
+    }
+
+    if let Some(base) = package.name.strip_suffix("-static") {
+        let devel = format!("{base}-devel");
+        if !requires.contains(devel.as_str()) {
+            findings.push(Finding {
+                path: package.name.clone(),
+                severity: Severity::Error,
+                message: format!(
+                    "static output '{}' must depend on development output '{}'",
+                    package.name, devel
+                ),
+            });
+        }
+    }
+}
+
 type FileCategory = (&'static str, &'static str, &'static str, fn(&str) -> bool);
 
 fn check_main_package(package: &BinaryPackageSpec, findings: &mut Vec<Finding>) {
+    let static_libraries: Vec<&str> = package
+        .files
+        .iter()
+        .filter(|file| is_libdir_file(&file.path) && file.path.ends_with(".a"))
+        .map(|file| file.path.as_str())
+        .filter(|path| !is_compiler_runtime_archive(path))
+        .collect();
+    if !static_libraries.is_empty() {
+        findings.push(Finding {
+            path: package.name.clone(),
+            severity: Severity::Error,
+            message: format!(
+                "main package '{}' ships static archives (for example {}); move them to a -static output",
+                package.name,
+                static_libraries[..static_libraries.len().min(3)].join(", ")
+            ),
+        });
+    }
+
     let categories: &[FileCategory] = &[
         (
             "development header",
             "development headers",
             "use files.include: [\"@headers\"] or [\"@dev\"]",
             |path| path.starts_with("/usr/include/"),
-        ),
-        (
-            "static library",
-            "static libraries",
-            "use files.include: [\"@static\"]",
-            |path| is_libdir_file(path) && path.ends_with(".a"),
         ),
         (
             "pkg-config or CMake file",
@@ -143,9 +285,23 @@ fn is_libdir_file(path: &str) -> bool {
             .is_some_and(|name| name.starts_with("lib"))
 }
 
+fn is_compiler_runtime_archive(path: &str) -> bool {
+    let name = path.rsplit('/').next().unwrap_or(path);
+    name.starts_with("libgcc") || name == "libgcov.a"
+}
+
 /// The per-path rules, exposed for tests.
 pub fn check_file(path: &str, mode: u32, license: bool, symlink: bool) -> Vec<Finding> {
     let mut findings = Vec::new();
+    if let Some(helper) = path.strip_prefix("/usr/libexec/") {
+        if !helper.contains('/') {
+            findings.push(Finding {
+                path: path.to_string(),
+                severity: Severity::Error,
+                message: format!("private helper {path} must live under /usr/libexec/<component>/"),
+            });
+        }
+    }
     if !symlink && mode & 0o002 != 0 {
         findings.push(Finding {
             path: path.to_string(),
@@ -216,6 +372,52 @@ mod tests {
     use super::{check, check_file, check_main_package, Severity};
     use rpmx_core::package_spec::{BinaryPackageFile, BinaryPackageSpec};
 
+    fn package(name: &str, files: &[&str], requires: &[&str]) -> BinaryPackageSpec {
+        BinaryPackageSpec {
+            name: name.to_string(),
+            version: "1.0".to_string(),
+            release: "1".to_string(),
+            epoch: None,
+            arch: "x86_64".to_string(),
+            summary: "demo".to_string(),
+            license: "MIT".to_string(),
+            description: "demo".to_string(),
+            url: None,
+            source_rpm: "demo-1.0-1.src.rpm".to_string(),
+            source_date_epoch: 1,
+            files: files
+                .iter()
+                .map(|path| BinaryPackageFile {
+                    config: false,
+                    noreplace: false,
+                    doc: false,
+                    license: path.starts_with("/usr/share/licenses/"),
+                    path: (*path).to_string(),
+                    data: Vec::new(),
+                    mode: 0o644,
+                    target: None,
+                    user: None,
+                    group: None,
+                    caps: None,
+                })
+                .collect(),
+            directories: Vec::new(),
+            dependencies: rpmx_core::model::DependencySet {
+                requires: requires.iter().map(|value| (*value).to_string()).collect(),
+                ..Default::default()
+            },
+            scriptlets: Default::default(),
+        }
+    }
+
+    fn errors(findings: &[super::Finding]) -> Vec<&str> {
+        findings
+            .iter()
+            .filter(|finding| finding.severity == Severity::Error)
+            .map(|finding| finding.message.as_str())
+            .collect()
+    }
+
     #[test]
     fn a_bundled_provide_must_not_be_required() {
         let package = BinaryPackageSpec {
@@ -282,7 +484,7 @@ mod tests {
     }
 
     #[test]
-    fn the_main_package_reports_static_archives_with_the_static_preset() {
+    fn a_main_package_static_archive_is_an_error() {
         let package = BinaryPackageSpec {
             name: "demo".to_string(),
             version: "1.0".to_string(),
@@ -315,10 +517,101 @@ mod tests {
         let mut findings = Vec::new();
         check_main_package(&package, &mut findings);
         assert!(findings.iter().any(|finding| {
-            finding.severity == Severity::Warning
-                && finding.message.contains("@static")
-                && !finding.message.contains("@dev")
+            finding.severity == Severity::Error && finding.message.contains("-static")
         }));
+    }
+
+    #[test]
+    fn output_naming_and_split_rules_are_errors() {
+        let findings = check(&[
+            package("demo", &[], &["demo-libs"]),
+            package("demo-libs", &["/usr/lib64/libdemo.so.1"], &[]),
+            package(
+                "demo-devel",
+                &["/usr/include/demo.h", "/usr/lib64/libdemo.a"],
+                &["demo-libs"],
+            ),
+            package("demo-dev", &[], &[]),
+            package("demo-common", &[], &[]),
+            package("demo-static", &["/usr/include/demo.h"], &["demo-devel"]),
+        ]);
+        let messages = errors(&findings);
+        assert!(
+            messages.iter().any(|message| message.contains("-devel")),
+            "{messages:?}"
+        );
+        assert!(
+            messages
+                .iter()
+                .any(|message| message.contains("static archive")),
+            "{messages:?}"
+        );
+        assert!(
+            messages.iter().any(|message| message.contains("-common")),
+            "{messages:?}"
+        );
+        assert!(
+            messages
+                .iter()
+                .any(|message| message.contains("non-static")),
+            "{messages:?}"
+        );
+    }
+
+    #[test]
+    fn runtime_library_dependency_direction_is_checked() {
+        let findings = check(&[
+            package("demo", &[], &[]),
+            package("demo-libs", &["/usr/lib64/libdemo.so.1"], &["demo"]),
+            package("demo-devel", &["/usr/include/demo.h"], &[]),
+        ]);
+        let messages = errors(&findings);
+        assert!(
+            messages
+                .iter()
+                .any(|message| message.contains("must not depend")),
+            "{messages:?}"
+        );
+        assert!(
+            messages
+                .iter()
+                .any(|message| message.contains("must depend on runtime")),
+            "{messages:?}"
+        );
+        assert!(
+            messages
+                .iter()
+                .any(|message| message.contains("must depend on runtime library")),
+            "{messages:?}"
+        );
+    }
+
+    #[test]
+    fn private_helpers_need_a_component_directory() {
+        assert!(check_file("/usr/libexec/frcode", 0o755, false, false)
+            .iter()
+            .any(|finding| finding.severity == Severity::Error));
+        assert!(check_file("/usr/libexec/findutils/frcode", 0o755, false, false).is_empty());
+    }
+
+    #[test]
+    fn compiler_runtime_archives_are_allowed_in_the_main_package() {
+        let package = package(
+            "gcc-16",
+            &[
+                "/usr/lib/gcc/x86_64-linux/16/libgcc.a",
+                "/usr/lib/gcc/x86_64-linux/16/libgcov.a",
+            ],
+            &[],
+        );
+        let mut findings = Vec::new();
+        check_main_package(&package, &mut findings);
+        assert!(
+            !findings
+                .iter()
+                .any(|finding| finding.severity == Severity::Error),
+            "{findings:?}"
+        );
     }
 
     #[test]

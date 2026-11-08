@@ -80,6 +80,14 @@ main package receives development headers, static libraries, pkg-config/CMake
 files, documentation or locale source data, the package lint warns and names
 the matching `@dev`, `@static`, `@pkgconfig`, `@doc` or `@locales` preset.
 
+Package lint also enforces output conventions as errors: `-dev` and `-common`
+names, static archives outside `-static` (compiler runtime archives in the
+compiler's main output are the exception), headers or unversioned `.so` links
+in `-static`, missing `-devel` dependencies on `-static`, and the wrong
+dependency direction between a command package and its `-libs` output. A
+private helper directly under `/usr/libexec` is rejected; put it in
+`/usr/libexec/<component>/`.
+
 ### Artifacts
 
 | Path | Meaning |
