@@ -127,8 +127,10 @@ diagnostics. `explain --json`, `test --install-dir --json`, `doctor --json` and
 Steps see a fixed environment: `PATH`, `HOME`, `TMPDIR`, `LANG`, `LC_ALL`,
 `TZ`, `SOURCE_DATE_EPOCH`, `SRC`, `BUILD`, `STAGE`, `RPMX_BUNDLED_DIR`,
 `PREFIX`, `LIBDIR`, `JOBS`, `RPMX_HOST_ARCH`, `RPMX_EXEC_ARCH`,
-`RPMX_TARGET_ARCH`, `RPMX_CROSS` and `RPMX_EMULATED`. The host environment is
-not inherited. `SOURCE_DATE_EPOCH`, `SRC`, `BUILD`, `STAGE`,
+`RPMX_TARGET_ARCH`, `RPMX_CROSS` and `RPMX_EMULATED`. A profile with
+`flags` also exports `CFLAGS`, `CXXFLAGS` and `LDFLAGS`; a recipe's values for
+those variables extend the profile's flags instead of replacing them. The host
+environment is not inherited. `SOURCE_DATE_EPOCH`, `SRC`, `BUILD`, `STAGE`,
 `RPMX_BUNDLED_DIR`, `PREFIX`, `LIBDIR` and `JOBS` are reserved and cannot be
 set by a step.
 
@@ -147,7 +149,7 @@ A profile with a `cross` block also exports:
 | `RPMX_SYSROOT` | Guest path of the read-only sysroot (`/sysroot`). |
 | `CC`, `CXX`, `AR`, `LD`, `STRIP`, `OBJCOPY` | Toolchain commands. |
 | `PKG_CONFIG`, `PKG_CONFIG_SYSROOT_DIR`, `PKG_CONFIG_LIBDIR` | Sysroot-aware pkg-config. |
-| `CFLAGS`, `CXXFLAGS`, `LDFLAGS` | `--sysroot`, the rpath link, and any profile flags. |
+| `CFLAGS`, `CXXFLAGS`, `LDFLAGS` | `--sysroot`, the rpath link, and any profile or cross flags. |
 | `RPMX_CMAKE_TOOLCHAIN_FILE`, `RPMX_MESON_CROSS_FILE` | Generated files in `${BUILD}/.rpmx`. |
 | `GOOS`, `GOARCH`, `CGO_ENABLED` | Go's cross settings; cgo stays on for a distribution package. |
 

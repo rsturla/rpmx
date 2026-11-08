@@ -128,6 +128,7 @@ pub fn assemble_fetched(
         target: target_arch,
         sysroot: options.sysroot,
         cross: options.cross,
+        flags: None,
         workspace: options.workspace,
         stage: options.stage,
         root: options.root,

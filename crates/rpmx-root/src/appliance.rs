@@ -104,6 +104,7 @@ pub fn profile_for(profile: &Profile, name: &str) -> Profile {
             docs: false,
         },
         paths: profile.paths.clone(),
+        flags: Default::default(),
         sbom: false,
     }
 }
@@ -141,6 +142,7 @@ pub fn profile_from_lock(lock: &RootLock) -> Result<Profile> {
             prefix: lock.prefix.clone(),
             libdir: lock.libdir.clone(),
         },
+        flags: Default::default(),
         sbom: false,
     })
 }
@@ -310,6 +312,7 @@ mod tests {
                 docs: true,
             },
             paths: Default::default(),
+            flags: Default::default(),
             sbom: true,
         }
     }

@@ -27,6 +27,8 @@ pub struct SrpmRequest<'a> {
     pub sysroot_lock: Option<&'a rpmx_core::root::RootLock>,
     /// Toolchain recorded in the embedded cross block.
     pub cross: Option<&'a rpmx_core::guest::CrossToolchain>,
+    /// Distribution flags recorded for a faithful rebuild.
+    pub flags: Option<&'a rpmx_core::guest::BuildFlags>,
     pub signing: &'a OptionalSigningArgs,
     pub quiet: bool,
     pub pipeline_dir: Option<&'a Path>,
@@ -49,6 +51,12 @@ pub fn run(args: SrpmArgs, pipeline_dir: Option<&Path>) -> Result<Vec<PathBuf>, 
         )?
         .unwrap_or_else(|| rpmx_core::arch::native_arch().to_string()),
     };
+    let flags = crate::commands::autoroot::flags(
+        &declared.recipe,
+        &declared.root,
+        args.policy.profile.as_deref(),
+        &arch,
+    )?;
     let work;
     let (sources, source_date_epoch) = match args.sources.as_deref() {
         Some(path) => (path.to_path_buf(), args.source_date_epoch),
@@ -102,6 +110,7 @@ pub fn run(args: SrpmArgs, pipeline_dir: Option<&Path>) -> Result<Vec<PathBuf>, 
         exec: rpmx_core::arch::Arch::parse(&arch)?,
         sysroot_lock: None,
         cross: None,
+        flags: (!flags.is_empty()).then_some(&flags),
         signing: &args.signing,
         quiet: args.quiet,
         pipeline_dir,
@@ -181,6 +190,7 @@ pub fn execute(request: SrpmRequest<'_>) -> Result<Vec<PathBuf>, Error> {
         root_lock: root_lock.as_ref(),
         sysroot_lock: request.sysroot_lock,
         cross: request.cross,
+        flags: request.flags,
         sbom,
         replaced: None,
     })?;

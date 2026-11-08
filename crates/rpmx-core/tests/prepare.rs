@@ -65,6 +65,7 @@ fn source_package_contains_recipe_lock_manifest_and_sources() {
         root_lock: None,
         sysroot_lock: None,
         cross: None,
+        flags: None,
         sbom: true,
         replaced: None,
     })
@@ -101,6 +102,7 @@ fn source_package_rejects_reserved_source_names() {
         root_lock: None,
         sysroot_lock: None,
         cross: None,
+        flags: None,
         sbom: true,
         replaced: None,
     })
@@ -168,6 +170,7 @@ outputs:
         root_lock: None,
         sysroot_lock: None,
         cross: None,
+        flags: None,
         sbom: true,
         replaced: None,
     })
@@ -328,6 +331,7 @@ fn source_package_embeds_included_recipe_fragments() {
         root_lock: None,
         sysroot_lock: None,
         cross: None,
+        flags: None,
         sbom: true,
         replaced: None,
     })
@@ -599,6 +603,7 @@ fn a_cross_source_package_embeds_the_sysroot_and_toolchain() {
         root_lock: Some(&build_root),
         sysroot_lock: Some(&sysroot),
         cross: Some(&toolchain),
+        flags: None,
         sbom: true,
         replaced: None,
     })
@@ -637,6 +642,7 @@ fn a_cross_source_package_embeds_the_sysroot_and_toolchain() {
         root_lock: Some(&build_root),
         sysroot_lock: None,
         cross: None,
+        flags: None,
         sbom: true,
         replaced: None,
     })

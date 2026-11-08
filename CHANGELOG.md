@@ -5,6 +5,12 @@ does not promise a stable schema or CLI yet.
 
 ## Unreleased
 
+- Profiles can declare `flags.cflags`, `flags.cxxflags` and `flags.ldflags`,
+  with optional per-architecture additions under `flags.arch`. The sandbox
+  exports them for native and cross builds, a recipe's own values extend them,
+  and the package lock and SRPM record the resolved flags so `rpmx rebuild`
+  reproduces them without the profile.
+
 - `source-date-epoch` is no longer required in every recipe. When it is omitted,
   rpmx uses the newest mtime from the source archives, or the pinned git commit
   time, and records that value in the SRPM and lock. `rpmx-defaults.yaml` can

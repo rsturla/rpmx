@@ -575,7 +575,7 @@ The step writes `$PREFIX/lib/debug/<path>.debug`, strips the binary and adds
 always a missing `-g`, so an opt-in cannot silently produce an empty package.
 Packages with no ELF (noarch, metapackages) omit both the step and the output.
 The step uses `$OBJCOPY`/`$STRIP`, so it keeps working in a cross build; a
-recipe's `CFLAGS` extend the profile's cross flags rather than replacing them.
+recipe's `CFLAGS` extend the profile's flags rather than replacing them.
 
 ### 5.9 Tests
 

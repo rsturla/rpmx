@@ -17,6 +17,30 @@ pub const LIBDIR: &str = "/usr/lib64";
 /// move `STAGE`.
 pub const SYSROOT: &str = "/sysroot";
 
+/// Toolchain flags every step sees, after the profile has resolved them for
+/// one architecture.
+///
+/// They are ordinary compiler and linker arguments, not a policy enum: a
+/// distribution can harden a native build with the same fields it uses for a
+/// cross build. The sandbox places them before a recipe's own flags so a
+/// recipe can add to, but not silently erase, its distribution's defaults.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BuildFlags {
+    #[serde(default)]
+    pub cflags: Vec<String>,
+    #[serde(default)]
+    pub cxxflags: Vec<String>,
+    #[serde(default)]
+    pub ldflags: Vec<String>,
+}
+
+impl BuildFlags {
+    pub fn is_empty(&self) -> bool {
+        self.cflags.is_empty() && self.cxxflags.is_empty() && self.ldflags.is_empty()
+    }
+}
+
 /// The commands a cross toolchain provides.
 ///
 /// The default names follow the GNU convention, `<triple>-gcc`. A distribution
