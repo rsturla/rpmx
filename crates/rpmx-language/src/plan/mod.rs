@@ -111,6 +111,7 @@ pub struct PlannedOutput {
     pub dependencies: crate::model::DependencySet,
     pub bundled: Vec<crate::model::BundledDeclaration>,
     pub generators: crate::model::OutputGenerators,
+    pub lint: crate::model::OutputLint,
     pub scriptlets: crate::model::Scriptlets,
 }
 

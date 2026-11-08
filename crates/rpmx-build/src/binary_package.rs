@@ -120,6 +120,7 @@ pub fn prepare_binary_packages(
             source_date_epoch: options.source_date_epoch,
             files,
             directories,
+            lint: planned.lint.clone(),
             dependencies: rpmx_language::model::DependencySet {
                 requires,
                 recommends: planned.dependencies.recommends.clone(),

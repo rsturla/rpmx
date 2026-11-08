@@ -208,6 +208,7 @@ pub(crate) fn expand_outputs(
             dependencies: output.dependencies.to_set(),
             bundled: output.bundled,
             generators: output.generators,
+            lint: output.lint,
             scriptlets: output.scriptlets,
         });
     }
