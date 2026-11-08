@@ -158,7 +158,7 @@ available in `files.include` and `files.exclude`:
 
 | Preset | Expands to |
 | --- | --- |
-| `@dev` | headers, static libraries, unversioned `.so` linker scripts, pkg-config, aclocal and CMake files |
+| `@dev` | headers, unversioned `.so` linker scripts, pkg-config, aclocal and CMake files |
 | `@headers` | `/usr/include/**` |
 | `@static` | `/usr/lib*/lib*.a` |
 | `@pkgconfig` | `/usr/lib*/pkgconfig/**`, `/usr/share/pkgconfig/**` |

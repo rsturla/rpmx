@@ -274,7 +274,6 @@ fn file_preset(name: &str) -> Option<&'static [&'static str]> {
     match name {
         "@dev" => Some(&[
             "/usr/include/**",
-            "/usr/lib*/lib*.a",
             "/usr/lib*/lib*.so",
             "/usr/lib*/pkgconfig/**",
             "/usr/share/pkgconfig/**",
@@ -419,4 +418,17 @@ pub(crate) fn expand_tests(
         });
     }
     Ok(planned)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::file_preset;
+
+    #[test]
+    fn the_dev_preset_does_not_claim_static_archives() {
+        let dev = file_preset("@dev").expect("@dev");
+        let static_libs = file_preset("@static").expect("@static");
+        assert!(!dev.contains(&"/usr/lib*/lib*.a"), "{dev:?}");
+        assert!(static_libs.contains(&"/usr/lib*/lib*.a"), "{static_libs:?}");
+    }
 }

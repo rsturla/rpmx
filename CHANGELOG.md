@@ -5,6 +5,11 @@ does not promise a stable schema or CLI yet.
 
 ## Unreleased
 
+- **Breaking:** `@dev` no longer expands to `/usr/lib*/lib*.a`. Static archives
+  are only selected by `@static`, so a development output cannot silently
+  absorb a static-library output. Recipes that relied on `@dev` for static
+  archives must add `@static` to the output that owns them.
+
 - **Breaking:** profiles no longer accept `flags` and recipes no longer accept
   `build.flags`. Distribution compiler and linker policy is package-owned:
   install the package that supplies the compiler specs or wrapper scripts in

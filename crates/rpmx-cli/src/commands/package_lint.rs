@@ -75,7 +75,7 @@ fn check_main_package(package: &BinaryPackageSpec, findings: &mut Vec<Finding>) 
         (
             "static library",
             "static libraries",
-            "use files.include: [\"@static\"] or [\"@dev\"]",
+            "use files.include: [\"@static\"]",
             |path| is_libdir_file(path) && path.ends_with(".a"),
         ),
         (
@@ -278,6 +278,46 @@ mod tests {
         check_main_package(&package, &mut findings);
         assert!(findings.iter().any(|finding| {
             finding.severity == Severity::Warning && finding.message.contains("@headers")
+        }));
+    }
+
+    #[test]
+    fn the_main_package_reports_static_archives_with_the_static_preset() {
+        let package = BinaryPackageSpec {
+            name: "demo".to_string(),
+            version: "1.0".to_string(),
+            release: "1".to_string(),
+            epoch: None,
+            arch: "x86_64".to_string(),
+            summary: "demo".to_string(),
+            license: "MIT".to_string(),
+            description: "demo".to_string(),
+            url: None,
+            source_rpm: "demo-1.0-1.src.rpm".to_string(),
+            source_date_epoch: 1,
+            files: vec![BinaryPackageFile {
+                config: false,
+                noreplace: false,
+                doc: false,
+                license: false,
+                path: "/usr/lib64/libdemo.a".to_string(),
+                data: Vec::new(),
+                mode: 0o644,
+                target: None,
+                user: None,
+                group: None,
+                caps: None,
+            }],
+            directories: Vec::new(),
+            dependencies: rpmx_core::model::DependencySet::default(),
+            scriptlets: Default::default(),
+        };
+        let mut findings = Vec::new();
+        check_main_package(&package, &mut findings);
+        assert!(findings.iter().any(|finding| {
+            finding.severity == Severity::Warning
+                && finding.message.contains("@static")
+                && !finding.message.contains("@dev")
         }));
     }
 
