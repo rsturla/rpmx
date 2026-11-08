@@ -46,11 +46,18 @@ impl TestRpm {
                 ),
             )
         })?;
+        let mut provides = metadata
+            .provides
+            .iter()
+            .map(|dependency| dependency.name.clone())
+            .collect::<BTreeSet<_>>();
+        provides.insert(metadata.name.clone());
+        let requires = metadata.required_names();
         Ok(Self {
             name: metadata.name,
             path: path.to_path_buf(),
-            provides: metadata.provides,
-            requires: metadata.requires,
+            provides,
+            requires,
             files: metadata.files,
         })
     }
