@@ -21,7 +21,8 @@ rpmx lint --profile fedora-44
 - `http` locators;
 - missing maintainers;
 - empty tests and empty build pipelines;
-- unused `vars`.
+- unused `vars`;
+- output names using `-dev` instead of `-devel`, or the `-common` catch-all.
 
 `--strict` makes warnings fatal. Every diagnostic has a stable code such as
 `RPMX-LINT-010`.

@@ -198,6 +198,8 @@ pub mod codes {
         LINT_020 = "RPMX-LINT-020",
         /// A build has an empty pipeline.
         LINT_021 = "RPMX-LINT-021",
+        /// An output name violates the package naming convention.
+        LINT_022 = "RPMX-LINT-022",
         /// A package lock cannot be read, parsed or written.
         LOCK_001 = "RPMX-LOCK-001",
         /// The recipe or plan has drifted from its package lock.
