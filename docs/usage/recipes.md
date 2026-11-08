@@ -179,6 +179,28 @@ available in `files.include` and `files.exclude`:
 `tools` entries are **package names**, not command names. Use `bash` rather
 than `sh`, `gcc` rather than `cc`.
 
+#### Toolchain flag exceptions
+
+A profile supplies the distribution's `CFLAGS`, `CXXFLAGS` and `LDFLAGS`.
+When a package genuinely cannot compile with one of those flags, name the
+exact string under `build.flags.exclude`:
+
+```yaml
+build:
+  flags:
+    exclude:
+      - -fzero-init-padding-bits=all
+```
+
+The exclusion runs after the profile's common and architecture-specific flags
+are merged, and before the recipe's own `environment` values are appended. It
+removes the exact string from all three lists. Use it narrowly: prefer a
+compiler option that disables one behaviour; exclude the flag only when the
+compiler or source cannot parse it.
+
+Because exclusions are resolved into the package lock and SRPM, `rpmx rebuild`
+reproduces both the profile and the exception without the original checkout.
+
 ### 5.3 Build dependencies
 
 ```yaml
@@ -457,6 +479,8 @@ is what you want. `strip` is a step. `go/build`, `go/test`, `go/vendor`,
 `python/install-wheel` are also available. `license/copy` copies one or more
 license files into `$STAGE$PREFIX/share/licenses/<output>/` for each output, so
 a split package does not duplicate the loop or accidentally share one path.
+`test/hardening-check` checks the staged ELF files for PIE, NX, RELRO,
+BIND_NOW, stack protector, fortify, CFI/branch protection and build IDs.
 
 A named local step is a YAML file under `pipelines/`:
 
@@ -575,7 +599,7 @@ The step writes `$PREFIX/lib/debug/<path>.debug`, strips the binary and adds
 always a missing `-g`, so an opt-in cannot silently produce an empty package.
 Packages with no ELF (noarch, metapackages) omit both the step and the output.
 The step uses `$OBJCOPY`/`$STRIP`, so it keeps working in a cross build; a
-recipe's `CFLAGS` extend the profile's cross flags rather than replacing them.
+recipe's `CFLAGS` extend the profile's flags rather than replacing them.
 
 ### 5.9 Tests
 
@@ -641,6 +665,35 @@ outputs:
   block; the same name may be reused by different outputs or matrix cells. A
   test name cannot contain `/`.
 - `--junit FILE` writes JUnit XML.
+
+#### Hardening check
+
+A package can assert that its staged ELF files carry the profile's hardening:
+
+```yaml
+tests:
+  - name: hardening
+    stage: build
+    pipeline:
+      - uses: test/hardening-check
+```
+
+The step walks all of `$STAGE` and fails if an executable or shared object is
+missing PIE, NX, RELRO, BIND_NOW, stack-protector, fortified libc, the target's
+CFI/branch-protection property, or a build ID. Narrow it with `paths` and opt
+out of individual checks with `skip`:
+
+```yaml
+      - uses: test/hardening-check
+        with:
+          paths: [/usr/bin/hello]
+          skip: [fortify, cf-protection]
+```
+
+Use this for packages whose output should carry the full profile. It is not a
+distro-wide gate: packages with hand-written assembly, static binaries or
+language runtimes may legitimately need a skip, and a noarch package has no ELF
+to check.
 - `test.environment.contents.packages` lists packages installed only for that
   test's root. This mirrors Wolfi/melange test environments. Tests with the
   same output and package set share a root; a different set gets a separate

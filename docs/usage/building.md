@@ -128,7 +128,9 @@ rpmx source --locked
 - every cell (id, package, version, release, outputs);
 - step digests for source-assembly, build and every test, with a `scope`;
 - the root requirement digest, architecture and, when known,
-  `closure_digest` and `root_digest`.
+  `closure_digest` and `root_digest`;
+- the profile's resolved compiler and linker flags, so a hardening change is
+  visible as lock drift.
 
 `rpmx lock --root-lock FILE` records the exact resolved closure even when the
 recipe does not declare a root. `--check` exits 3 on drift. `build --locked`
@@ -203,9 +205,10 @@ rpmx rebuild out/hello-0.1.0-1.fc44.src.rpm
 `build` runs both internally.
 
 `rebuild` extracts the SRPM, reads its authoritative `package.lock.json`, and
-uses the embedded `root.lock.json`. If the root is not cached, it assembles it
-from the CAS automatically. `--offline` fails if the root or a source is
-missing. `--root` or `--root-image` override the embedded root.
+uses the embedded `root.lock.json` and toolchain flags. If the root is not
+cached, it assembles it from the CAS automatically. `--offline` fails if the
+root or a source is missing. `--root` or `--root-image` override the embedded
+root.
 
 The SRPM embeds the recipe and every included fragment, the package lock,
 resolved step definitions, sources and patches. It does not need the original checkout. A rebuild uses the embedded

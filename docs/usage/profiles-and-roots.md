@@ -27,6 +27,10 @@ options:
 paths:
   prefix: /usr
   libdir: /usr/lib64
+flags:
+  cflags: [-O2, -g, -fstack-protector-strong]
+  cxxflags: [-O2, -g, -fstack-protector-strong]
+  ldflags: [-Wl,-z,relro,-z,now]
 sbom: true
 ```
 
@@ -37,6 +41,30 @@ and `paths.libdir` set the install layout: the executor exports them as
 `PREFIX` and `LIBDIR`, substitutes them for `${prefix}` and `${libdir}`, and
 records them in the root lock. `libdir` must be inside `prefix`. Module streams
 and `reinstall` are rejected today.
+
+`flags.cflags`, `flags.cxxflags` and `flags.ldflags` are the distribution's
+toolchain flags. They apply to native and cross builds and are exported as
+`CFLAGS`, `CXXFLAGS` and `LDFLAGS` before a recipe's own values. A recipe can
+add flags through `build.environment`, or remove exact flags it cannot compile
+with through `build.flags.exclude`. The resolved set, including any
+exclusions, is recorded in the package lock and SRPM, so an exception is
+visible rather than a silent weakening of the profile's hardening.
+`flags.arch` adds flags for one target, which keeps x86-only options such as
+`-fcf-protection` out of an aarch64 build:
+
+```yaml
+flags:
+  cflags: [-O2, -fstack-protector-strong]
+  ldflags: [-Wl,-z,relro,-z,now]
+  arch:
+    x86_64:
+      cflags: [-fcf-protection=full]
+    aarch64:
+      cflags: [-mbranch-protection=standard]
+```
+
+The resolved flags are recorded in the package lock and the SRPM, so
+`rpmx rebuild` reproduces them without the profile.
 
 ### Local repositories
 

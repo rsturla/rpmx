@@ -41,8 +41,12 @@ cross:
 - `cross.triple` overrides the GNU triple (default: the target's).
 - `cross.bootstrap: true` allows the build root and the sysroot to share an
   architecture (see [Native bootstrap](#native-bootstrap)).
-- `cross.cflags`, `cross.cxxflags`, `cross.ldflags` add the distribution's own
-  toolchain flags.
+- `flags.cflags`, `flags.cxxflags` and `flags.ldflags` at the top level are
+  the distribution's toolchain flags. They apply to every build, including a
+  cross build, and `flags.arch` can add target-specific options.
+- `cross.cflags`, `cross.cxxflags`, `cross.ldflags` add toolchain quirks that
+  belong only to the cross build. They are appended after the profile's common
+  flags.
 
 Step dependencies choose their root automatically. `needs.tools` and
 `build.dependencies.tools` are build-root packages; `needs.host`,

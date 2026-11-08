@@ -7,7 +7,7 @@ use crate::runner::{
 };
 use rpmx_base::arch::Arch;
 use rpmx_base::error::{codes, Error, Result};
-use rpmx_base::guest::CrossToolchain;
+use rpmx_base::guest::{BuildFlags, CrossToolchain};
 use rpmx_language::plan::PlannedStep;
 
 /// Deterministic environment for every step. The host environment is never
@@ -43,6 +43,8 @@ pub struct SandboxConfig<'a> {
     pub sysroot: Option<&'a Path>,
     /// Toolchain commands used when `sysroot` is set.
     pub cross: Option<&'a CrossToolchain>,
+    /// Distribution toolchain flags, already resolved for the target arch.
+    pub flags: Option<&'a BuildFlags>,
     pub workspace: &'a Path,
     pub stage: &'a Path,
     pub root: Option<&'a Path>,
@@ -170,7 +172,8 @@ impl<'a> Sandbox<'a> {
             step.env
                 .iter()
                 .map(|(key, value)| (key.clone(), expand(value, self))),
-            self.config.sysroot.is_some(),
+            self.config.sysroot.is_some()
+                || self.config.flags.is_some_and(|flags| !flags.is_empty()),
         );
 
         let label = if step.label.is_empty() {
@@ -271,11 +274,12 @@ impl<'a> Sandbox<'a> {
 fn merge_step_env(
     base: impl IntoIterator<Item = (String, String)>,
     step: impl IntoIterator<Item = (String, String)>,
-    cross: bool,
+    append_toolchain: bool,
 ) -> BTreeMap<String, String> {
     let mut env: BTreeMap<String, String> = base.into_iter().collect();
     for (key, value) in step {
-        let extends_toolchain = cross && matches!(key.as_str(), "CFLAGS" | "CXXFLAGS" | "LDFLAGS");
+        let extends_toolchain =
+            append_toolchain && matches!(key.as_str(), "CFLAGS" | "CXXFLAGS" | "LDFLAGS");
         match env.get_mut(&key) {
             Some(base) if extends_toolchain => {
                 if !base.is_empty() && !value.is_empty() {
@@ -372,21 +376,16 @@ pub fn environment(config: &SandboxConfig<'_>) -> Vec<(&'static str, String)> {
     ];
     let mut cflags = String::new();
     let mut cxxflags = String::new();
+    if let Some(flags) = config.flags {
+        append_flags(&mut cflags, &flags.cflags);
+        append_flags(&mut cxxflags, &flags.cxxflags);
+    }
     if let (Some(toolchain), Some(_)) = (config.cross, config.sysroot) {
         let sysroot = rpmx_base::guest::SYSROOT;
-        for (flags, extra) in [
-            (&mut cflags, &toolchain.cflags),
-            (&mut cxxflags, &toolchain.cxxflags),
-        ] {
-            if !flags.is_empty() {
-                flags.push(' ');
-            }
-            flags.push_str(&format!("--sysroot={sysroot}"));
-            for flag in extra {
-                flags.push(' ');
-                flags.push_str(flag);
-            }
-        }
+        append_flag(&mut cflags, &format!("--sysroot={sysroot}"));
+        append_flag(&mut cxxflags, &format!("--sysroot={sysroot}"));
+        append_flags(&mut cflags, &toolchain.cflags);
+        append_flags(&mut cxxflags, &toolchain.cxxflags);
     }
     if !cflags.is_empty() {
         env.push(("CFLAGS", cflags));
@@ -396,24 +395,51 @@ pub fn environment(config: &SandboxConfig<'_>) -> Vec<(&'static str, String)> {
     }
     if let (Some(toolchain), Some(_sysroot)) = (config.cross, config.sysroot) {
         env.extend(cross_env(config, toolchain));
-        // cgo reads CGO_CFLAGS/CGO_LDFLAGS, which default to `-O2 -g` and do
-        // not inherit CFLAGS/LDFLAGS. Without them the cgo stubs are compiled
-        // without the sysroot and cannot find a single header.
-        let derived: Vec<(&'static str, String)> = [
-            ("CGO_CFLAGS", "CFLAGS"),
-            ("CGO_LDFLAGS", "LDFLAGS"),
-            ("CGO_CXXFLAGS", "CXXFLAGS"),
-        ]
-        .into_iter()
-        .filter_map(|(target, source)| {
-            env.iter()
-                .find(|(key, _)| *key == source)
-                .map(|(_, value)| (target, value.clone()))
-        })
-        .collect();
-        env.extend(derived);
     }
+    if let Some(flags) = config.flags {
+        append_env_flags(&mut env, "LDFLAGS", &flags.ldflags);
+    }
+    // cgo reads CGO_CFLAGS/CGO_LDFLAGS, which default to `-O2 -g` and do not
+    // inherit CFLAGS/LDFLAGS. Without them the cgo stubs are compiled without
+    // the sysroot or the distribution's hardening flags.
+    let derived: Vec<(&'static str, String)> = [
+        ("CGO_CFLAGS", "CFLAGS"),
+        ("CGO_LDFLAGS", "LDFLAGS"),
+        ("CGO_CXXFLAGS", "CXXFLAGS"),
+    ]
+    .into_iter()
+    .filter_map(|(target, source)| {
+        env.iter()
+            .find(|(key, _)| *key == source)
+            .map(|(_, value)| (target, value.clone()))
+    })
+    .collect();
+    env.extend(derived);
     env
+}
+
+fn append_flag(value: &mut String, flag: &str) {
+    if !value.is_empty() {
+        value.push(' ');
+    }
+    value.push_str(flag);
+}
+
+fn append_flags(value: &mut String, flags: &[String]) {
+    for flag in flags {
+        append_flag(value, flag);
+    }
+}
+
+fn append_env_flags(env: &mut Vec<(&'static str, String)>, key: &'static str, flags: &[String]) {
+    if flags.is_empty() {
+        return;
+    }
+    let value = flags.join(" ");
+    match env.iter_mut().find(|(existing, _)| *existing == key) {
+        Some((_, existing)) => append_flag(existing, &value),
+        None => env.push((key, value)),
+    }
 }
 
 /// CMake and Meson cannot be told to cross-compile with environment variables
@@ -606,6 +632,7 @@ mod tests {
             target: Arch::Aarch64,
             sysroot: Some(Path::new("/cache/sysroots/arm")),
             cross: Some(&toolchain),
+            flags: None,
             workspace: Path::new("/tmp"),
             stage: Path::new("/tmp"),
             root: Some(Path::new("/root")),
@@ -637,6 +664,45 @@ mod tests {
         assert_eq!(env["RPMX_CROSS"], "1");
         assert_eq!(env["RPMX_EMULATED"], "0");
         assert_eq!(env["RPMX_EXEC_ARCH"], "x86_64");
+    }
+
+    #[test]
+    fn native_profile_flags_are_exported_without_a_sysroot() {
+        use rpmx_base::guest::BuildFlags;
+
+        let flags = BuildFlags {
+            cflags: vec!["-O2".to_string(), "-fstack-protector-strong".to_string()],
+            cxxflags: vec!["-O2".to_string(), "-D_GLIBCXX_ASSERTIONS".to_string()],
+            ldflags: vec!["-Wl,-z,relro,-z,now".to_string()],
+        };
+        let config = SandboxConfig {
+            runner: RunnerKind::Auto,
+            host: Arch::X86_64,
+            exec: Arch::X86_64,
+            target: Arch::X86_64,
+            sysroot: None,
+            cross: None,
+            flags: Some(&flags),
+            workspace: Path::new("/tmp"),
+            stage: Path::new("/tmp"),
+            root: Some(Path::new("/root")),
+            assets: RunnerAssets::default(),
+            image: None,
+            prefix: "/usr",
+            libdir: "/usr/lib64",
+            source_date_epoch: 1,
+            jobs: NonZeroU32::new(1).expect("jobs"),
+            timeout: NonZeroU64::new(1).expect("timeout"),
+        };
+        let env: std::collections::BTreeMap<_, _> =
+            super::environment(&config).into_iter().collect();
+        assert_eq!(env["CFLAGS"], "-O2 -fstack-protector-strong");
+        assert_eq!(env["CXXFLAGS"], "-O2 -D_GLIBCXX_ASSERTIONS");
+        assert_eq!(env["LDFLAGS"], "-Wl,-z,relro,-z,now");
+        assert_eq!(env["CGO_CFLAGS"], env["CFLAGS"]);
+        assert_eq!(env["CGO_LDFLAGS"], env["LDFLAGS"]);
+        assert!(!env["CFLAGS"].contains("--sysroot"));
+        assert_eq!(env["RPMX_CROSS"], "0");
     }
 
     #[test]
@@ -684,6 +750,7 @@ mod tests {
             target: Arch::Aarch64,
             sysroot: Some(Path::new("/cache/sysroots/arm")),
             cross: Some(&toolchain),
+            flags: None,
             workspace: workspace.path(),
             stage: Path::new("/tmp"),
             root: Some(Path::new("/root")),
@@ -725,6 +792,7 @@ mod tests {
             target: Arch::X86_64,
             sysroot: None,
             cross: None,
+            flags: None,
             workspace: Path::new("/tmp"),
             stage: Path::new("/tmp"),
             root: Some(Path::new("/root")),

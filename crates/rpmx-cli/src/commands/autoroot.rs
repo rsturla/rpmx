@@ -44,6 +44,8 @@ pub struct AutomaticRoot {
     pub sysroot: Option<Box<AutomaticRoot>>,
     /// Toolchain commands for a cross build.
     pub cross: Option<rpmx_core::guest::CrossToolchain>,
+    /// Distribution toolchain flags resolved for this root's target.
+    pub flags: rpmx_core::guest::BuildFlags,
 }
 
 /// The merged root requirement for a recipe: profile, name and digest.
@@ -57,6 +59,8 @@ pub struct Requirement {
     pub sysroot: Option<SysrootRequirement>,
     /// Toolchain commands for a cross build.
     pub cross: Option<rpmx_core::guest::CrossToolchain>,
+    /// Distribution toolchain flags resolved for this target.
+    pub flags: rpmx_core::guest::BuildFlags,
 }
 
 /// The target half of a cross build: a second closure with its own identity.
@@ -128,6 +132,58 @@ pub fn declared_arch(
     } else {
         Ok(None)
     }
+}
+
+/// The toolchain flags a recipe's effective profile applies to `arch`.
+///
+/// This is deliberately separate from [`requirement`]: a build may use an
+/// explicit root, or already have one assembled, and still needs the profile's
+/// compiler flags. A recipe with no profile (an inline root) has no profile
+/// flags to apply.
+pub fn flags(
+    recipe: &Recipe,
+    recipe_path: &Path,
+    profile: Option<&Path>,
+    arch: &str,
+) -> Result<rpmx_core::guest::BuildFlags, Error> {
+    let path = match profile {
+        Some(path) => Some(path.to_path_buf()),
+        None => recipe
+            .build
+            .root
+            .as_ref()
+            .and_then(|root| root.profile.as_deref())
+            .map(|name| {
+                let directory = recipe_path.parent().unwrap_or_else(|| Path::new("."));
+                discover_profile(name, directory)
+            })
+            .transpose()?,
+    };
+    let Some(path) = path else {
+        return Ok(rpmx_core::guest::BuildFlags::default());
+    };
+    let profile = load_profile(&path)?.for_target(arch)?;
+    Ok(apply_recipe_flags(
+        recipe,
+        profile.flags.for_arch(profile.arch()),
+    ))
+}
+
+/// Remove the flags a recipe explicitly excludes from the resolved set.
+///
+/// Exclusions are exact strings so a profile change cannot silently widen an
+/// exception. They apply to every language list; a flag is usually in only
+/// one, and retaining the others is harmless.
+fn apply_recipe_flags(
+    recipe: &Recipe,
+    mut flags: rpmx_core::guest::BuildFlags,
+) -> rpmx_core::guest::BuildFlags {
+    for excluded in &recipe.build.flags.exclude {
+        flags.cflags.retain(|flag| flag != excluded);
+        flags.cxxflags.retain(|flag| flag != excluded);
+        flags.ldflags.retain(|flag| flag != excluded);
+    }
+    flags
 }
 
 /// Build the merged root requirement without touching the network or cache.
@@ -211,6 +267,7 @@ pub fn requirement(
     profile.validate()?;
     // `archs` is an allowed set. A root is resolved for exactly one target.
     let profile = profile.for_target(arch)?;
+    let flags = apply_recipe_flags(recipe, profile.flags.for_arch(profile.arch()));
     let cross = if crossing {
         let declared = profile.cross().expect("crossing implies a cross block");
         let triple = profile.triple()?;
@@ -257,6 +314,7 @@ pub fn requirement(
         digest,
         sysroot,
         cross,
+        flags,
     }))
 }
 
@@ -328,6 +386,7 @@ pub fn ensure(
         root.sysroot = Some(Box::new(assembled));
     }
     root.cross = requirement.cross;
+    root.flags = requirement.flags;
     Ok(Some(root))
 }
 
@@ -472,6 +531,7 @@ fn ensure_root(
         cached: false,
         sysroot: None,
         cross: None,
+        flags: rpmx_core::guest::BuildFlags::default(),
     })
 }
 
@@ -907,6 +967,7 @@ fn load_cached(
         cached: true,
         sysroot: None,
         cross: None,
+        flags: rpmx_core::guest::BuildFlags::default(),
     }))
 }
 
@@ -1000,6 +1061,7 @@ fn inline_profile(spec: &RootSpec, arch: &str) -> Result<Profile, Error> {
         modules: Default::default(),
         options: ResolveOptions::default(),
         paths: Default::default(),
+        flags: Default::default(),
         sbom: true,
     };
     profile.for_target(arch)
@@ -1182,6 +1244,40 @@ mod tests {
 
     fn recipe(text: &str) -> Recipe {
         rpmx_core::parse_recipe(text).expect("recipe")
+    }
+
+    #[test]
+    fn recipe_flag_exclusions_remove_exact_matches_from_every_list() {
+        let recipe = recipe(
+            r#"
+schema: 1
+package:
+  name: p
+  version: "1"
+  release: 1
+  summary: p
+  license: MIT
+build:
+  flags:
+    exclude:
+      - -fzero-init-padding-bits=all
+outputs:
+  - name: p
+    metapackage: true
+"#,
+        );
+        let flags = rpmx_core::guest::BuildFlags {
+            cflags: vec![
+                "-O2".to_string(),
+                "-fzero-init-padding-bits=all".to_string(),
+            ],
+            cxxflags: vec!["-fzero-init-padding-bits=all".to_string()],
+            ldflags: vec!["-Wl,-z,relro".to_string()],
+        };
+        let flags = super::apply_recipe_flags(&recipe, flags);
+        assert_eq!(flags.cflags, ["-O2"]);
+        assert!(flags.cxxflags.is_empty());
+        assert_eq!(flags.ldflags, ["-Wl,-z,relro"]);
     }
 
     fn appliance_lock() -> ApplianceLock {

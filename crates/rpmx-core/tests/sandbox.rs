@@ -16,6 +16,7 @@ fn config<'a>(workspace: &'a std::path::Path, stage: &'a std::path::Path) -> San
         target: host,
         sysroot: None,
         cross: None,
+        flags: None,
         workspace,
         stage,
         root: None,

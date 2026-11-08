@@ -16,6 +16,7 @@ struct ShellRoot {
     root: PathBuf,
     sysroot: Option<PathBuf>,
     cross: Option<rpmx_core::guest::CrossToolchain>,
+    flags: rpmx_core::guest::BuildFlags,
     prefix: String,
     libdir: String,
 }
@@ -41,6 +42,7 @@ pub fn run(args: ShellArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
             root,
             sysroot: None,
             cross: None,
+            flags: rpmx_core::guest::BuildFlags::default(),
             prefix: rpmx_core::guest::PREFIX.to_string(),
             libdir: rpmx_core::guest::LIBDIR.to_string(),
         },
@@ -49,6 +51,7 @@ pub fn run(args: ShellArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
     let root = shell_root.root;
     let sysroot = shell_root.sysroot;
     let cross = shell_root.cross;
+    let shell_flags = shell_root.flags;
     let prefix = shell_root.prefix;
     let libdir = shell_root.libdir;
     let workspace = match args.workspace.clone() {
@@ -130,6 +133,7 @@ pub fn run(args: ShellArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
         target: rpmx_core::Arch::parse(&arch)?,
         sysroot: sysroot.as_deref(),
         cross: cross.as_ref(),
+        flags: Some(&shell_flags),
         workspace: std::path::Path::new(&workspace),
         stage: std::path::Path::new(&stage),
         root: Some(std::path::Path::new(&root)),
@@ -201,6 +205,7 @@ fn resolve_root(
         .map(|root| ShellRoot {
             sysroot: root.sysroot.as_ref().map(|sysroot| sysroot.root.clone()),
             cross: root.cross.clone(),
+            flags: root.flags.clone(),
             prefix: root.document.prefix.clone(),
             libdir: root.document.libdir.clone(),
             root: root.root,

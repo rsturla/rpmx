@@ -50,6 +50,7 @@ fn lock_and_manifest_are_deterministic() {
         LockBuildRef {
             root_lock: None,
             cross: None,
+            flags: None,
             build: &build,
             replaced: None,
         },
@@ -67,6 +68,7 @@ fn lock_and_manifest_are_deterministic() {
         LockBuildRef {
             root_lock: None,
             cross: None,
+            flags: None,
             build: &build,
             replaced: None,
         },
@@ -96,4 +98,44 @@ fn lock_and_manifest_are_deterministic() {
     assert_eq!(loaded.release, "1.fc44+build7");
     assert_eq!(loaded.dist_tag.as_deref(), Some(".fc44"));
     assert_eq!(loaded.build_release, Some(7));
+}
+
+#[test]
+fn profile_flags_round_trip_through_the_lock() {
+    use rpmx_core::guest::BuildFlags;
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    fs::write(dir.path().join("a.tar.gz"), b"a").expect("a");
+    let files = snapshot_dir(dir.path()).expect("snapshot");
+    let flags = BuildFlags {
+        cflags: vec!["-O2".to_string(), "-fstack-protector-strong".to_string()],
+        cxxflags: vec!["-D_GLIBCXX_ASSERTIONS".to_string()],
+        ldflags: vec!["-Wl,-z,relro,-z,now".to_string()],
+    };
+    let build = LockBuild::default();
+    let text = lock_json(
+        "sha512:recipe",
+        "1.0",
+        "1",
+        None,
+        None,
+        1_700_000_000,
+        &files,
+        &[],
+        LockBuildRef {
+            root_lock: None,
+            cross: None,
+            flags: Some(&flags),
+            build: &build,
+            replaced: None,
+        },
+    )
+    .expect("lock");
+    assert!(text.contains("\"flags\""));
+    assert!(text.contains("\"-fstack-protector-strong\""));
+
+    let path = dir.path().join("package.lock.json");
+    fs::write(&path, text).expect("write lock");
+    let loaded = load_lock_file(&path).expect("load lock");
+    assert_eq!(loaded.flags, Some(flags));
 }
