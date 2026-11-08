@@ -73,7 +73,10 @@ does not promise a stable schema or CLI yet.
   external runtime package in `build.dependencies.tests`. Requirements provided
   by another selected output are installed from the build output and are not
   resolved from a repository. Explicit test packages are still needed for tools
-  or data that are not runtime requirements.
+  or data that are not runtime requirements. Only missing package-level
+  requirements are installed; library soname requirements are left to the
+  seeded root, because resolving a soname and a package name separately can
+  select two conflicting providers for the same library.
 
 - Reading built RPM metadata treats a missing `RPMTAG_EPOCH` as epoch 0. rpm
   omits the tag for packages without an epoch, so test roots no longer fail
