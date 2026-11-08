@@ -100,6 +100,7 @@ fn check_output_files(package: &BinaryPackageSpec, findings: &mut Vec<Finding>) 
             if is_libdir_file(&file.path)
                 && file.path.ends_with(".a")
                 && !is_linker_plugin_archive(&file.path)
+                && !is_glibc_link_time_archive(&file.path)
             {
                 findings.push(Finding {
                     path: package.name.clone(),
@@ -301,6 +302,14 @@ fn is_compiler_runtime_archive(path: &str) -> bool {
 
 fn is_linker_plugin_archive(path: &str) -> bool {
     path.contains("/bfd-plugins/") && path.ends_with(".a")
+}
+
+fn is_glibc_link_time_archive(path: &str) -> bool {
+    let name = path.rsplit('/').next().unwrap_or(path);
+    matches!(
+        name,
+        "libc_nonshared.a" | "libanl.a" | "libdl.a" | "libpthread.a" | "librt.a" | "libutil.a"
+    )
 }
 
 /// The per-path rules, exposed for tests.
@@ -607,6 +616,35 @@ mod tests {
             package("demo-devel", &["/usr/include/demo.h"], &["demo-libs"]),
         ]);
         assert!(errors(&findings).is_empty(), "{findings:?}");
+    }
+
+    #[test]
+    fn glibc_link_time_archives_stay_in_development_outputs() {
+        let findings = check(&[
+            package("glibc-2.44", &[], &[]),
+            package(
+                "glibc-2.44-devel",
+                &[
+                    "/usr/lib64/libc_nonshared.a",
+                    "/usr/lib64/libpthread.a",
+                    "/usr/lib64/libc.a",
+                ],
+                &["glibc >= 2.44"],
+            ),
+        ]);
+        let messages = errors(&findings);
+        assert!(
+            messages
+                .iter()
+                .any(|message| message.contains("/usr/lib64/libc.a")),
+            "{messages:?}"
+        );
+        assert!(
+            !messages
+                .iter()
+                .any(|message| message.contains("libc_nonshared.a")),
+            "{messages:?}"
+        );
     }
 
     #[test]
