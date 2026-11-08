@@ -88,8 +88,8 @@ warns.
 
 #### Repository defaults
 
-A `rpmx-defaults.yaml` can supply package metadata that is identical for every
-recipe in a repository:
+A `rpmx-defaults.yaml` can supply package metadata and build environment that
+are identical for every recipe in a repository:
 
 ```yaml
 schema: 1
@@ -98,13 +98,18 @@ package:
   maintainers:
     - name: Example Linux maintainers
       email: maintainers@example.org
+build:
+  environment:
+    PATH: /usr/libexec/example/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 ```
 
 rpmx looks in the recipe directory first, then each ancestor up to the
 repository root (the first directory containing `.git`). The recipe wins when
-it sets the field itself. The defaults file joins the recipe bundle, so it is
-recorded in the package lock and embedded in the SRPM; a rebuild does not need
-the original checkout.
+it sets the field itself. `build.environment` entries are added when the
+recipe does not already set the same variable, so a recipe can still override
+one key without restating the rest. The defaults file joins the recipe bundle,
+so it is recorded in the package lock and embedded in the SRPM; a rebuild does
+not need the original checkout.
 
 Keep repository defaults narrow. License, upstream URL, version, summary and
 CPE describe the upstream component and belong in the recipe. CPE must identify
