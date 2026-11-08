@@ -4,6 +4,7 @@ pub mod guest;
 pub mod hash;
 pub mod io;
 pub mod output;
+pub mod version;
 pub mod yaml;
 
 pub use arch::Arch;
