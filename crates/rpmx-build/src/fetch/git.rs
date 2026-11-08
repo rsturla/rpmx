@@ -66,7 +66,27 @@ pub(crate) fn git_archive(
                 ),
             ));
         }
-        build_git_tar(scratch, &source.name, temp_dir)
+        let timestamp = git_output(scratch, &["show", "-s", "--format=%ct", "HEAD"])?;
+        let timestamp: u64 = timestamp.trim().parse().map_err(|_| {
+            Error::new(
+                codes::FETCH_004,
+                format!(
+                    "git source '{}' has a non-numeric commit timestamp '{}'",
+                    source.name,
+                    timestamp.trim()
+                ),
+            )
+        })?;
+        let timestamp = u32::try_from(timestamp).map_err(|_| {
+            Error::new(
+                codes::FETCH_004,
+                format!(
+                    "git source '{}' commit timestamp {timestamp} is outside the u32 range",
+                    source.name
+                ),
+            )
+        })?;
+        build_git_tar(scratch, &source.name, temp_dir, timestamp)
     })();
     result
 }
@@ -96,7 +116,12 @@ fn git_output(directory: &Path, args: &[&str]) -> Result<String> {
     }
 }
 
-fn build_git_tar(root: &Path, prefix: &str, temp_dir: &Path) -> Result<tempfile::TempPath> {
+fn build_git_tar(
+    root: &Path,
+    prefix: &str,
+    temp_dir: &Path,
+    timestamp: u32,
+) -> Result<tempfile::TempPath> {
     use std::os::unix::fs::PermissionsExt;
     if prefix.is_empty() || prefix.contains('/') || prefix == "." || prefix == ".." {
         return Err(Error::new(
@@ -115,7 +140,7 @@ fn build_git_tar(root: &Path, prefix: &str, temp_dir: &Path) -> Result<tempfile:
         )
     })?;
     let encoder = flate2::GzBuilder::new()
-        .mtime(0)
+        .mtime(timestamp)
         .write(output, flate2::Compression::default());
     let mut tar = tar::Builder::new(encoder);
     for relative in entries {
@@ -128,7 +153,7 @@ fn build_git_tar(root: &Path, prefix: &str, temp_dir: &Path) -> Result<tempfile:
         })?;
         let name = format!("{prefix}/{relative}");
         let mut header = tar::Header::new_gnu();
-        header.set_mtime(0);
+        header.set_mtime(u64::from(timestamp));
         header.set_uid(0);
         header.set_gid(0);
         header.set_mode(metadata.permissions().mode() & 0o777);

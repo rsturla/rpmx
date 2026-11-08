@@ -9,6 +9,11 @@ use crate::commands::fetch::default_cache;
 use crate::commands::{load_plan, resolve_policy, PlanPolicy, PolicyInput, SourceArgs};
 
 /// Everything source assembly needs, independent of clap.
+pub struct SourceOutput {
+    pub snapshot: PathBuf,
+    pub source_date_epoch: u32,
+}
+
 pub struct SourceRequest<'a> {
     pub file: &'a Path,
     pub arch: &'a str,
@@ -57,7 +62,7 @@ pub fn run(args: SourceArgs, pipeline_dir: Option<&Path>) -> Result<PathBuf, Err
         )?
         .unwrap_or_else(|| rpmx_core::arch::native_arch().to_string()),
     };
-    execute(SourceRequest {
+    let output = execute(SourceRequest {
         file: &args.file,
         arch: &arch,
         exec: rpmx_core::arch::Arch::parse(&arch)?,
@@ -81,10 +86,11 @@ pub fn run(args: SourceArgs, pipeline_dir: Option<&Path>) -> Result<PathBuf, Err
         step_timeout: args.runtime.step_timeout,
         quiet: args.quiet,
         pipeline_dir,
-    })
+    })?;
+    Ok(output.snapshot)
 }
 
-pub fn execute(request: SourceRequest<'_>) -> Result<PathBuf, Error> {
+pub fn execute(request: SourceRequest<'_>) -> Result<SourceOutput, Error> {
     let cache = match request.cache {
         Some(path) => path.to_path_buf(),
         None => default_cache()?,
@@ -164,8 +170,6 @@ pub fn execute(request: SourceRequest<'_>) -> Result<PathBuf, Error> {
             true,
         )?;
     }
-    let source_date_epoch =
-        crate::commands::source_date_epoch(&bundle.recipe, request.source_date_epoch);
     let work = crate::commands::WorkDir::new("source")?;
     let workspace = work.path().join("build");
     let stage = work.path().join("stage");
@@ -213,7 +217,7 @@ pub fn execute(request: SourceRequest<'_>) -> Result<PathBuf, Error> {
         format!("{} assembling RPMX-SOURCE.tar.gz", request.arch),
     );
     let source_started = std::time::Instant::now();
-    let snapshot = assemble(SourceOptions {
+    let assembled = assemble(SourceOptions {
         recipe: &bundle.recipe,
         plan: &plan,
         cache: &cache,
@@ -225,7 +229,8 @@ pub fn execute(request: SourceRequest<'_>) -> Result<PathBuf, Error> {
         prefix,
         libdir,
         output: request.output,
-        source_date_epoch,
+        source_date_epoch: request.source_date_epoch,
+        source_date_epoch_default: bundle.source_date_epoch_default,
         jobs: request.jobs,
         step_timeout: request.step_timeout,
         root: selected_root,
@@ -236,6 +241,8 @@ pub fn execute(request: SourceRequest<'_>) -> Result<PathBuf, Error> {
         runner: request.runner,
         recipe_dir: request.file.parent().unwrap_or_else(|| Path::new(".")),
     })?;
+    let snapshot = assembled.snapshot;
+    let source_date_epoch = assembled.source_date_epoch;
     rpmx_core::output::phase(
         "source",
         format!(
@@ -290,5 +297,8 @@ pub fn execute(request: SourceRequest<'_>) -> Result<PathBuf, Error> {
             ),
         );
     }
-    Ok(snapshot)
+    Ok(SourceOutput {
+        snapshot,
+        source_date_epoch,
+    })
 }

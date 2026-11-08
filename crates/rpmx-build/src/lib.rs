@@ -1,3 +1,4 @@
+mod archive;
 pub mod binary_package;
 pub mod elf;
 pub mod fetch;

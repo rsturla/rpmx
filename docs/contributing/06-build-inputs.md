@@ -192,7 +192,9 @@ sources:
         commit: 0123456789abcdef0123456789abcdef01234567
 ```
 
-The archive is built with sorted entries, zero mtimes and a `mytool/` prefix.
+The archive is built with sorted entries, the commit timestamp as the entry
+mtime, and a `mytool/` prefix. The timestamp is what lets an offline rebuild
+derive `source-date-epoch` from the cached archive.
 On the first fetch a placeholder digest fails with the generated digest in the
 error, so the recipe can be pinned without a separate tool.
 

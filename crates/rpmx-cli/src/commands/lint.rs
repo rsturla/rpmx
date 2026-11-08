@@ -79,7 +79,12 @@ pub fn run(args: LintArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
         true,
         resolved.plan_policy(),
     )?;
-    let mut diagnostics = check(&bundle.recipe, &plan, &bundle.root);
+    let mut diagnostics = check(
+        &bundle.recipe,
+        &plan,
+        &bundle.root,
+        bundle.source_date_epoch_default,
+    );
     attach_owners(&mut diagnostics, &bundle);
     let errors = diagnostics
         .iter()
@@ -171,7 +176,12 @@ fn render_diagnostic(diagnostic: &Diagnostic) -> String {
 }
 
 /// Semantic checks that the planner does not perform.
-fn check(recipe: &Recipe, plan: &Plan, recipe_path: &Path) -> Vec<Diagnostic> {
+fn check(
+    recipe: &Recipe,
+    plan: &Plan,
+    recipe_path: &Path,
+    source_date_epoch_default: Option<u32>,
+) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
     let recipe_dir = recipe_path.parent().unwrap_or_else(|| Path::new("."));
 
@@ -228,11 +238,18 @@ fn check(recipe: &Recipe, plan: &Plan, recipe_path: &Path) -> Vec<Diagnostic> {
         );
     }
 
-    if recipe.package.source_date_epoch.is_none() {
+    let derives_source_date_epoch = recipe
+        .sources
+        .iter()
+        .any(|source| rpmx_core::fetch::extract_spec(source).is_some());
+    if recipe.package.source_date_epoch.is_none()
+        && !derives_source_date_epoch
+        && source_date_epoch_default.is_none()
+    {
         diagnostics.push(Diagnostic::warning(
             codes::LINT_013,
             "reproducibility/source-date-epoch",
-            "package.source-date-epoch is not set; builds default to timestamp 0",
+            "no source date can be derived and no repository fallback is set; builds default to timestamp 0",
         ));
     }
 
@@ -524,7 +541,7 @@ tests:
             },
         )
         .expect("plan");
-        check(&recipe, &plan, std::path::Path::new("package.yaml"))
+        check(&recipe, &plan, std::path::Path::new("package.yaml"), None)
     }
 
     #[test]

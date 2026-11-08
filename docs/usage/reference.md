@@ -14,7 +14,7 @@ rpmx lint --profile fedora-44
 - SPDX syntax for `license`;
 - empty/very short or very long summary;
 - release starting at zero;
-- missing `source-date-epoch`;
+- no derivable `source-date-epoch` and no repository fallback;
 - duplicate dependency or tool entries;
 - duplicate source/output/test names;
 - missing patch files;

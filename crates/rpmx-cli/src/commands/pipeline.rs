@@ -60,6 +60,7 @@ pub struct PipelineOutput {
     pub rpms: Vec<PathBuf>,
     pub srpms: Vec<PathBuf>,
     pub evidence: Vec<PathBuf>,
+    pub source_date_epoch: u32,
 }
 
 impl BuildPipeline<'_> {
@@ -81,7 +82,7 @@ impl BuildPipeline<'_> {
         })?;
         let srpm_output = self.output.join("src");
 
-        source::execute(SourceRequest {
+        let source = source::execute(SourceRequest {
             file: self.file,
             arch: self.arch,
             exec: self.exec,
@@ -111,6 +112,7 @@ impl BuildPipeline<'_> {
             rpms: Vec::new(),
             srpms: Vec::new(),
             evidence: Vec::new(),
+            source_date_epoch: source.source_date_epoch,
         };
         for planned in cells {
             let written = srpm::execute(SrpmRequest {
@@ -119,7 +121,7 @@ impl BuildPipeline<'_> {
                 sources: &source_output,
                 output: &srpm_output,
                 arch: self.arch,
-                source_date_epoch: self.source_date_epoch,
+                source_date_epoch: Some(source.source_date_epoch),
                 cell: Some(&planned.id),
                 root_lock: self.root_lock,
                 exec: self.exec,

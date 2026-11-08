@@ -30,6 +30,8 @@ pub struct BundleFile {
 #[derive(Debug, Clone)]
 pub struct RecipeBundle {
     pub recipe: Recipe,
+    /// Repository-wide fallback for packages without a derivable source date.
+    pub source_date_epoch_default: Option<u32>,
     /// Canonical path of the root recipe.
     pub root: PathBuf,
     /// Root first, then included fragments in discovery order.
@@ -125,7 +127,7 @@ pub fn load_recipe_bundle(path: impl AsRef<Path>) -> Result<RecipeBundle> {
         )
         .at(root.display().to_string())
     })?;
-    apply_repo_defaults(&root_dir, &mut package, &mut files)?;
+    let source_date_epoch_default = apply_repo_defaults(&root_dir, &mut package, &mut files)?;
 
     let recipe = Recipe {
         schema,
@@ -157,6 +159,7 @@ pub fn load_recipe_bundle(path: impl AsRef<Path>) -> Result<RecipeBundle> {
 
     Ok(RecipeBundle {
         recipe,
+        source_date_epoch_default,
         root,
         files,
         digest,
@@ -179,6 +182,8 @@ struct DefaultsDocument {
 struct PackageDefaults {
     #[serde(default)]
     maintainers: Vec<Maintainer>,
+    #[serde(default, rename = "source-date-epoch", alias = "source_date_epoch")]
+    source_date_epoch: Option<u32>,
 }
 
 struct DefaultsFile {
@@ -186,6 +191,7 @@ struct DefaultsFile {
     bytes: Vec<u8>,
     digest: String,
     maintainers: Vec<Maintainer>,
+    source_date_epoch: Option<u32>,
 }
 
 /// Apply `rpmx-defaults.yaml` when the recipe does not name maintainers.
@@ -197,21 +203,27 @@ fn apply_repo_defaults(
     root_dir: &Path,
     package: &mut Package,
     files: &mut Vec<BundleFile>,
-) -> Result<()> {
-    if !package.maintainers.is_empty() {
-        return Ok(());
-    }
+) -> Result<Option<u32>> {
     let Some(defaults) = find_defaults(root_dir)? else {
-        return Ok(());
+        return Ok(None);
     };
-    package.maintainers = defaults.maintainers;
-    files.push(BundleFile {
-        path: defaults.path,
-        name: DEFAULTS_FILE.to_string(),
-        digest: defaults.digest,
-        bytes: defaults.bytes,
-    });
-    Ok(())
+    let use_maintainers = package.maintainers.is_empty();
+    if use_maintainers {
+        package.maintainers = defaults.maintainers;
+    }
+    let source_date_epoch = (package.source_date_epoch.is_none()
+        && defaults.source_date_epoch.is_some())
+    .then_some(defaults.source_date_epoch)
+    .flatten();
+    if use_maintainers || source_date_epoch.is_some() {
+        files.push(BundleFile {
+            path: defaults.path,
+            name: DEFAULTS_FILE.to_string(),
+            digest: defaults.digest,
+            bytes: defaults.bytes,
+        });
+    }
+    Ok(source_date_epoch)
 }
 
 fn find_defaults(root_dir: &Path) -> Result<Option<DefaultsFile>> {
@@ -267,7 +279,7 @@ fn read_defaults(path: &Path) -> Result<DefaultsFile> {
         )
         .at(path.display().to_string()));
     }
-    if document.package.maintainers.is_empty() {
+    if document.package.maintainers.is_empty() && document.package.source_date_epoch.is_none() {
         return Err(Error::new(
             codes::INCLUDE_003,
             format!(
@@ -282,6 +294,7 @@ fn read_defaults(path: &Path) -> Result<DefaultsFile> {
         bytes,
         path,
         maintainers: document.package.maintainers,
+        source_date_epoch: document.package.source_date_epoch,
     })
 }
 
@@ -574,6 +587,22 @@ mod tests {
             "owner@example.org"
         );
         assert_eq!(bundle.files.len(), 1);
+    }
+
+    #[test]
+    fn repo_defaults_supply_a_source_date_epoch_fallback() {
+        let (directory, recipe) = repo();
+        write(
+            &directory.path().join("rpmx-defaults.yaml"),
+            "schema: 1\npackage:\n  source-date-epoch: 1704067200\n",
+        );
+        let bundle = load_recipe_bundle(&recipe).expect("bundle");
+        assert_eq!(bundle.source_date_epoch_default, Some(1_704_067_200));
+        assert_eq!(bundle.recipe.package.source_date_epoch, None);
+        assert!(bundle
+            .files
+            .iter()
+            .any(|file| file.name == "rpmx-defaults.yaml"));
     }
 
     #[test]

@@ -14,7 +14,8 @@ use rpmx_core::Error;
 use rpmx_core::RecipeBundle;
 
 use crate::commands::{
-    autoroot, load_plan, resolve_policy, source_date_epoch, LockArgs, PlanPolicy, PolicyInput,
+    autoroot, fetch::default_cache, load_plan, resolve_policy, source_date_epoch, LockArgs,
+    PlanPolicy, PolicyInput,
 };
 
 pub const FILE: &str = "package.lock.json";
@@ -116,13 +117,36 @@ pub fn run(args: LockArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
         .unwrap_or_else(|| rpmx_core::arch::native_arch().to_string()),
     };
     let (bundle, plan) = load_plan(&args.file, &arch, pipeline_dir, false, true, policy)?;
+    let resolved_source_date_epoch = if bundle.recipe.package.source_date_epoch.is_some() {
+        None
+    } else {
+        let cache = default_cache()?;
+        let proxy = std::env::var("RPMX_PROXY")
+            .or_else(|_| std::env::var("RPMX_ACQUISITION_PROXY"))
+            .ok();
+        let fetched = rpmx_core::fetch::fetch_sources(
+            &bundle.recipe,
+            rpmx_core::fetch::FetchOptions {
+                cache: &cache,
+                proxy: proxy.as_deref(),
+                offline: false,
+                base_dir: args.file.parent().unwrap_or_else(|| Path::new(".")),
+            },
+        )?;
+        Some(rpmx_core::source::resolve_source_date_epoch(
+            &bundle.recipe,
+            &fetched,
+            None,
+            bundle.source_date_epoch_default,
+        ))
+    };
     let lock = build(
         &bundle,
         &plan,
         policy,
         args.policy.profile.as_deref(),
         &arch,
-        None,
+        resolved_source_date_epoch,
         args.root_lock
             .as_deref()
             .map(rpmx_core::root::load_lock)
@@ -202,7 +226,7 @@ pub fn verify(
         .at(path.display().to_string()));
     }
     let existing = read(&path)?;
-    let actual = build(
+    let mut actual = build(
         bundle,
         plan,
         policy,
@@ -212,6 +236,11 @@ pub fn verify(
         if check_root { active_root } else { None },
         if check_root { active_sysroot } else { None },
     )?;
+    if explicit_source_date_epoch.is_none() && bundle.recipe.package.source_date_epoch.is_none() {
+        // The effective value may be derived from sources fetched at build time.
+        // The source digests in the lock already pin those inputs.
+        actual.source_date_epoch = existing.source_date_epoch;
+    }
     if check_root && existing.root.is_some() && active_root.is_none() {
         return Err(Error::new(
             codes::LOCK_002,

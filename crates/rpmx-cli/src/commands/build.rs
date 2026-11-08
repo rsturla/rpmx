@@ -266,8 +266,11 @@ fn package_stage(
             false,
         )?;
     }
-    let source_date_epoch =
-        crate::commands::source_date_epoch(&bundle.recipe, args.source_date_epoch);
+    let source_date_epoch = args
+        .source_date_epoch
+        .or(bundle.recipe.package.source_date_epoch)
+        .or(bundle.source_date_epoch_default)
+        .unwrap_or(0);
     let signature_timestamp = crate::commands::signature_timestamp(
         args.signing.signing_timestamp,
         source_date_epoch,
@@ -711,7 +714,7 @@ fn build_one(
     let built = pipeline.execute(&selected)?;
     let mut repository = Vec::new();
     if !args.no_index {
-        let timestamp = crate::commands::source_date_epoch(&bundle.recipe, args.source_date_epoch);
+        let timestamp = built.source_date_epoch;
         let key = crate::commands::load_signing_key(
             args.signing.signing_key.as_deref(),
             args.signing.signing_passphrase_env.as_deref(),

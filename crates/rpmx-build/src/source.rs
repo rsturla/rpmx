@@ -2,7 +2,7 @@ use std::io::Write;
 use std::num::{NonZeroU32, NonZeroU64};
 use std::path::{Path, PathBuf};
 
-use crate::fetch::{fetch_sources, FetchOptions};
+use crate::fetch::{fetch_sources, FetchOptions, FetchedSource};
 use rpmx_base::error::{codes, Error, Result};
 use rpmx_language::model::Recipe;
 use rpmx_language::plan::Plan;
@@ -21,7 +21,10 @@ pub struct SourceOptions<'a> {
     pub prefix: &'a str,
     pub libdir: &'a str,
     pub output: &'a Path,
-    pub source_date_epoch: u32,
+    /// Explicit timestamp; when absent, use the recipe, source archives or
+    /// the repository-wide fallback.
+    pub source_date_epoch: Option<u32>,
+    pub source_date_epoch_default: Option<u32>,
     pub jobs: NonZeroU32,
     pub step_timeout: NonZeroU64,
     pub root: Option<&'a Path>,
@@ -33,7 +36,33 @@ pub struct SourceOptions<'a> {
     pub recipe_dir: &'a Path,
 }
 
-pub fn assemble(options: SourceOptions<'_>) -> Result<PathBuf> {
+/// The newest timestamp available from an explicit value, the recipe, or the
+/// source archives. Archives are the reproducible fallback: a release tarball
+/// keeps its upstream mtimes, and rpmx gives a git archive its commit time.
+pub fn resolve_source_date_epoch(
+    recipe: &Recipe,
+    fetched: &[FetchedSource],
+    explicit: Option<u32>,
+    fallback: Option<u32>,
+) -> u32 {
+    explicit
+        .or(recipe.package.source_date_epoch)
+        .or_else(|| {
+            fetched
+                .iter()
+                .filter_map(|source| source.source_date_epoch)
+                .max()
+        })
+        .or(fallback)
+        .unwrap_or(0)
+}
+
+pub struct AssembledSource {
+    pub snapshot: PathBuf,
+    pub source_date_epoch: u32,
+}
+
+pub fn assemble(options: SourceOptions<'_>) -> Result<AssembledSource> {
     let fetched = fetch_sources(
         options.recipe,
         FetchOptions {
@@ -43,7 +72,25 @@ pub fn assemble(options: SourceOptions<'_>) -> Result<PathBuf> {
             base_dir: options.base_dir,
         },
     )?;
+    let source_date_epoch = resolve_source_date_epoch(
+        options.recipe,
+        &fetched,
+        options.source_date_epoch,
+        options.source_date_epoch_default,
+    );
+    let snapshot = assemble_fetched(&options, &fetched, source_date_epoch)?;
+    Ok(AssembledSource {
+        snapshot,
+        source_date_epoch,
+    })
+}
 
+/// Assemble an already-fetched source set with an explicit effective timestamp.
+pub fn assemble_fetched(
+    options: &SourceOptions<'_>,
+    fetched: &[FetchedSource],
+    source_date_epoch: u32,
+) -> Result<PathBuf> {
     std::fs::create_dir_all(options.workspace).map_err(|error| {
         Error::new(
             codes::SOURCE_030,
@@ -57,7 +104,7 @@ pub fn assemble(options: SourceOptions<'_>) -> Result<PathBuf> {
         )
     })?;
 
-    for source in &fetched {
+    for source in fetched {
         materialize(
             &source.path,
             &source.name,
@@ -88,7 +135,7 @@ pub fn assemble(options: SourceOptions<'_>) -> Result<PathBuf> {
         image: None,
         prefix: options.prefix,
         libdir: options.libdir,
-        source_date_epoch: options.source_date_epoch,
+        source_date_epoch,
         jobs: options.jobs,
         timeout: options.step_timeout,
     })?;
@@ -122,7 +169,7 @@ pub fn assemble(options: SourceOptions<'_>) -> Result<PathBuf> {
     inventory.warn_declared();
     inventory.write(&options.output.join(rpmx_components::INVENTORY_FILE))?;
     let snapshot = options.output.join("RPMX-SOURCE.tar.gz");
-    pack_snapshot(options.workspace, &snapshot, options.source_date_epoch)?;
+    pack_snapshot(options.workspace, &snapshot, source_date_epoch)?;
     Ok(snapshot)
 }
 
@@ -424,10 +471,7 @@ fn materialize(
             ));
         }
     }
-    let format = match extract.format.as_deref().unwrap_or("auto") {
-        "auto" => detect_format(path),
-        other => other.to_string(),
-    };
+    let format = crate::archive::format(path, Some(extract));
     if format == "none" {
         let target = workspace.join(name);
         return std::fs::copy(path, &target).map(|_| ()).map_err(|error| {
@@ -443,37 +487,7 @@ fn materialize(
             format!("cannot create {}: {error}", workspace.display()),
         )
     })?;
-    let file = std::fs::File::open(path).map_err(|error| {
-        Error::new(
-            codes::SOURCE_031,
-            format!("cannot open {}: {error}", path.display()),
-        )
-    })?;
-    let reader: Box<dyn std::io::Read> = match format.as_str() {
-        "tar.gz" | "tgz" | "gzip" => Box::new(flate2::read::GzDecoder::new(file)),
-        "tar.xz" | "xz" => Box::new(liblzma::read::XzDecoder::new(file)),
-        "tar.zst" | "zstd" | "tar" => {
-            if format == "tar" {
-                Box::new(file)
-            } else {
-                Box::new(zstd::stream::read::Decoder::new(file).map_err(|error| {
-                    Error::new(
-                        codes::SOURCE_031,
-                        format!("cannot read {}: {error}", path.display()),
-                    )
-                })?)
-            }
-        }
-        other => {
-            return Err(Error::new(
-                codes::SOURCE_031,
-                format!(
-                    "unsupported extract format '{other}' for {}",
-                    path.display()
-                ),
-            ))
-        }
-    };
+    let reader = crate::archive::reader(path, &format)?;
     let mut staged = tempfile::tempfile_in(workspace).map_err(|error| {
         Error::new(
             codes::SOURCE_031,
@@ -506,25 +520,6 @@ fn unpack_gzip(path: &Path, workspace: &Path) -> Result<()> {
         destination: Some(".".to_string()),
     };
     materialize(path, "RPMX-SOURCE.tar.gz", Some(&extract), workspace)
-}
-
-fn detect_format(path: &Path) -> String {
-    use std::io::Read;
-    let mut magic = [0u8; 6];
-    let Ok(mut file) = std::fs::File::open(path) else {
-        return "tar".to_string();
-    };
-    let read = file.read(&mut magic).unwrap_or(0);
-    let magic = &magic[..read];
-    if magic.starts_with(&[0x1f, 0x8b]) {
-        "tar.gz".to_string()
-    } else if magic.starts_with(&[0xfd, b'7', b'z', b'X', b'Z', 0x00]) {
-        "tar.xz".to_string()
-    } else if magic.starts_with(&[0x28, 0xb5, 0x2f, 0xfd]) {
-        "tar.zst".to_string()
-    } else {
-        "tar".to_string()
-    }
 }
 
 pub fn pack_snapshot(workspace: &Path, snapshot: &Path, source_date_epoch: u32) -> Result<()> {
@@ -782,5 +777,78 @@ mod extract_tests {
         };
         materialize(&renamed, "pkg.data", Some(&extract), &workspace).expect("unpack");
         assert!(workspace.join("README").is_file());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rpmx_language::model::{Package, Recipe};
+    use std::collections::BTreeMap;
+
+    fn recipe(source_date_epoch: Option<u32>) -> Recipe {
+        Recipe {
+            schema: 1,
+            package: Package {
+                name: "demo".to_string(),
+                epoch: None,
+                version: "1".to_string(),
+                release: "1".to_string(),
+                summary: "demo".to_string(),
+                description: None,
+                license: "MIT".to_string(),
+                source_date_epoch,
+                upstream: None,
+                vcs: None,
+                cpe: None,
+                maintainers: Vec::new(),
+            },
+            context: None,
+            vars: BTreeMap::new(),
+            build: Default::default(),
+            sources: Vec::new(),
+            patches: Vec::new(),
+            source_assembly: Default::default(),
+            matrix: None,
+            outputs: Vec::new(),
+            tests: Vec::new(),
+        }
+    }
+
+    fn fetched(source_date_epoch: Option<u32>) -> FetchedSource {
+        FetchedSource {
+            name: "demo".to_string(),
+            digest: "sha512:00".to_string(),
+            path: PathBuf::new(),
+            extract: None,
+            source_date_epoch,
+        }
+    }
+
+    #[test]
+    fn source_date_epoch_prefers_explicit_then_recipe_then_sources_then_default() {
+        let recipe = recipe(Some(30));
+        assert_eq!(
+            resolve_source_date_epoch(&recipe, &[fetched(Some(40))], Some(20), Some(10)),
+            20
+        );
+        assert_eq!(
+            resolve_source_date_epoch(&recipe, &[fetched(Some(40))], None, Some(10)),
+            30
+        );
+        let recipe = self::recipe(None);
+        assert_eq!(
+            resolve_source_date_epoch(
+                &recipe,
+                &[fetched(Some(40)), fetched(Some(50))],
+                None,
+                Some(10)
+            ),
+            50
+        );
+        assert_eq!(
+            resolve_source_date_epoch(&recipe, &[fetched(None)], None, Some(10)),
+            10
+        );
     }
 }

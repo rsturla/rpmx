@@ -63,7 +63,6 @@ package:
   description: |
     A longer description used in the RPM header.
   license: MIT
-  source-date-epoch: 1704067200
   upstream: https://example.org/hello
   maintainers:
     - name: Your Name
@@ -78,8 +77,14 @@ package:
 ```
 
 `name`, `version`, `release`, `summary` and `license` are required.
-`source-date-epoch` is strongly recommended: it drives file mtimes, SBOM dates
-and signature time. Without it the timestamp defaults to `0` and `lint` warns.
+
+`source-date-epoch` is optional: it drives file mtimes, SBOM dates and signature
+time. rpmx derives it from the newest source archive mtime, or from the pinned
+git commit time, and uses the newest value when a recipe has several sources.
+A repository-wide fallback in `rpmx-defaults.yaml` covers packages with no
+source of their own. Set the recipe field only to override the derived value.
+Without any derivable source or fallback, the timestamp is `0` and `lint`
+warns.
 
 #### Repository defaults
 
@@ -89,6 +94,7 @@ recipe in a repository:
 ```yaml
 schema: 1
 package:
+  source-date-epoch: 1704067200  # fallback for packages with no source
   maintainers:
     - name: Example Linux maintainers
       email: maintainers@example.org
@@ -702,7 +708,6 @@ package:
   release: 1
   summary: A tiny hello package
   license: MIT
-  source-date-epoch: 1704067200
   maintainers:
     - name: Your Name
       email: you@example.org

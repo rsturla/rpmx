@@ -910,7 +910,7 @@ Lock rules:
 - `rpmx build --locked` verifies the recipe digest, profile digest, source hashes, resolved dependency NEVRAs, build-root digest and every step digest. Any drift is an error.
 - The lock pins all three layers: exact package NEVRAs (readable, auditable), the rootfs digest (the actual toolchain contract), and step digests (the build logic). A change in any layer is a lock change.
 - Dependency versions are recorded for audit; the build-root digest is the actual reproducibility contract. If a repository is not reproducible, pin a snapshot or an OCI image digest in the profile.
-- `source_date_epoch` is derived from the source archive mtime, the git commit time, or an explicit `package.source-date-epoch`; it is locked.
+- `source_date_epoch` is resolved in this order: CLI `--source-date-epoch`, `package.source-date-epoch`, the newest source archive or pinned git commit time, then `rpmx-defaults.yaml`; it is locked.
 
 ### 4.12 SBOM and provenance
 

@@ -5,6 +5,11 @@ does not promise a stable schema or CLI yet.
 
 ## Unreleased
 
+- `source-date-epoch` is no longer required in every recipe. When it is omitted,
+  rpmx uses the newest mtime from the source archives, or the pinned git commit
+  time, and records that value in the SRPM and lock. `rpmx-defaults.yaml` can
+  supply a repository fallback for packages with no upstream source. An explicit
+  recipe value or `--source-date-epoch` still wins.
 - The autotools, Make, CMake and Meson steps accept `dir` and pass their full
   argument list through to configure/build/install. `autotools/configure`
   supports out-of-tree builds and derives `--host`/`--build` in a cross build.
