@@ -694,6 +694,24 @@ Use this for packages whose output should carry the full profile. It is not a
 distro-wide gate: packages with hand-written assembly, static binaries or
 language runtimes may legitimately need a skip, and a noarch package has no ELF
 to check.
+
+`test/compiler-hardening-check` is the companion for a package that supplies a
+compiler wrapper or spec. It compiles an executable and a shared object through
+the configured `cc`, then checks the resulting ELF properties:
+
+```yaml
+tests:
+  - name: compiler
+    stage: installed
+    pipeline:
+      - uses: test/compiler-hardening-check
+        with:
+          cc: gcc-13
+```
+
+The shared-object step matters: a wrapper that appends `-pie` to every link
+will fail a `-shared` link, while a wrapper that reads the link mode from a GCC
+spec can add `-pie` only to executables.
 - `test.environment.contents.packages` lists packages installed only for that
   test's root. This mirrors Wolfi/melange test environments. Tests with the
   same output and package set share a root; a different set gets a separate

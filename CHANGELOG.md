@@ -29,6 +29,10 @@ does not promise a stable schema or CLI yet.
   PIE, NX, RELRO, BIND_NOW, stack protector, fortified libc, the target's
   CFI/branch-protection property and build IDs. `paths` narrows the scan and
   `skip` disables individual checks where the package cannot satisfy them.
+- Added `test/compiler-hardening-check`, which compiles a probe with the
+  configured compiler wrapper, checks the resulting executable's hardening
+  properties, and verifies that a shared-library link still succeeds. It is
+  meant for compiler-options packages such as `openssf-compiler-options`.
 - A profile's local `file://` repository and key paths may be relative to the
   profile file. `load_profile` anchors them at the profile directory, so a
   checked-out bootstrap repository works without an absolute CI path.

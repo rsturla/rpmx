@@ -135,6 +135,20 @@ fn hardening_check_walks_the_stage_and_honours_skips() {
 }
 
 #[test]
+fn compiler_hardening_check_compiles_and_inspects_a_probe() {
+    let plan =
+        plan_with("    - uses: test/compiler-hardening-check\n      with:\n        cc: gcc-13");
+    let step = &plan.cells[0].pipeline[0];
+    assert_eq!(step.command.as_deref(), Some("sh"));
+    let script = &step.args[1];
+    assert!(script.contains("cc=\"gcc-13\""), "{script}");
+    assert!(script.contains("-fPIC -shared"), "{script}");
+    assert!(script.contains("__stack_chk_fail"), "{script}");
+    assert!(script.contains("compiler_hardening_probe"), "{script}");
+    assert!(step.builtin);
+}
+
+#[test]
 fn debuginfo_keeps_debug_sections_and_fails_when_there_are_none() {
     let plan = plan_with("    - uses: debuginfo");
     let script = &plan.cells[0].pipeline[0].args[1];
