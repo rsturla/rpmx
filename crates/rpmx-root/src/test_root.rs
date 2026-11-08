@@ -1,3 +1,12 @@
+//! Installed-stage test roots.
+//!
+//! Test roots share `root::resolve_profile` and `root::assemble` with build
+//! roots. They deliberately do not share the build root's profile: a build
+//! root holds the compiler and build-time dependencies, while a test root must
+//! be a disposable runtime image seeded with the test environment and the
+//! selected RPMs' runtime requirements. Tests with different outputs or
+//! explicit test packages therefore get separate roots.
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
