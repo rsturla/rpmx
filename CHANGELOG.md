@@ -68,6 +68,13 @@ does not promise a stable schema or CLI yet.
   still install all outputs. Use `--test OUTPUT/NAME` when several outputs
   reuse a test name.
 
+- Installed-stage test roots now resolve the strong runtime requirements of the
+  selected built RPMs from the same repositories, instead of requiring every
+  external runtime package in `build.dependencies.tests`. Requirements provided
+  by another selected output are installed from the build output and are not
+  resolved from a repository. Explicit test packages are still needed for tools
+  or data that are not runtime requirements.
+
 - Tests accept a Wolfi/melange-style environment:
   `environment.contents.packages` lists packages installed only for that test's
   disposable root, and `environment.environment` sets test-only variables.

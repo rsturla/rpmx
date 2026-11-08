@@ -14,9 +14,12 @@ The first resolve downloads and assembles the closure. Later builds reuse
 `~/.cache/rpmx/roots/`. `rpmx doctor` checks dnf5 and the runner.
 
 **Test root install fails**  
-The test root needs runtime dependencies. Add them to the test's
+Strong runtime requirements of the selected RPMs are resolved into the test
+root automatically. A missing package here normally means the requirement is
+not available in the configured repositories or the test pins
+`--test-root-lock` to an older closure. Add it to the test's
 `environment.contents.packages` (or package-wide `build.dependencies.tests`),
-or use `--test-root-lock` with a pinned closure.
+refresh the pinned closure, or check the repository configuration.
 Ensure `TMPDIR` has space; a test root is a full distribution root.
 
 **An output-level test cannot find a sibling output**

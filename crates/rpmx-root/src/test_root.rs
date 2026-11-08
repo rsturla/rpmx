@@ -1,10 +1,11 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use crate::profile::{Packages, Profile};
 use crate::root::{self, RootLock};
 use rpmx_base::arch::Arch;
 use rpmx_base::error::{codes, Error, Result};
+use rpmx_payload::metadata::package_metadata;
 use rpmx_runner::runner::emulation_available;
 
 pub struct TestRootOptions<'a> {
@@ -23,6 +24,93 @@ pub struct TestRootOptions<'a> {
 pub struct PreparedTestRoot {
     pub path: PathBuf,
     pub lock: RootLock,
+}
+
+/// Runtime requirements of the built RPMs that must come from the test root
+/// repositories. Capabilities provided by another selected RPM are omitted,
+/// because those packages are installed from the build output, not resolved
+/// from a repository.
+fn external_requirements(rpms: &[PathBuf]) -> Result<Vec<String>> {
+    let mut provided: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut required = Vec::new();
+    for path in rpms {
+        let metadata = package_metadata(path)?;
+        for dependency in &metadata.provides {
+            provided
+                .entry(dependency.name.clone())
+                .or_default()
+                .push(dependency.version.clone());
+        }
+        provided
+            .entry(metadata.name.clone())
+            .or_default()
+            .push(metadata.evr());
+        for file in &metadata.files {
+            provided.entry(file.clone()).or_default();
+        }
+        required.extend(metadata.requires);
+    }
+    Ok(missing_requirements(required, &provided))
+}
+
+fn missing_requirements(
+    mut required: Vec<rpm::Dependency>,
+    provided: &BTreeMap<String, Vec<String>>,
+) -> Vec<String> {
+    required.sort_by(|left, right| {
+        (&left.name, left.flags.bits(), &left.version).cmp(&(
+            &right.name,
+            right.flags.bits(),
+            &right.version,
+        ))
+    });
+    required.dedup_by(|left, right| {
+        left.name == right.name && left.flags == right.flags && left.version == right.version
+    });
+    required
+        .into_iter()
+        .filter(|requirement| {
+            !requirement.name.starts_with("rpmlib(")
+                && !requirement.name.starts_with("config(")
+                && !provided
+                    .get(&requirement.name)
+                    .is_some_and(|versions| satisfies(requirement, versions))
+        })
+        .map(requirement_spec)
+        .collect()
+}
+
+fn satisfies(requirement: &rpm::Dependency, versions: &[String]) -> bool {
+    let comparator = requirement.flags.comparator_str();
+    if comparator.is_empty() {
+        return true;
+    }
+    versions.iter().any(|provided| {
+        if provided.is_empty() {
+            return false;
+        }
+        let ordering = rpmx_base::version::compare_evr(provided, &requirement.version);
+        match comparator {
+            "=" => ordering == std::cmp::Ordering::Equal,
+            "<" => ordering == std::cmp::Ordering::Less,
+            "<=" => ordering != std::cmp::Ordering::Greater,
+            ">" => ordering == std::cmp::Ordering::Greater,
+            ">=" => ordering != std::cmp::Ordering::Less,
+            _ => false,
+        }
+    })
+}
+
+fn requirement_spec(requirement: rpm::Dependency) -> String {
+    let comparator = requirement.flags.comparator_str();
+    if comparator.is_empty() || requirement.version.is_empty() {
+        requirement.name
+    } else {
+        format!(
+            "{} {} {}",
+            requirement.name, comparator, requirement.version
+        )
+    }
 }
 
 /// Build and install a disposable root for installed-stage tests.
@@ -58,6 +146,17 @@ pub fn prepare(options: TestRootOptions<'_>) -> Result<PreparedTestRoot> {
         let name = rpmx_runner::build_env::dependency_name(tool);
         if !name.is_empty() && !install.iter().any(|package| package == name) {
             install.push(name.to_string());
+        }
+    }
+    // The built RPMs are not in the repository closure yet, so resolve their
+    // external runtime requirements explicitly. Requirements provided by the
+    // selected RPMs themselves stay out of the repository lookup: the built
+    // packages are installed after the root has been assembled.
+    if options.pinned.is_none() {
+        for requirement in external_requirements(options.rpms)? {
+            if !install.iter().any(|package| package == &requirement) {
+                install.push(requirement);
+            }
         }
     }
 
@@ -233,6 +332,30 @@ fn check_lock(path: &Path, lock: &RootLock, _required: &[String], archs: &[Strin
 #[cfg(test)]
 mod tests {
     use super::is_replacement_conflict;
+
+    #[test]
+    fn requirements_provided_by_the_built_rpms_are_not_resolved_again() {
+        use rpm::Dependency;
+
+        let mut provided = std::collections::BTreeMap::new();
+        provided.insert("libfoo.so.1()(64bit)".to_string(), vec![String::new()]);
+        provided.insert("libfoo".to_string(), vec!["1.2-3".to_string()]);
+        let required = vec![
+            Dependency::any("libfoo.so.1()(64bit)"),
+            Dependency::greater_eq("libfoo", "1.2"),
+            Dependency::greater_eq("libfoo", "2.0"),
+            Dependency::any("libbar.so.2()(64bit)"),
+            Dependency::any("rpmlib(CompressedFileNames)"),
+            Dependency::any("config(libfoo)"),
+        ];
+        assert_eq!(
+            super::missing_requirements(required, &provided),
+            vec![
+                "libbar.so.2()(64bit)".to_string(),
+                "libfoo >= 2.0".to_string()
+            ]
+        );
+    }
 
     #[test]
     fn a_replacement_conflict_takes_the_retry_but_a_missing_requirement_does_not() {

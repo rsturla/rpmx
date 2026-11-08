@@ -654,9 +654,12 @@ outputs:
   outputs needed by its RPM dependencies, not unrelated outputs. This catches a
   missing `Requires` between outputs instead of masking it with the full output
   set.
-- The test root still contains `bash`, `coreutils`, and the resolved test
-  environment; runtime dependencies from outside the recipe must be listed in
-  the test environment or supplied by the root.
+- The test root contains `bash`, `coreutils`, the declared test environment,
+  and the external runtime requirements of the selected RPMs. Those
+  requirements are resolved from the same repositories as the test root;
+  capabilities provided by another selected output are installed from the
+  build output instead. `build.dependencies.tests` remains the place for
+  tools or data the test needs that are not runtime requirements.
 - `stage: package` is not implemented yet.
 - Tests run with `rpmx build`, `rpmx rebuild` and `rpmx test`; `--no-tests`
   skips them on a build.
