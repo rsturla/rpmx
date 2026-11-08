@@ -79,14 +79,27 @@ fn missing_requirements(
     required
         .into_iter()
         .filter(|requirement| {
-            !requirement.name.starts_with("rpmlib(")
-                && !requirement.name.starts_with("config(")
+            is_package_requirement(&requirement.name)
                 && !provided
                     .get(&requirement.name)
                     .is_some_and(|versions| satisfies(requirement, versions))
         })
         .map(requirement_spec)
         .collect()
+}
+
+/// Whether a requirement names a package rather than a file or a library
+/// soname. Resolving a soname and a package name independently can select two
+/// different providers for the same library (for example Fedora's `pcre2` for
+/// the name and Eternal's `pcre2-libs` for the soname), and the transaction
+/// then fails on the file conflict. The seeded root already supplies sonames;
+/// only the package-level requirements need an explicit install.
+fn is_package_requirement(name: &str) -> bool {
+    !name.starts_with("rpmlib(")
+        && !name.starts_with("config(")
+        && !name.starts_with("rtld(")
+        && !name.starts_with('/')
+        && !name.contains(".so")
 }
 
 fn satisfies(requirement: &rpm::Dependency, versions: &[String]) -> bool {
@@ -343,7 +356,7 @@ mod tests {
     use super::is_replacement_conflict;
 
     #[test]
-    fn requirements_provided_by_the_built_rpms_are_not_resolved_again() {
+    fn only_missing_package_requirements_are_resolved() {
         use rpm::Dependency;
 
         let mut provided = std::collections::BTreeMap::new();
@@ -354,15 +367,14 @@ mod tests {
             Dependency::greater_eq("libfoo", "1.2"),
             Dependency::greater_eq("libfoo", "2.0"),
             Dependency::any("libbar.so.2()(64bit)"),
+            Dependency::any("/usr/bin/sh"),
+            Dependency::any("rtld(GNU_HASH)"),
             Dependency::any("rpmlib(CompressedFileNames)"),
             Dependency::any("config(libfoo)"),
         ];
         assert_eq!(
             super::missing_requirements(required, &provided),
-            vec![
-                "libbar.so.2()(64bit)".to_string(),
-                "libfoo >= 2.0".to_string()
-            ]
+            vec!["libfoo >= 2.0".to_string()]
         );
     }
 
