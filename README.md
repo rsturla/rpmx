@@ -29,6 +29,15 @@ prototype, not production software.
 - **Optional signing.** Caller-supplied OpenPGP keys, applied after the build.
   `rpmx` never stores or discovers keys.
 - **Repositories.** `rpmx repo` writes `repodata` and can sign `repomd.xml.asc`.
+- **Bootstrap ladders.** `rpmx bootstrap plan` validates an ordered, seed-based
+  toolchain rebuild and its stage dependency graph without resolving roots.
+  `rpmx bootstrap build` resolves one root/sysroot pair per stage, builds the
+  stage in order, indexes its repository with a deterministic timestamp, and
+  publishes the output atomically. `extra-tools`/`extra-sysroot` stay scoped to
+  the declaring stage. Fixed-point stages filter the input repositories and
+  rebuild only the listed packages until their bytes and root digests stop
+  changing. `rpmx bootstrap rebuild` replaces an embedded stage lock and emits a
+  new SRPM while leaving the input untouched.
 - **Explicit file metadata.** Empty directories, per-path owner/group/mode and
   file capabilities are recipe data.
 - **Automatic dependencies.** ELF sonames and symbol versions, pkgconfig,

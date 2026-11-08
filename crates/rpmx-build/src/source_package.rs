@@ -34,6 +34,8 @@ pub struct SourcePackageOptions<'a> {
     /// Toolchain a cross build used, recorded so rebuild needs no profile.
     pub cross: Option<&'a CrossToolchain>,
     pub sbom: bool,
+    /// Old root identities replaced by a bootstrap rebuild.
+    pub replaced: Option<&'a srpm::ReplacedLock>,
 }
 
 pub fn prepare_source_packages(
@@ -117,6 +119,7 @@ pub fn prepare_source_packages(
         (Some((_, reference)), Some(toolchain)) => Some(srpm::LockCross {
             sysroot: reference.clone(),
             triple: toolchain.triple.clone(),
+            native: toolchain.native,
             cflags: toolchain.cflags.clone(),
             cxxflags: toolchain.cxxflags.clone(),
             ldflags: toolchain.ldflags.clone(),
@@ -147,6 +150,7 @@ pub fn prepare_source_packages(
                 root_lock: lock_root,
                 cross: cross.as_ref(),
                 build: &build,
+                replaced: options.replaced,
             },
         )?;
         let lock_digest = srpm::sha512_hex(lock.as_bytes());

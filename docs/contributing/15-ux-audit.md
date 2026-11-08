@@ -23,8 +23,10 @@ diagnostics and stage exit codes, `rpmx test` with selection and JUnit,
 self-sufficient rebuilds, a versioned JSON contract, `init`, `doctor`,
 `explain`, `steps`, `shell`, `--keep-workdir`, `--debug`, default
 `package.yaml`/`packages/<arch>`, repository indexing, source extraction for
-gzip/xz/zstd, SHA-256 sources, package policy checks, and Melange-style step
-feedback.
+gzip/xz/zstd, SHA-256 sources, package policy checks, Melange-style step
+feedback, and Wolfi-shaped tests: per-test
+`environment.contents.packages`/`environment.environment`, plus output-level
+`tests:` blocks that install only the tested output and its runtime siblings.
 
 Still open from the proposal set: `features`, typed `actions` (systemd,
 sysusers, tmpfiles), `update` metadata, and a config file. `rpmx bump` and
@@ -933,16 +935,19 @@ rpmx test package.yaml [--test NAME]... [--stage build|installed|package]
 - `build --run-tests` delegates to the same runner.
 
 Recipe: allow tests at the top level **and** under outputs, with per-test
-environment and dependencies:
+environment and dependencies. Both scopes now use the Wolfi shape
+(`test.environment.contents.packages` and `test.environment.environment`); a
+separate `dependencies.run` list is still open.
 
 ```yaml
 tests:
   - name: cli
     stage: installed
     environment:
-      FOOBAR: "1"
-    dependencies:
-      run: [jq, ca-certificates]
+      contents:
+        packages: [jq, ca-certificates]
+      environment:
+        FOOBAR: "1"
     argv: [curl, --version]
 
 outputs:

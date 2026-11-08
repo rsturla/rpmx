@@ -58,7 +58,10 @@ pub fn run(args: ExplainArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> 
                 "steps": cell.pipeline.iter().map(step).collect::<Vec<_>>(),
                 "tests": cell.tests.iter().map(|test| serde_json::json!({
                     "name": test.name,
+                    "output": test.output,
                     "stage": test.stage,
+                    "packages": test.packages,
+                    "environment": test.environment,
                     "steps": test.pipeline.iter().map(step).collect::<Vec<_>>(),
                 })).collect::<Vec<_>>(),
             })).collect::<Vec<_>>(),
@@ -83,14 +86,23 @@ pub fn run(args: ExplainArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> 
                 "obsoletes": &output.dependencies.obsoletes,
             }))).collect::<Vec<_>>(),
         }),
-        "files" => serde_json::json!({
-            "outputs": plan.cells.iter().flat_map(|cell| cell.outputs.iter().map(|output| serde_json::json!({
-                "cell": cell.id,
-                "name": output.name,
-                "include": output.files,
-                "exclude": output.exclude,
-            }))).collect::<Vec<_>>(),
-        }),
+        "files" => {
+            let main = plan
+                .cells
+                .first()
+                .and_then(|cell| cell.outputs.first())
+                .map(|output| output.name.clone());
+            serde_json::json!({
+                "main": main,
+                "outputs": plan.cells.iter().flat_map(|cell| cell.outputs.iter().map(|output| serde_json::json!({
+                    "cell": cell.id,
+                    "name": output.name,
+                    "main": Some(&output.name) == main.as_ref(),
+                    "include": output.files,
+                    "exclude": output.exclude,
+                }))).collect::<Vec<_>>(),
+            })
+        }
         "components" => {
             let inventory = match &args.source {
                 Some(source) => {

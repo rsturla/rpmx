@@ -51,6 +51,7 @@ fn lock_and_manifest_are_deterministic() {
             root_lock: None,
             cross: None,
             build: &build,
+            replaced: None,
         },
     )
     .expect("lock");
@@ -67,6 +68,7 @@ fn lock_and_manifest_are_deterministic() {
             root_lock: None,
             cross: None,
             build: &build,
+            replaced: None,
         },
     )
     .expect("lock");

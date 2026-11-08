@@ -83,6 +83,27 @@ pub mod codes {
         BUNDLED_002 = "RPMX-BUNDLED-002",
         /// A bundled declaration directory is malformed or targets an unknown output.
         BUNDLED_003 = "RPMX-BUNDLED-003",
+        /// A bootstrap manifest is malformed, has an unsupported version, or contains an
+        /// unsupported field or disagreeing source-date-epoch.
+        BOOTSTRAP_001 = "RPMX-BOOTSTRAP-001",
+        /// A bootstrap stage name, path, output, or input reference is invalid.
+        BOOTSTRAP_002 = "RPMX-BOOTSTRAP-002",
+        /// Bootstrap recipe discovery or selection failed (missing package, duplicate name,
+        /// multi-cell recipe, or `packages: all` on a seed/cross stage).
+        BOOTSTRAP_003 = "RPMX-BOOTSTRAP-003",
+        /// A bootstrap dependency cycle has neither an `order` edge nor a `fixed-point`
+        /// exemption.
+        BOOTSTRAP_004 = "RPMX-BOOTSTRAP-004",
+        /// A bootstrap fixed-point rebuild did not converge.
+        BOOTSTRAP_005 = "RPMX-BOOTSTRAP-005",
+        /// A `--locked` bootstrap stage lock is missing or has drifted.
+        BOOTSTRAP_006 = "RPMX-BOOTSTRAP-006",
+        /// A bootstrap stage prerequisite (input output, repository, or lock) is missing.
+        BOOTSTRAP_007 = "RPMX-BOOTSTRAP-007",
+        /// A bootstrap stage output or root already exists and `--force` was not given.
+        BOOTSTRAP_008 = "RPMX-BOOTSTRAP-008",
+        /// A bootstrap architecture or stage selection is invalid or ambiguous.
+        BOOTSTRAP_009 = "RPMX-BOOTSTRAP-009",
         /// Build-time test setup or execution failed (test root, stage, install, argv, or I/O).
         BUILD_007 = "RPMX-BUILD-007",
         /// A staged ELF object does not match the package target architecture.
@@ -233,6 +254,8 @@ pub mod codes {
         OUTPUT_017 = "RPMX-OUTPUT-017",
         /// An output sets attributes for a path that no packaged file matches.
         OUTPUT_018 = "RPMX-OUTPUT-018",
+        /// An output uses an unknown file preset.
+        OUTPUT_019 = "RPMX-OUTPUT-019",
         /// Two cells produce the same source package.
         PLAN_001 = "RPMX-PLAN-001",
         /// Two cells produce an output with the same name.

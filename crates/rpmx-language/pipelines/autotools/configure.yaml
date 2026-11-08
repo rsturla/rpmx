@@ -1,17 +1,40 @@
 name: autotools/configure
-version: 2
+version: 3
 summary: Configure an autotools project
 inputs:
+  dir:
+    type: string
+    default: .
+  configure:
+    type: string
+    default: ./configure
   args:
     type: list<string>
     default: []
+  host:
+    type: string
+    default: ""
+  build:
+    type: string
+    default: ""
 needs:
   tools: [make]
 run:
   cwd: "${source.dir}"
   runs: |
-    cross=""
-    if [ "$RPMX_CROSS" = 1 ]; then
-      cross="--host=$RPMX_TARGET_TRIPLE"
+    set -eu
+    cd "${inputs.dir}"
+
+    host="${inputs.host}"
+    if [ -z "$host" ] && [ "$RPMX_CROSS" = 1 ]; then
+      host="$RPMX_TARGET_TRIPLE"
     fi
-    ./configure --prefix="$PREFIX" --libdir="$LIBDIR" $cross ${inputs.args}
+    build="${inputs.build}"
+    if [ -z "$build" ] && [ "$RPMX_CROSS" = 1 ]; then
+      build="$RPMX_HOST_TRIPLE"
+    fi
+
+    set -- --prefix="$PREFIX" --libdir="$LIBDIR"
+    [ -n "$host" ] && set -- "$@" --host="$host"
+    [ -n "$build" ] && set -- "$@" --build="$build"
+    exec "${inputs.configure}" "$@" ${inputs.args}

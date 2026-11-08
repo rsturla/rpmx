@@ -10,8 +10,10 @@ use std::path::{Path, PathBuf};
 use rpmx_base::error::{codes, Error, Result};
 use rpmx_base::hash::sha512_hex;
 
-use crate::model::RecipeFragment;
+use crate::model::{Maintainer, Package, RecipeFragment};
 use crate::{parse_recipe, Recipe};
+
+const DEFAULTS_FILE: &str = "rpmx-defaults.yaml";
 
 /// One file in a recipe bundle.
 #[derive(Debug, Clone)]
@@ -116,13 +118,14 @@ pub fn load_recipe_bundle(path: impl AsRef<Path>) -> Result<RecipeBundle> {
                 .at(root.display().to_string()),
         );
     };
-    let package = merged.package.ok_or_else(|| {
+    let mut package = merged.package.ok_or_else(|| {
         Error::new(
             codes::INCLUDE_003,
             "the recipe bundle defines no `package` section",
         )
         .at(root.display().to_string())
     })?;
+    apply_repo_defaults(&root_dir, &mut package, &mut files)?;
 
     let recipe = Recipe {
         schema,
@@ -158,6 +161,127 @@ pub fn load_recipe_bundle(path: impl AsRef<Path>) -> Result<RecipeBundle> {
         files,
         digest,
         owners,
+    })
+}
+
+/// Repo-wide package metadata. Keep this narrow: a defaults file may only
+/// supply fields that are identical for every package in the repository.
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DefaultsDocument {
+    #[serde(default)]
+    schema: Option<u32>,
+    package: PackageDefaults,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PackageDefaults {
+    #[serde(default)]
+    maintainers: Vec<Maintainer>,
+}
+
+struct DefaultsFile {
+    path: PathBuf,
+    bytes: Vec<u8>,
+    digest: String,
+    maintainers: Vec<Maintainer>,
+}
+
+/// Apply `rpmx-defaults.yaml` when the recipe does not name maintainers.
+///
+/// The file is looked up in the recipe directory first (so an SRPM that embeds
+/// it stays self-contained), then in each ancestor up to the repository root.
+/// The defaults file joins the bundle so `rpmx lock` and the SRPM record it.
+fn apply_repo_defaults(
+    root_dir: &Path,
+    package: &mut Package,
+    files: &mut Vec<BundleFile>,
+) -> Result<()> {
+    if !package.maintainers.is_empty() {
+        return Ok(());
+    }
+    let Some(defaults) = find_defaults(root_dir)? else {
+        return Ok(());
+    };
+    package.maintainers = defaults.maintainers;
+    files.push(BundleFile {
+        path: defaults.path,
+        name: DEFAULTS_FILE.to_string(),
+        digest: defaults.digest,
+        bytes: defaults.bytes,
+    });
+    Ok(())
+}
+
+fn find_defaults(root_dir: &Path) -> Result<Option<DefaultsFile>> {
+    let local = root_dir.join(DEFAULTS_FILE);
+    if local.is_file() {
+        return read_defaults(&local).map(Some);
+    }
+    let mut directory = root_dir.parent();
+    while let Some(current) = directory {
+        let candidate = current.join(DEFAULTS_FILE);
+        if candidate.is_file() {
+            return read_defaults(&candidate).map(Some);
+        }
+        if current.join(".git").exists() {
+            break;
+        }
+        directory = current.parent();
+    }
+    Ok(None)
+}
+
+fn read_defaults(path: &Path) -> Result<DefaultsFile> {
+    let path = std::fs::canonicalize(path).map_err(|error| {
+        Error::new(
+            codes::INCLUDE_001,
+            format!("cannot read {}: {error}", path.display()),
+        )
+        .at(path.display().to_string())
+    })?;
+    let bytes = std::fs::read(&path).map_err(|error| {
+        Error::new(
+            codes::INCLUDE_001,
+            format!("cannot read {}: {error}", path.display()),
+        )
+        .at(path.display().to_string())
+    })?;
+    let text = std::str::from_utf8(&bytes).map_err(|error| {
+        Error::new(
+            codes::INCLUDE_001,
+            format!("{} is not UTF-8: {error}", path.display()),
+        )
+        .at(path.display().to_string())
+    })?;
+    let document: DefaultsDocument = rpmx_base::yaml::parse_strict(text, codes::YAML_001)?;
+    if document.schema.unwrap_or(1) != 1 {
+        return Err(Error::new(
+            codes::INCLUDE_003,
+            format!(
+                "{} declares schema {}; rpmx-defaults supports schema 1",
+                path.display(),
+                document.schema.unwrap_or_default()
+            ),
+        )
+        .at(path.display().to_string()));
+    }
+    if document.package.maintainers.is_empty() {
+        return Err(Error::new(
+            codes::INCLUDE_003,
+            format!(
+                "{} defines no package.maintainers; remove the file or list a maintainer",
+                path.display()
+            ),
+        )
+        .at(path.display().to_string()));
+    }
+    Ok(DefaultsFile {
+        digest: sha512_hex(&bytes),
+        bytes,
+        path,
+        maintainers: document.package.maintainers,
     })
 }
 
@@ -400,6 +524,77 @@ mod tests {
         write(&outside, "build:\n  pipeline: []\n");
         let error = load_recipe_bundle(&root).expect_err("escape");
         assert_eq!(error.code, codes::INCLUDE_004);
+    }
+
+    const DEFAULTS: &str = "schema: 1\npackage:\n  maintainers:\n    - name: Repo Maintainers\n      email: repo@example.org\n";
+
+    fn repo() -> (tempfile::TempDir, std::path::PathBuf) {
+        let directory = tempfile::tempdir().expect("tempdir");
+        write(&directory.path().join(".git/config"), "");
+        write(&directory.path().join("rpmx-defaults.yaml"), DEFAULTS);
+        let recipe = directory.path().join("packages/probe/package.yaml");
+        write(&recipe, PACKAGE);
+        (directory, recipe)
+    }
+
+    #[test]
+    fn repo_defaults_supply_missing_maintainers_and_join_the_bundle() {
+        let (directory, recipe) = repo();
+        let bundle = load_recipe_bundle(&recipe).expect("bundle");
+        assert_eq!(bundle.recipe.package.maintainers.len(), 1);
+        assert_eq!(
+            bundle.recipe.package.maintainers[0].email,
+            "repo@example.org"
+        );
+        assert_eq!(
+            bundle
+                .files
+                .iter()
+                .map(|file| file.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["package.yaml", "rpmx-defaults.yaml"]
+        );
+        assert!(bundle.digest().starts_with("sha512:"));
+        assert!(directory.path().join("rpmx-defaults.yaml").is_file());
+    }
+
+    #[test]
+    fn recipe_maintainers_override_repo_defaults() {
+        let (_directory, recipe) = repo();
+        write(
+            &recipe,
+            &format!(
+                "{PACKAGE}  maintainers:\n    - name: Package Owner\n      email: owner@example.org\n"
+            ),
+        );
+        let bundle = load_recipe_bundle(&recipe).expect("bundle");
+        assert_eq!(bundle.recipe.package.maintainers.len(), 1);
+        assert_eq!(
+            bundle.recipe.package.maintainers[0].email,
+            "owner@example.org"
+        );
+        assert_eq!(bundle.files.len(), 1);
+    }
+
+    #[test]
+    fn a_defaults_file_without_maintainers_is_actionable() {
+        let (directory, recipe) = repo();
+        write(
+            &directory.path().join("rpmx-defaults.yaml"),
+            "schema: 1\npackage:\n  maintainers: []\n",
+        );
+        let error = load_recipe_bundle(&recipe).expect_err("empty defaults");
+        assert_eq!(error.code, codes::INCLUDE_003);
+        assert!(
+            error.message.contains("rpmx-defaults.yaml"),
+            "{}",
+            error.message
+        );
+        assert!(
+            error.message.contains("package.maintainers"),
+            "{}",
+            error.message
+        );
     }
 
     #[test]

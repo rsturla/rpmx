@@ -265,6 +265,20 @@ pub(crate) fn validate_steps(recipe: &Recipe) -> Result<()> {
             }
         }
     }
+    for (output_index, output) in recipe.outputs.iter().enumerate() {
+        for (test_index, test) in output.tests.iter().enumerate() {
+            if let Some(pipeline) = &test.pipeline {
+                for (step_index, step) in pipeline.iter().enumerate() {
+                    validate_step(
+                        step,
+                        format!(
+                            "outputs[{output_index}].tests[{test_index}].pipeline[{step_index}]"
+                        ),
+                    )?;
+                }
+            }
+        }
+    }
     Ok(())
 }
 
@@ -345,11 +359,12 @@ pub(crate) fn validate_outputs(recipe: &Recipe) -> Result<()> {
             return Err(Error::new(codes::OUTPUT_002, "output name is empty")
                 .at(format!("outputs[{index}].name")));
         }
-        if output.files.include.is_empty() && !output.metapackage {
+        if output.files.include.is_empty() && !output.metapackage && index != 0 {
             return Err(Error::new(
                 codes::OUTPUT_003,
                 format!(
-                    "output '{}' has no file selectors; set metapackage: true if that is intended",
+                    "output '{}' has no file selectors; only the first output may rely on the \
+                     main-package fallback",
                     output.name
                 ),
             )

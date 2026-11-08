@@ -15,12 +15,17 @@ pub(crate) fn expand_dependencies(
     scope: &BTreeMap<String, Value>,
     field: &str,
 ) -> Result<Vec<String>> {
+    expand_values(values, scope, &format!("build.dependencies.{field}"))
+}
+
+pub(crate) fn expand_values(
+    values: &[String],
+    scope: &BTreeMap<String, Value>,
+    field: &str,
+) -> Result<Vec<String>> {
     values
         .iter()
-        .map(|value| {
-            template::expand_string(value, scope)
-                .map_err(|error| error.at(format!("build.dependencies.{field}")))
-        })
+        .map(|value| template::expand_string(value, scope).map_err(|error| error.at(field)))
         .collect()
 }
 
@@ -129,25 +134,45 @@ pub(crate) fn expand_steps(
     )
 }
 
+pub(crate) struct ExpandedOutputs {
+    pub outputs: Vec<PlannedOutput>,
+    pub tests: Vec<PlannedTest>,
+}
+
 pub(crate) fn expand_outputs(
     outputs: &[Output],
     scope: &BTreeMap<String, Value>,
-) -> Result<Vec<PlannedOutput>> {
-    let outputs: Vec<Output> = expand_typed(
-        &outputs.to_vec(),
-        scope,
-        "outputs",
-        codes::PLAN_005,
-        codes::PLAN_006,
-    )?;
-
+    step_root: Option<&std::path::Path>,
+    allow_builtin_override: bool,
+) -> Result<ExpandedOutputs> {
     let mut planned = Vec::with_capacity(outputs.len());
+    let mut tests = Vec::new();
     let mut seen = BTreeSet::new();
-    for output in outputs {
+    for (index, output) in outputs.iter().enumerate() {
+        // Expand the output itself without its tests, then give each test the
+        // output's expanded name as its owner. Expanding the whole output at
+        // once would expand test values twice and lose the per-test scope.
+        let mut raw = output.clone();
+        let output_tests = std::mem::take(&mut raw.tests);
+        let mut output: Output = expand_typed(
+            &raw,
+            scope,
+            &format!("outputs[{index}]"),
+            codes::PLAN_005,
+            codes::PLAN_006,
+        )?;
+        expand_file_presets(
+            &mut output.files.include,
+            &format!("outputs[{index}].files.include"),
+        )?;
+        expand_file_presets(
+            &mut output.files.exclude,
+            &format!("outputs[{index}].files.exclude"),
+        )?;
         if output.name.trim().is_empty() {
             return Err(
                 Error::new(codes::OUTPUT_004, "output name expanded to an empty string")
-                    .at("outputs[].name"),
+                    .at(format!("outputs[{index}].name")),
             );
         }
         if !seen.insert(output.name.clone()) {
@@ -158,6 +183,14 @@ pub(crate) fn expand_outputs(
         }
         validate_file_metadata(&output)?;
         validate_bundled(&output)?;
+        tests.extend(expand_tests(
+            &output_tests,
+            scope,
+            step_root,
+            allow_builtin_override,
+            Some(&output.name),
+            &format!("outputs[{index}].tests"),
+        )?);
         planned.push(PlannedOutput {
             name: output.name,
             summary: output.summary,
@@ -178,7 +211,10 @@ pub(crate) fn expand_outputs(
             scriptlets: output.scriptlets,
         });
     }
-    Ok(planned)
+    Ok(ExpandedOutputs {
+        outputs: planned,
+        tests,
+    })
 }
 
 fn validate_bundled(output: &Output) -> Result<()> {
@@ -234,16 +270,65 @@ fn validate_bundled(output: &Output) -> Result<()> {
     Ok(())
 }
 
+fn file_preset(name: &str) -> Option<&'static [&'static str]> {
+    match name {
+        "@dev" => Some(&[
+            "/usr/include/**",
+            "/usr/lib*/lib*.a",
+            "/usr/lib*/lib*.so",
+            "/usr/lib*/pkgconfig/**",
+            "/usr/share/pkgconfig/**",
+            "/usr/share/aclocal/**",
+            "/usr/lib*/cmake/**",
+            "/usr/share/cmake/**",
+        ]),
+        "@headers" => Some(&["/usr/include/**"]),
+        "@static" => Some(&["/usr/lib*/lib*.a"]),
+        "@pkgconfig" => Some(&["/usr/lib*/pkgconfig/**", "/usr/share/pkgconfig/**"]),
+        "@doc" => Some(&["/usr/share/doc/**"]),
+        "@man" => Some(&["/usr/share/man/**"]),
+        "@info" => Some(&["/usr/share/info/**"]),
+        "@locales" => Some(&["/usr/share/i18n/**", "/usr/share/locale/**"]),
+        "@debug" => Some(&["/usr/lib/debug/**", "/usr/lib*/*.debug"]),
+        _ => None,
+    }
+}
+
+fn expand_file_presets(patterns: &mut Vec<String>, path: &str) -> Result<()> {
+    let mut expanded = Vec::with_capacity(patterns.len());
+    for pattern in patterns.drain(..) {
+        if let Some(preset) = file_preset(&pattern) {
+            expanded.extend(preset.iter().map(|value| (*value).to_string()));
+            continue;
+        }
+        if pattern.starts_with('@') {
+            return Err(Error::new(
+                codes::OUTPUT_019,
+                format!(
+                    "unknown file preset '{pattern}'; known presets: @dev, @headers, @static, \
+                     @pkgconfig, @doc, @man, @info, @locales, @debug"
+                ),
+            )
+            .at(path));
+        }
+        expanded.push(pattern);
+    }
+    *patterns = expanded;
+    Ok(())
+}
+
 pub(crate) fn expand_tests(
     tests: &[Test],
     scope: &BTreeMap<String, Value>,
     step_root: Option<&std::path::Path>,
     allow_builtin_override: bool,
+    owner: Option<&str>,
+    path: &str,
 ) -> Result<Vec<PlannedTest>> {
     let tests: Vec<Test> = expand_typed_deferring(
         &tests.to_vec(),
         scope,
-        "tests",
+        path,
         codes::PLAN_007,
         codes::PLAN_008,
     )?;
@@ -251,41 +336,86 @@ pub(crate) fn expand_tests(
     let mut seen = BTreeSet::new();
     let mut planned = Vec::with_capacity(tests.len());
     for (index, test) in tests.into_iter().enumerate() {
+        let at = format!("{path}[{index}]");
         if test.name.contains("${") || test.stage.contains("${") {
             return Err(Error::new(
                 codes::TEMPLATE_007,
                 "a test name or stage cannot contain an executor placeholder",
             )
-            .at(format!("tests[{index}]")));
+            .at(at));
         }
         if test.name.trim().is_empty() {
             return Err(
                 Error::new(codes::TEST_001, "test name expanded to an empty string")
-                    .at("tests[].name"),
+                    .at(format!("{path}[].name")),
             );
         }
+        if test.name.contains('/') {
+            return Err(Error::new(
+                codes::TEST_001,
+                format!(
+                    "test name '{}' cannot contain '/'; that separator selects output-level tests",
+                    test.name
+                ),
+            )
+            .at(format!("{path}[{index}].name")));
+        }
         if !seen.insert(test.name.clone()) {
+            let owner = owner
+                .map(|output| format!(" in output '{output}'"))
+                .unwrap_or_default();
             return Err(Error::new(
                 codes::TEST_002,
-                format!("test '{}' is declared twice in one cell", test.name),
+                format!("test '{}' is declared twice{owner}", test.name),
             ));
         }
         let name = test.name;
-        let scope = format!("test:{name}");
+        let packages = expand_values(
+            &test.environment.contents.packages,
+            scope,
+            &format!("{path}[{index}].environment.contents.packages"),
+        )?;
+        if test.stage != "installed" && !packages.is_empty() {
+            return Err(Error::new(
+                codes::TEST_004,
+                format!(
+                    "test '{name}' declares environment.contents.packages but uses stage '{}'; \
+                     test packages are installed into the disposable installed-stage root",
+                    test.stage
+                ),
+            )
+            .at(format!("{path}[{index}].environment.contents.packages")));
+        }
+        let environment = test
+            .environment
+            .environment
+            .iter()
+            .map(|(key, value)| {
+                template::expand_string(value, scope)
+                    .map(|value| (key.clone(), value))
+                    .map_err(|error| error.at(format!("{path}[{index}].environment.environment")))
+            })
+            .collect::<Result<BTreeMap<_, _>>>()?;
+        let step_scope = owner
+            .map(|output| format!("test:{output}/{name}"))
+            .unwrap_or_else(|| format!("test:{name}"));
         planned.push(PlannedTest {
             name,
+            output: owner.map(str::to_string),
             stage: test.stage,
             argv: test.argv,
             pipeline: match test.pipeline {
                 Some(pipeline) => plan_steps(
                     &pipeline,
                     step_root,
-                    &format!("tests[{index}].pipeline"),
+                    &format!("{path}[{index}].pipeline"),
                     allow_builtin_override,
-                    &scope,
+                    &step_scope,
                 )?,
                 None => Vec::new(),
             },
+            packages,
+            environment,
         });
     }
     Ok(planned)

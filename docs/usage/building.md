@@ -30,7 +30,9 @@ creation or builds. It verifies the lock when `--locked` is given.
 A build runs the recipe's tests after it packages them, so a green build means
 the same thing it means under `rpmbuild`. `--no-tests` skips them, and
 `--skip-installed` runs only build-stage tests (the installed stage needs to
-execute the target binary). `--test NAME` runs one test instead of all.
+execute the target binary). `--test NAME` runs one test instead of all; use
+`--test OUTPUT/NAME` when an output-level test shares its bare name with
+another output.
 
 The full build runs:
 
@@ -57,6 +59,7 @@ INFO build    [x86_64] step [1/3] runs
 INFO build    [x86_64] step [2/3] make
 INFO [x86_64] gcc -O2 -Wall -Wextra -Werror -o hello hello.c
 INFO build    [x86_64] step [3/3] strip
+INFO package  [x86_64] hello · 9 files · 41.2 KiB
 INFO package  [x86_64] hello · 0.1s
 INFO wrote    [x86_64] packages/x86_64/hello-0.1.0-1.fc44.x86_64.rpm
 INFO index    [x86_64] 1 package in packages/x86_64
@@ -72,7 +75,10 @@ stdout carries only the artifact list, one path per line, or the single
 package and each step's duration; `--color=auto|always|never` controls ANSI
 color; `--debug` runs `runs:` scripts with `set -x` and echoes the command.
 A failing step adds the command, cwd, a hint, and `--keep-workdir` leaves the
-workspace.
+workspace. Packaging reports every output's file count and payload size. If the
+main package receives development headers, static libraries, pkg-config/CMake
+files, documentation or locale source data, the package lint warns and names
+the matching `@dev`, `@static`, `@pkgconfig`, `@doc` or `@locales` preset.
 
 ### Artifacts
 
@@ -168,6 +174,11 @@ signing key is given it also writes `repomd.xml.asc`.
 `cache gc` keeps blobs referenced by the given locks and recipes and deletes
 unreferenced blobs older than `--older-than-hours` (default 24). Always run
 `--dry-run` first.
+
+Source downloads have separate resolve, connect, response, per-read and body
+timeouts. Transport failures are retried three times with backoff; a digest
+mismatch is not. List several `https` locators for the same digest so a slow
+mirror is an alternate path, not a failed build.
 
 Cache locations:
 

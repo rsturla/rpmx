@@ -5,6 +5,90 @@ does not promise a stable schema or CLI yet.
 
 ## Unreleased
 
+- The autotools, Make, CMake and Meson steps accept `dir` and pass their full
+  argument list through to configure/build/install. `autotools/configure`
+  supports out-of-tree builds and derives `--host`/`--build` in a cross build.
+  Build and check steps use the sandbox `$JOBS` instead of a hardcoded `-j1`.
+- Added `license/copy`, which installs per-output license copies under
+  `$PREFIX/share/licenses/<output>/` without repeating a shell loop.
+
+- Source fetches use separate resolve, connect, response, read and body
+  timeouts instead of one 60-second request budget. Transport failures retry
+  three times with backoff; digest mismatches do not. Multiple `https`
+  locators for the same digest are tried in order.
+
+- The first output is now the main package and receives staged files that no
+  other output claims, matching Wolfi/melange. There is no second ownership
+  mode: strictness is lint policy, not recipe configuration.
+  Outputs can use `@dev`, `@doc`, `@man`, `@info`, `@locales`, `@static`,
+  `@pkgconfig`, `@headers` and `@debug` file presets instead of enumerating
+  every installed path. Build output reports each output's file count and
+  payload size, and package lint warns when the main package collects
+  development or documentation payload and suggests the matching preset.
+  `rpmx explain files` shows which output is the main package.
+
+- Tests can be declared under an output. An installed-stage output test
+  prepares a root with that output and the sibling outputs that provide its
+  runtime dependencies, instead of installing every output. Recipe-level tests
+  still install all outputs. Use `--test OUTPUT/NAME` when several outputs
+  reuse a test name.
+
+- Tests accept a Wolfi/melange-style environment:
+  `environment.contents.packages` lists packages installed only for that test's
+  disposable root, and `environment.environment` sets test-only variables.
+  Tests with different package sets get separate roots; the package-wide
+  `build.dependencies.tests` still applies to every installed test. Test
+  packages are rejected on `stage: build`, where they would be silently
+  ignored.
+
+- Recipes can inherit `package.maintainers` from `rpmx-defaults.yaml` in the
+  recipe directory or a repository ancestor. The recipe wins when it declares
+  its own maintainers. The defaults file joins the recipe bundle, so the lock
+  and SRPM record it and a rebuild remains self-contained.
+
+- Bootstrap fixed-point passes hide every provider except the stage output,
+  including the seed repositories. A package no longer needs an inflated
+  release or epoch to outrank Fedora while the seed is still in the profile.
+
+- `rpmx bootstrap plan` validates a dedicated `rpmx-bootstrap` manifest and
+  prints an ordered stage graph without resolving roots. Stages select recipes
+  by discovery or explicit globs, reject duplicate/multi-cell recipes, require
+  explicit packages on seed and cross stages, reject dependency cycles unless
+  every member is in `fixed-point`, and choose a deterministic
+  `source-date-epoch`. The plan prints seed/generation provenance, root/lock/repo
+  paths, the effective timestamp and a `next:` command; `--json` exposes the
+  same data. `RPMX-BOOTSTRAP-*` diagnostics have stable exit codes.
+
+- Bootstrap manifest paths resolve relative to the manifest file, including
+  parent components such as `../packages`, so a manifest can live in
+  `.bootstrap/` without absolute paths. Native stages assemble a normal dnf
+  root (with scriptlets and an RPM database); only cross sysroots use the
+  payload-only extractor. Multi-arch plans keep each architecture's roots,
+  fixed-point candidates and locks separate.
+
+- Bootstrap stages can publish a read-only assembled root. The publisher adds
+  owner write permission only for the directory rename and restores the
+  original mode afterwards; stale read-only backups are removed through the
+  namespace-aware root remover. This makes repeated `rpmx bootstrap build`
+  runs work with `--force` instead of failing with `Permission denied`.
+
+- Package SBOMs no longer list `source-root.lock.json` as a source. It records
+  the root used for source assembly, so treating it as a package input made
+  otherwise identical rebuilds produce different SBOMs and prevented a
+  bootstrap fixed point from converging.
+
+- Root digests read mode-000 files without requiring namespace privileges.
+  `digest_root` first tries the tree as-is, then temporarily grants the owner
+  read access and restores every mode, and only then falls back to
+  re-executing under a user namespace. Fedora's `/etc/gshadow` previously made
+  `rpmx bootstrap build` fail with `RPMX-ROOT-014` on a fresh candidate root.
+
+- Bootstrap stages accept a `replaces` map from an Eternal output package name
+  to one or more seed package names. This lets the ladder keep a stable output
+  name while hiding a differently named seed provider; a fixed-point pass
+  applies the same mapping to every other repository. The recipe still owns
+  the matching `provides`.
+
 - Bundled components are discovered from vendor metadata and emitted as
   `bundled(...)` provides. Go reads `vendor/modules.txt`, Cargo reads
   `Cargo.lock` when a `vendor/` tree exists, and Node projects read
@@ -46,6 +130,37 @@ does not promise a stable schema or CLI yet.
   pkg-config, derived `CGO_*` flags and generated CMake/Meson toolchain files.
   Two checks catch a wrong build: every staged ELF must match the target
   machine, and every `DT_NEEDED` must exist in the sysroot.
+- `cross.bootstrap: true` enables a native bootstrap: the seed build root and
+  the target sysroot may share an architecture while staying separate roots.
+  Without an explicit `cross.triple` the build uses the seed's native command
+  names (`gcc`, `g++`, ...), and the SRPM lock records that choice so
+  `rpmx rebuild` recreates the same toolchain. The build-root sysroot mount
+  point is created before the root digest, so a cached root no longer fails
+  under a read-only sandbox.
+- `rpmx bootstrap rebuild` rebuilds a stage package against an explicit stage
+  root lock and re-emits its SRPM. The replacement SRPM embeds the new lock and
+  records the old root/sysroot digests under `replaced`; the input SRPM is
+  never modified and `--srpm-out` must name a different directory. Plain
+  `rpmx rebuild` keeps rejecting a mismatched lock with `RPMX-ROOT-016`.
+
+- `rpmx bootstrap build` supports fixed-point stages: input repositories are
+  filtered with `exclude`, the stage output becomes the winning repository, and
+  only the `fixed-point` recipes are rebuilt until the RPM bytes and root
+  digests match. A non-converging stage fails with `RPMX-BOOTSTRAP-005` and
+  names the changed packages and last two root digests. `max-iterations`
+  defaults to 3.
+
+- `rpmx bootstrap build` resolves one build-root/sysroot pair per stage and
+  runs the stage recipes in dependency order. It synthesizes the stage profile
+  in memory (input stage repositories, recipe-required packages, `extra-tools`
+  and `extra-sysroot`), writes `<roots>/<stage>/<arch>/root` and
+  `<locks>/<stage>/<arch>.lock.yaml`, records seed/generation/requirement
+  provenance,
+  indexes the stage output with the manifest or stage `source-date-epoch`, and
+  publishes it atomically. A non-empty output or root needs `--force`;
+  `--locked` verifies stage locks and fails with `RPMX-BOOTSTRAP-006` on
+  missing or drifted state; `--offline` names the stage and online command on a
+  cache miss.
 - A cross SRPM embeds its sysroot lock and toolchain, so `rpmx rebuild` needs
   no profile. `rpmx lock` records both the build root and the sysroot, and
   `--locked` reports `changed: sysroot` on drift. Installed-stage tests run in

@@ -42,6 +42,25 @@ rpmx lint --profile fedora-44
 
 `doctor --strict` uses 9 when a required host feature is missing.
 
+### Bootstrap diagnostics
+
+Bootstrap uses its own stable codes. They follow the same exit-code policy:
+
+| Code | Exit | Meaning |
+|---|---|---|
+| `RPMX-BOOTSTRAP-001` | 2 | Invalid manifest field or value. |
+| `RPMX-BOOTSTRAP-002` | 2 | Invalid stage graph, name, output, input or repository id. |
+| `RPMX-BOOTSTRAP-003` | 2 | Invalid recipe selection or a recipe with no build cells. |
+| `RPMX-BOOTSTRAP-004` | 2 | Dependency cycle without every member in `fixed-point`. |
+| `RPMX-BOOTSTRAP-005` | 5 | Fixed point did not converge within `max-iterations`. |
+| `RPMX-BOOTSTRAP-006` | 3 | Stage lock missing, stale or drifted under `--locked`. |
+| `RPMX-BOOTSTRAP-007` | 2 | A stage input repository, index or lock is missing. |
+| `RPMX-BOOTSTRAP-008` | 2 | Stage output or root is non-empty and `--force` was not given. |
+| `RPMX-BOOTSTRAP-009` | 2 | Unknown stage or ambiguous/missing architecture. |
+
+`rpmx bootstrap rebuild` keeps `RPMX-ROOT-016` for a lock that is invalid on its
+own, but accepts a lock that differs from the SRPM's embedded lock by design.
+
 ---
 
 ## JSON output
@@ -149,6 +168,9 @@ A profile with a `cross` block also exports:
   binfmt or a real target machine. The build itself needs neither.
 - A cross SRPM carries its sysroot lock and toolchain, so `rpmx rebuild` needs
   no profile.
+- `rpmx bootstrap rebuild` replaces a root lock. Replacing a cross SRPM's
+  separate sysroot lock is not exposed yet; rebuild it with the embedded
+  sysroot or a matching one.
 - `stage: package` tests, ABI tests and reproducibility tests are not
   implemented.
 - Rich dependencies are not implemented; weak dependencies are.

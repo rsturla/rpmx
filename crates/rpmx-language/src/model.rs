@@ -466,6 +466,11 @@ pub struct Output {
     pub generators: OutputGenerators,
     #[serde(default)]
     pub scriptlets: Scriptlets,
+    /// Tests for this output. An installed-stage test owned by an output is
+    /// prepared with that output and its runtime dependencies, not with every
+    /// sibling output.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tests: Vec<Test>,
 }
 
 /// Per-output switches for automatic `Provides`/`Requires` generation.
@@ -663,6 +668,30 @@ pub struct Test {
     pub argv: Option<Vec<String>>,
     #[serde(default)]
     pub pipeline: Option<Vec<Step>>,
+    /// Test-only root and environment, analogous to a Wolfi/melange test
+    /// environment. Installed-stage tests run in a disposable root; the
+    /// packages here are added to that root.
+    #[serde(default)]
+    pub environment: TestEnvironment,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TestEnvironment {
+    #[serde(default)]
+    pub contents: TestContents,
+    /// Variables applied to every step of this test. A step's own `env`
+    /// entries win.
+    #[serde(default)]
+    pub environment: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TestContents {
+    /// Packages installed only for this test.
+    #[serde(default)]
+    pub packages: Vec<String>,
 }
 
 /// One YAML file in a recipe bundle.

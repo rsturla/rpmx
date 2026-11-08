@@ -109,25 +109,32 @@ pub fn prepare(options: TestRootOptions<'_>) -> Result<PreparedTestRoot> {
         },
     )?;
 
-    let rpms_dir = options
-        .rpms
-        .first()
-        .and_then(|path| path.parent())
-        .ok_or_else(|| Error::new(codes::BUILD_007, "no binary RPMs were written"))?;
-    // podman treats a relative -v source as a named volume.
-    let rpms_dir = std::fs::canonicalize(rpms_dir).map_err(|error| {
-        Error::new(
+    if options.rpms.is_empty() {
+        return Err(Error::new(
             codes::BUILD_007,
-            format!("cannot resolve {}: {error}", rpms_dir.display()),
-        )
-    })?;
+            "no binary RPMs were selected for the test root",
+        ));
+    }
+    // podman treats a relative -v source as a named volume.
+    let rpms = options
+        .rpms
+        .iter()
+        .map(|path| {
+            std::fs::canonicalize(path).map_err(|error| {
+                Error::new(
+                    codes::BUILD_007,
+                    format!("cannot resolve {}: {error}", path.display()),
+                )
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
     let install = |nodeps: bool| {
         crate::root::container::run_offline_root(crate::root::container::OfflineRootCommand {
             root: &root_path,
             image,
             target,
             nodeps,
-            mode: crate::root::container::OfflineRootMode::Install { rpms: &rpms_dir },
+            mode: crate::root::container::OfflineRootMode::Install { rpms: &rpms },
         })
     };
     let mut output = install(false)?;
@@ -147,7 +154,8 @@ pub fn prepare(options: TestRootOptions<'_>) -> Result<PreparedTestRoot> {
             codes::BUILD_007,
             format!(
                 "cannot install the built RPMs into the test root: {}; \
-                 add missing runtime packages to build.dependencies.tests \
+                 add missing runtime packages to the test's \
+                 environment.contents.packages, to build.dependencies.tests, \
                  or pass a pinned --test-root-lock",
                 String::from_utf8_lossy(&output.stderr).trim()
             ),

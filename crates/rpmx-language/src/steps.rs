@@ -129,6 +129,10 @@ const BUILTINS: &[(&str, &str)] = &[
         include_str!("../pipelines/autotools/install.yaml"),
     ),
     ("strip", include_str!("../pipelines/strip.yaml")),
+    (
+        "license/copy",
+        include_str!("../pipelines/license/copy.yaml"),
+    ),
     ("debuginfo", include_str!("../pipelines/debuginfo.yaml")),
     ("make", include_str!("../pipelines/make.yaml")),
     ("make/build", include_str!("../pipelines/make/build.yaml")),
@@ -579,6 +583,49 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn autotools_configure_supports_an_out_of_tree_build() {
+        let with = BTreeMap::from([
+            ("dir".to_string(), serde_json::json!("build")),
+            ("configure".to_string(), serde_json::json!("../configure")),
+            (
+                "args".to_string(),
+                serde_json::json!(["--enable-kernel=4.4"]),
+            ),
+        ]);
+        let step = resolve("autotools/configure", None, Some(&with), false).expect("step");
+        let script = &step.args[1];
+        assert!(script.contains("cd \"build\""), "{script}");
+        assert!(script.contains("\"../configure\""), "{script}");
+        assert!(script.contains("--enable-kernel=4.4"), "{script}");
+    }
+
+    #[test]
+    fn license_copy_names_every_output() {
+        let with = BTreeMap::from([
+            ("files".to_string(), serde_json::json!(["COPYING"])),
+            (
+                "outputs".to_string(),
+                serde_json::json!(["demo", "demo-dev"]),
+            ),
+        ]);
+        let step = resolve("license/copy", None, Some(&with), false).expect("step");
+        let script = &step.args[1];
+        assert!(script.contains("for output in demo demo-dev"), "{script}");
+        assert!(
+            script.contains("$STAGE${prefix}/share/licenses/$output"),
+            "{script}"
+        );
+    }
+
+    #[test]
+    fn make_build_uses_the_sandbox_job_count() {
+        let step = resolve("make/build", None, None, false).expect("step");
+        let script = &step.args[1];
+        assert!(script.contains("-j\"$JOBS\""), "{script}");
+        assert!(!script.contains("-j1"), "{script}");
     }
 
     #[test]

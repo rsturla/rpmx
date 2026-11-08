@@ -32,6 +32,10 @@ pub struct CrossToolchain {
     pub strip: String,
     pub objcopy: String,
     pub pkg_config: String,
+    /// True when the commands are the seed's native tools rather than
+    /// `<triple>-*` wrappers. A native bootstrap still passes `--sysroot`, but
+    /// `gcc` already targets the same architecture as the sysroot.
+    pub native: bool,
     /// Distribution-specific flags appended to every command.
     pub cflags: Vec<String>,
     pub cxxflags: Vec<String>,
@@ -50,6 +54,29 @@ impl CrossToolchain {
             strip: format!("{triple}-strip"),
             objcopy: format!("{triple}-objcopy"),
             pkg_config: "pkg-config".to_string(),
+            native: false,
+            cflags: Vec::new(),
+            cxxflags: Vec::new(),
+            ldflags: Vec::new(),
+        }
+    }
+
+    /// Native command names plus the target triple.
+    ///
+    /// This is the seed-compiler form of a native bootstrap: `gcc` targets the
+    /// same architecture as the sysroot, and the sandbox supplies
+    /// `--sysroot` through `CFLAGS`/`LDFLAGS`.
+    pub fn native(triple: &str) -> Self {
+        Self {
+            triple: triple.to_string(),
+            cc: "gcc".to_string(),
+            cxx: "g++".to_string(),
+            ar: "ar".to_string(),
+            ld: "ld".to_string(),
+            strip: "strip".to_string(),
+            objcopy: "objcopy".to_string(),
+            pkg_config: "pkg-config".to_string(),
+            native: true,
             cflags: Vec::new(),
             cxxflags: Vec::new(),
             ldflags: Vec::new(),
@@ -69,6 +96,18 @@ mod tests {
         assert_eq!(toolchain.ar, "aarch64-linux-gnu-ar");
         assert_eq!(toolchain.strip, "aarch64-linux-gnu-strip");
         assert_eq!(toolchain.pkg_config, "pkg-config");
+        assert!(!toolchain.native);
+    }
+
+    #[test]
+    fn native_commands_keep_the_target_triple() {
+        let toolchain = CrossToolchain::native("x86_64-linux-gnu");
+        assert_eq!(toolchain.triple, "x86_64-linux-gnu");
+        assert_eq!(toolchain.cc, "gcc");
+        assert_eq!(toolchain.cxx, "g++");
+        assert_eq!(toolchain.ar, "ar");
+        assert_eq!(toolchain.strip, "strip");
+        assert!(toolchain.native);
     }
 
     #[test]

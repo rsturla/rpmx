@@ -1,9 +1,16 @@
 name: make/install
-version: 1
+version: 2
 summary: Run make install into the staging root
+inputs:
+  dir:
+    type: string
+    default: .
+  args:
+    type: list<string>
+    default: []
 needs:
   tools: [make]
 run:
   cwd: "${source.dir}"
   runs: |
-    make install DESTDIR="$STAGE"
+    make -C "${inputs.dir}" install DESTDIR="$STAGE" ${inputs.args}

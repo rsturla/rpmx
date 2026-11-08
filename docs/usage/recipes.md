@@ -81,6 +81,29 @@ package:
 `source-date-epoch` is strongly recommended: it drives file mtimes, SBOM dates
 and signature time. Without it the timestamp defaults to `0` and `lint` warns.
 
+#### Repository defaults
+
+A `rpmx-defaults.yaml` can supply package metadata that is identical for every
+recipe in a repository:
+
+```yaml
+schema: 1
+package:
+  maintainers:
+    - name: Example Linux maintainers
+      email: maintainers@example.org
+```
+
+rpmx looks in the recipe directory first, then each ancestor up to the
+repository root (the first directory containing `.git`). The recipe wins when
+it sets the field itself. The defaults file joins the recipe bundle, so it is
+recorded in the package lock and embedded in the SRPM; a rebuild does not need
+the original checkout.
+
+Keep repository defaults narrow. License, upstream URL, version, summary and
+CPE describe the upstream component and belong in the recipe. CPE must identify
+the upstream project, not the distribution package name.
+
 ### 5.2 Build root
 
 The recipe names the root in one of two ways.
@@ -121,6 +144,23 @@ The inline `packages` are merged with everything the recipe needs.
 
 If `build.root` is absent, `--profile FILE` supplies the root. If neither is
 present, `build`/`test` fail with `RPMX-ROOT-016`.
+
+The first output is always the main package. It receives every staged file
+that no later output claims, matching Wolfi/melange and keeping the recipe
+focused on the build plus the deliberate subpackage splits. File presets are
+available in `files.include` and `files.exclude`:
+
+| Preset | Expands to |
+| --- | --- |
+| `@dev` | headers, static libraries, unversioned `.so` linker scripts, pkg-config, aclocal and CMake files |
+| `@headers` | `/usr/include/**` |
+| `@static` | `/usr/lib*/lib*.a` |
+| `@pkgconfig` | `/usr/lib*/pkgconfig/**`, `/usr/share/pkgconfig/**` |
+| `@doc` | `/usr/share/doc/**` |
+| `@man` | `/usr/share/man/**` |
+| `@info` | `/usr/share/info/**` |
+| `@locales` | `/usr/share/i18n/**`, `/usr/share/locale/**` |
+| `@debug` | `/usr/lib/debug/**`, `/usr/lib*/*.debug` |
 
 **What goes into the root.** The profile's `packages.install`, plus:
 
@@ -393,10 +433,24 @@ rpmx steps list
 rpmx steps show cmake/configure
 ```
 
-Bundles such as `cmake`, `meson`, `autotools`, `make`, `python` expand to
-several steps. `strip` is a step. `go/build`, `go/test`, `go/vendor`,
+The standard build systems have individual reusable steps:
+
+| Build system | Steps |
+| --- | --- |
+| autotools | `autotools/configure`, `autotools/build`, `autotools/check`, `autotools/install` |
+| Make | `make/build`, `make/check`, `make/install` |
+| CMake | `cmake/configure`, `cmake/build`, `cmake/check`, `cmake/install` |
+| Meson | `meson/setup`, `meson/compile`, `meson/test`, `meson/install` |
+
+Prefer the individual steps. They get their own progress line, can be skipped
+or reordered, and take their own `with:` inputs. The single-name `autotools`,
+`make`, `cmake`, `meson` and `python` steps are convenience wrappers that run
+their fixed sequence in one shell step; use them only when that exact sequence
+is what you want. `strip` is a step. `go/build`, `go/test`, `go/vendor`,
 `go/bump`, `cargo/vendor`, `npm/ci`, `python/build-wheel` and
-`python/install-wheel` are available.
+`python/install-wheel` are also available. `license/copy` copies one or more
+license files into `$STAGE$PREFIX/share/licenses/<output>/` for each output, so
+a split package does not duplicate the loop or accidentally share one path.
 
 A named local step is a YAML file under `pipelines/`:
 
@@ -473,11 +527,15 @@ outputs:
 
 Rules:
 
-- Every staged path must be claimed by exactly one output; an unclaimed file is
-  an error.
-- A path claimed by two outputs is an error.
-- An output whose selectors match no staged files is an error.
+- The **first output is the main package**. It may omit `files.include`; it
+  receives every staged path that no later output claims.
+- A path claimed by two outputs is an error (`RPMX-OUTPUT-011`).
+- An output after the main package whose selectors match no staged files is an
+  error (`RPMX-OUTPUT-012`).
 - `metapackage: true` allows an output with no files.
+- A subpackage can use `@dev`, `@doc`, `@man`, `@info`, `@locales`, `@static`,
+  `@pkgconfig`, `@headers` or `@debug` in `files.include` instead of spelling
+  out every path. Presets expand during planning.
 - `scripts` are raw shell and remain the escape hatch. Typed actions are not yet
   implemented.
 
@@ -515,33 +573,84 @@ recipe's `CFLAGS` extend the profile's cross flags rather than replacing them.
 
 ### 5.9 Tests
 
+Recipe-level tests live at the top level and see every output:
+
 ```yaml
 tests:
   - name: unit
     stage: build
     argv: [ctest, --output-on-failure]
 
-  - name: cli
+  - name: integration
     stage: installed
-    argv: ["hello", "--version"]
+    argv: [hello, --version]
+```
 
-  - name: scripted
-    stage: installed
-    pipeline:
-      - runs: |
-          hello | grep -q hello
+Output-level tests live under an output and see that output plus the sibling
+outputs that provide its runtime dependencies:
+
+```yaml
+outputs:
+  - name: hello
+    files:
+      include: [/usr/bin/hello]
+    dependencies:
+      run: [hello-lib]
+    tests:
+      - name: smoke
+        stage: installed
+        environment:
+          contents:
+            packages: [grep]
+          environment:
+            HOME: /tmp
+        argv: [sh, -c, "hello --version | grep -q hello"]
+
+  - name: hello-lib
+    files:
+      include: [/usr/lib64/libhello.so.1]
+    tests:
+      - name: exported
+        stage: installed
+        argv: [sh, -c, "test -e /usr/lib64/libhello.so.1"]
 ```
 
 - `stage: build` runs in the build sandbox, with the source workspace present.
 - `stage: installed` installs the built RPMs into a disposable test root and
   runs there.
+- A recipe-level installed test installs every output, so it is an integration
+  test. An output-level installed test installs that output and the sibling
+  outputs needed by its RPM dependencies, not unrelated outputs. This catches a
+  missing `Requires` between outputs instead of masking it with the full output
+  set.
+- The test root still contains `bash`, `coreutils`, and the resolved test
+  environment; runtime dependencies from outside the recipe must be listed in
+  the test environment or supplied by the root.
 - `stage: package` is not implemented yet.
 - Tests run with `rpmx build`, `rpmx rebuild` and `rpmx test`; `--no-tests`
   skips them on a build.
-- `--test NAME` selects tests; `--junit FILE` writes JUnit XML.
-- Installed tests use `build.dependencies.tests` plus the built RPMs. Real
-  dependency checking is performed; the only retry is for a conflict with a
-  package the test root already has, which the package under test replaces.
+- `--test NAME` selects every test with that name; within one matrix cell the
+  bare name must be unique. Use `--test OUTPUT/NAME` when several outputs
+  declare the same test name. Test names must be unique within one `tests:`
+  block; the same name may be reused by different outputs or matrix cells. A
+  test name cannot contain `/`.
+- `--junit FILE` writes JUnit XML.
+- `test.environment.contents.packages` lists packages installed only for that
+  test's root. This mirrors Wolfi/melange test environments. Tests with the
+  same output and package set share a root; a different set gets a separate
+  root. It is valid only for `stage: installed`; build-stage tests use
+  `build.dependencies.tools`.
+- `build.dependencies.tests` remains the package-wide list of test-root
+  packages, applied to every installed test.
+- `test.environment.environment` sets variables for every step of that test. A
+  step's own `env` entries win.
+- Real dependency checking is performed; the only retry is for a conflict with
+  a package the test root already has, which the package under test replaces.
+- A build writes one test-root lock per distinct environment:
+  `<name>-<version>-<release>.test-root.lock.json` for the first,
+  `.<n>.test-root.lock.json` for the others. `--save-test-root` and
+  `--test-root-lock` require a single environment; pass `--test NAME` or
+  `--test OUTPUT/NAME` to select one.
 
 ### 5.10 Matrix and variables
 

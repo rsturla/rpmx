@@ -120,6 +120,10 @@ pub fn unresolved_needed(
     sysroot: &std::path::Path,
 ) -> std::io::Result<Vec<(String, String)>> {
     let mut available = std::collections::BTreeSet::new();
+    // A staged payload may carry private libraries alongside the objects that
+    // need them, such as glibc's gconv modules. Those are real runtime
+    // providers and must count before the root is consulted.
+    index_names(stage, &mut available)?;
     index_names(sysroot, &mut available)?;
     let mut missing = Vec::new();
     let mut files = Vec::new();
@@ -196,6 +200,29 @@ mod tests {
         let error = require_machine("usr/bin/demo", &info, other_arch()).expect_err("wrong arch");
         assert_eq!(error.code, "RPMX-BUILD-008");
         assert!(error.message.contains("machine"), "{}", error.message);
+    }
+
+    #[test]
+    fn a_staged_sibling_satisfies_a_needed_library() {
+        let root = tempfile::tempdir().expect("work");
+        let stage = root.path().join("stage");
+        let sysroot = root.path().join("sysroot");
+        std::fs::create_dir_all(stage.join("usr/bin")).expect("stage");
+        std::fs::create_dir_all(stage.join("usr/lib64")).expect("stage lib");
+        std::fs::create_dir_all(&sysroot).expect("sysroot");
+
+        let binary = host_elf();
+        std::fs::copy(&binary, stage.join("usr/bin/demo")).expect("copy");
+        let info = inspect_file(&stage.join("usr/bin/demo")).expect("elf");
+        for needed in &info.needed {
+            std::fs::write(stage.join("usr/lib64").join(needed), b"").expect("lib");
+        }
+        assert!(
+            unresolved_needed(&stage, &sysroot)
+                .expect("scan")
+                .is_empty(),
+            "staged siblings are runtime providers"
+        );
     }
 
     #[test]

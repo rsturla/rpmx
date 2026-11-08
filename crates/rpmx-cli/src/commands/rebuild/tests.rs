@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::num::{NonZeroU32, NonZeroU64};
 use std::path::{Path, PathBuf};
 
@@ -11,6 +12,7 @@ use rpmx_core::test_runner::{run_planned_tests, TestSandboxConfig};
 use rpmx_core::Error;
 
 use crate::commands::report::{self, TestOutcome};
+use crate::commands::test_roots::{filter_tests, grouped, key_for, read_rpms, rpms_for_output};
 
 pub(super) struct TestRunOptions<'a> {
     pub(super) sandbox: &'a Sandbox<'a>,
@@ -40,21 +42,35 @@ pub(super) struct TestRunOptions<'a> {
 }
 
 /// Run build- and installed-stage tests and persist the test-root lock.
-pub(super) fn run(options: TestRunOptions<'_>) -> Result<Option<PathBuf>, Error> {
-    let tests: Vec<_> = options
+pub(super) fn run(options: TestRunOptions<'_>) -> Result<Vec<PathBuf>, Error> {
+    let candidates: Vec<_> = options
         .cell
         .tests
         .iter()
         .filter(|test| !options.skip_installed || test.stage != "installed")
-        .filter(|test| options.filter.is_empty() || options.filter.contains(&test.name))
         .cloned()
         .collect();
+    let tests = filter_tests(&candidates, options.filter)?;
     if !options.filter.is_empty() && tests.is_empty() {
         // Another matrix cell may own the selected test.
-        return Ok(None);
+        return Ok(Vec::new());
     }
     let cache = crate::commands::fetch::default_cache()?;
-    let prepared = if tests.iter().any(|test| test.stage == "installed") {
+    let groups = grouped(&tests, &options.cell.test_tools);
+    if groups.len() > 1 && options.save_test_root.is_some() {
+        return Err(Error::new(
+            codes::TEST_004,
+            "this recipe has multiple installed-test environments; --save-test-root needs one (pass --test NAME)",
+        ));
+    }
+    if groups.len() > 1 && options.pinned_lock.is_some() {
+        return Err(Error::new(
+            codes::TEST_004,
+            "this recipe has multiple installed-test environments; --test-root-lock needs one (pass --test NAME)",
+        ));
+    }
+    let mut roots = BTreeMap::new();
+    if !groups.is_empty() {
         // A cross build's target root is the sysroot, not the host build root.
         let lock = options
             .sysroot_lock
@@ -65,20 +81,31 @@ pub(super) fn run(options: TestRunOptions<'_>) -> Result<Option<PathBuf>, Error>
                     "installed-stage tests need an embedded or explicit root lock",
                 )
             })?;
-        Some(prepare_test_root(TestRootOptions {
-            lock,
-            destination: options.save_test_root,
-            pinned: options.pinned_lock,
-            tools: &options.cell.test_tools,
-            rpms: options.written,
-            image: options.builder_image,
-            cache: &cache,
-            work: options.work,
-        })?)
-    } else {
-        None
-    };
-    let test_root = prepared.as_ref().map(|root| root.path.as_path());
+        let test_rpms = read_rpms(options.written)?;
+        for (index, group) in groups.iter().enumerate() {
+            let work = options.work.join(format!("test-root-{index}"));
+            let group_rpms = rpms_for_output(group.output.as_deref(), &test_rpms)?;
+            let prepared = prepare_test_root(TestRootOptions {
+                lock,
+                destination: if groups.len() == 1 {
+                    options.save_test_root
+                } else {
+                    None
+                },
+                pinned: if groups.len() == 1 {
+                    options.pinned_lock
+                } else {
+                    None
+                },
+                tools: &group.packages,
+                rpms: &group_rpms,
+                image: options.builder_image,
+                cache: &cache,
+                work: &work,
+            })?;
+            roots.insert(group.key.clone(), prepared);
+        }
+    }
     let prefix = options
         .active_lock
         .map(|lock| lock.prefix.as_str())
@@ -102,6 +129,13 @@ pub(super) fn run(options: TestRunOptions<'_>) -> Result<Option<PathBuf>, Error>
     };
     let mut outcomes = Vec::new();
     for test in &tests {
+        let test_root = if test.stage == "installed" {
+            roots
+                .get(&key_for(&options.cell.test_tools, test))
+                .map(|root| root.path.as_path())
+        } else {
+            None
+        };
         let started = std::time::Instant::now();
         let result = run_planned_tests(
             options.sandbox,
@@ -112,13 +146,13 @@ pub(super) fn run(options: TestRunOptions<'_>) -> Result<Option<PathBuf>, Error>
         let error = result.as_ref().err().map(|error| error.message.clone());
         eprintln!(
             "rpmx: test {} ({}): {} ({:.1}s)",
-            test.name,
+            test.qualified_name(),
             test.stage,
             if error.is_some() { "FAILED" } else { "ok" },
             started.elapsed().as_secs_f64()
         );
         outcomes.push(TestOutcome {
-            name: test.name.clone(),
+            name: test.qualified_name(),
             stage: test.stage.clone(),
             error,
             duration: started.elapsed(),
@@ -136,12 +170,18 @@ pub(super) fn run(options: TestRunOptions<'_>) -> Result<Option<PathBuf>, Error>
             )
         })?;
     }
-    let evidence = if let Some(prepared) = prepared {
+    let mut evidence = Vec::new();
+    for (index, prepared) in roots.values().enumerate() {
         if options.save_test_root.is_none() {
             let _ = rpmx_core::root::remove_tree(&prepared.path);
         }
+        let suffix = if index == 0 {
+            String::new()
+        } else {
+            format!(".{index}")
+        };
         let path = options.output.join(format!(
-            "{}-{}-{}.test-root.lock.json",
+            "{}-{}-{}{suffix}.test-root.lock.json",
             options.cell.package, options.cell.version, options.cell.release
         ));
         let text = serde_yaml_ng::to_string(&prepared.lock)
@@ -152,16 +192,13 @@ pub(super) fn run(options: TestRunOptions<'_>) -> Result<Option<PathBuf>, Error>
                 format!("cannot write {}: {error}", path.display()),
             )
         })?;
-        Some(path)
-    } else {
-        None
-    };
+        evidence.push(path);
+    }
     if failed > 0 {
         return Err(Error::new(
             codes::TEST_003,
             format!("{failed} test(s) failed"),
         ));
     }
-    let _ = evidence;
     Ok(evidence)
 }

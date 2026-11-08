@@ -1,6 +1,7 @@
 pub mod appliance;
 mod args;
 pub mod autoroot;
+pub mod bootstrap;
 pub mod build;
 pub mod bump;
 pub mod cache;
@@ -27,6 +28,7 @@ mod signing;
 pub mod source;
 pub mod srpm;
 pub mod steps;
+mod test_roots;
 pub mod testcmd;
 
 pub use args::*;

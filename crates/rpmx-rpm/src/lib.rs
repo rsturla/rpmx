@@ -2,6 +2,7 @@ pub mod extract;
 pub mod repo;
 pub mod sign;
 
+use std::collections::BTreeSet;
 use std::path::Path;
 
 use rpm::{BuildConfig, CompressionType, FileMode, FileOptions, PackageBuilder, Scriptlet};
@@ -17,6 +18,123 @@ pub fn package_arch(path: &Path) -> Result<String, Error> {
         )
     })?;
     Ok(package.metadata.get_arch().unwrap_or("noarch").to_string())
+}
+
+/// The package name recorded in an RPM or SRPM header.
+pub fn package_name(path: &Path) -> Result<String, Error> {
+    let package = rpm::Package::open(path).map_err(|error| {
+        Error::new(
+            codes::EXTRACT_001,
+            format!("cannot read {}: {error}", path.display()),
+        )
+    })?;
+    let name = package.metadata.get_name().map_err(|error| {
+        Error::new(
+            codes::EXTRACT_001,
+            format!(
+                "{} has no package name in its header: {error}",
+                path.display()
+            ),
+        )
+    })?;
+    Ok(name.to_string())
+}
+
+/// The runtime dependency information a test root needs to decide which
+/// sibling outputs belong with an output-level test.
+#[derive(Debug, Clone)]
+pub struct PackageMetadata {
+    pub name: String,
+    pub provides: BTreeSet<String>,
+    pub requires: BTreeSet<String>,
+    pub files: BTreeSet<String>,
+}
+
+/// Read the name, capabilities and file list from a binary RPM header.
+pub fn package_metadata(path: &Path) -> Result<PackageMetadata, Error> {
+    let package = rpm::Package::open(path).map_err(|error| {
+        Error::new(
+            codes::EXTRACT_001,
+            format!("cannot read {}: {error}", path.display()),
+        )
+    })?;
+    let name = package
+        .metadata
+        .get_name()
+        .map_err(|error| {
+            Error::new(
+                codes::EXTRACT_001,
+                format!(
+                    "{} has no package name in its header: {error}",
+                    path.display()
+                ),
+            )
+        })?
+        .to_string();
+    let dependency_names = |dependencies: Vec<rpm::Dependency>| {
+        dependencies
+            .into_iter()
+            .map(|dependency| dependency.name)
+            .collect::<BTreeSet<_>>()
+    };
+    let mut provides = dependency_names(package.metadata.get_provides().map_err(|error| {
+        Error::new(
+            codes::EXTRACT_001,
+            format!("cannot read provides from {}: {error}", path.display()),
+        )
+    })?);
+    provides.insert(name.clone());
+    let requires = dependency_names(package.metadata.get_requires().map_err(|error| {
+        Error::new(
+            codes::EXTRACT_001,
+            format!("cannot read requires from {}: {error}", path.display()),
+        )
+    })?);
+    let files = package
+        .metadata
+        .get_file_paths()
+        .map_err(|error| {
+            Error::new(
+                codes::EXTRACT_001,
+                format!("cannot read files from {}: {error}", path.display()),
+            )
+        })?
+        .into_iter()
+        .map(|path| path.to_string_lossy().into_owned())
+        .collect();
+    Ok(PackageMetadata {
+        name,
+        provides,
+        requires,
+        files,
+    })
+}
+
+/// Package names in a repository directory (top-level `.rpm` files only).
+pub fn package_names(path: &Path) -> Result<std::collections::BTreeSet<String>, Error> {
+    let mut names = std::collections::BTreeSet::new();
+    let entries = std::fs::read_dir(path).map_err(|error| {
+        Error::new(
+            codes::EXTRACT_001,
+            format!("cannot read {}: {error}", path.display()),
+        )
+    })?;
+    for entry in entries {
+        let entry = entry.map_err(|error| {
+            Error::new(
+                codes::EXTRACT_001,
+                format!("cannot read {}: {error}", path.display()),
+            )
+        })?;
+        let candidate = entry.path();
+        if candidate
+            .extension()
+            .is_some_and(|extension| extension == "rpm")
+        {
+            names.insert(package_name(&candidate)?);
+        }
+    }
+    Ok(names)
 }
 
 pub fn write_srpm(spec: &SourcePackageSpec, out: &Path) -> Result<(), Error> {

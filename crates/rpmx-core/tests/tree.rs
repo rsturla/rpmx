@@ -2,7 +2,7 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::time::{Duration, SystemTime};
 
-use rpmx_core::tree::{context_digest, tree_digest};
+use rpmx_core::tree::{context_digest, digest_root, tree_digest};
 
 fn write(path: &std::path::Path, content: &str) {
     if let Some(parent) = path.parent() {
@@ -25,6 +25,28 @@ fn digest_is_stable_across_mtimes() {
     .unwrap();
     let second = tree_digest(work.path()).unwrap();
     assert_eq!(first, second);
+}
+
+#[test]
+fn digest_root_reads_and_restores_mode_zero_trees() {
+    let work = tempfile::tempdir().unwrap();
+    let private = work.path().join("etc/private");
+    write(&private.join("shadow"), "secret");
+    fs::set_permissions(private.join("shadow"), fs::Permissions::from_mode(0o000)).unwrap();
+    fs::set_permissions(&private, fs::Permissions::from_mode(0o000)).unwrap();
+
+    digest_root(work.path()).expect("digest a root owned by the caller");
+
+    let directory = fs::metadata(&private).unwrap().permissions().mode() & 0o7777;
+    assert_eq!(directory, 0o000);
+    fs::set_permissions(&private, fs::Permissions::from_mode(0o700)).unwrap();
+    let file = fs::metadata(private.join("shadow"))
+        .unwrap()
+        .permissions()
+        .mode()
+        & 0o7777;
+    fs::set_permissions(&private, fs::Permissions::from_mode(0o000)).unwrap();
+    assert_eq!(file, 0o000);
 }
 
 #[test]

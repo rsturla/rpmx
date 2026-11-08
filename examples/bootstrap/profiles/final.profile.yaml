@@ -1,0 +1,10 @@
+document: rpmx-profile
+version: 1
+name: bootstrap-final
+releasever: "44"
+archs: [x86_64]
+repositories:
+  - id: seed
+    baseurl: https://example.invalid/seed
+packages:
+  install: [glibc, glibc-devel, bash, coreutils]

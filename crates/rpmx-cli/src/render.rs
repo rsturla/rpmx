@@ -1,4 +1,4 @@
-use rpmx_core::{Plan, PlannedStep};
+use rpmx_core::{BootstrapPlan, Plan, PlannedStep};
 
 pub fn lint(plan: &Plan) -> String {
     let ids = plan
@@ -14,6 +14,87 @@ pub fn lint(plan: &Plan) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     format!("ok: {} cell(s): {ids}", plan.cells.len())
+}
+
+pub fn bootstrap_plan(plan: &BootstrapPlan) {
+    match &plan.seed {
+        Some(seed) => println!(
+            "seed   name={} image={} releasever={} generation={}",
+            seed.name.as_deref().unwrap_or("-"),
+            seed.image.as_deref().unwrap_or("-"),
+            seed.releasever.as_deref().unwrap_or("-"),
+            seed.generation.as_deref().unwrap_or("-"),
+        ),
+        None => println!("seed   -"),
+    }
+    match plan.source_date_epoch {
+        Some(epoch) => println!("epoch  {epoch}"),
+        None => println!("epoch  -"),
+    }
+    for stage in &plan.stages {
+        println!(
+            "{}  profile={} arch={} inputs={}",
+            stage.name,
+            stage.profile,
+            stage.arch,
+            if stage.inputs.is_empty() {
+                "-".to_string()
+            } else {
+                stage.inputs.join(",")
+            }
+        );
+        println!("  root   {}", stage.root);
+        println!("  lock   {}", stage.lock);
+        println!("  repo   {}  id {}", stage.repo, stage.repo_id);
+        if stage.seed {
+            println!("  seed   true");
+        }
+        if !stage.extra_tools.is_empty() {
+            println!(
+                "  tools  {}",
+                stage
+                    .extra_tools
+                    .iter()
+                    .map(|package| format!("+{package}"))
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            );
+        }
+        if !stage.extra_sysroot.is_empty() {
+            println!(
+                "  sysroot {}",
+                stage
+                    .extra_sysroot
+                    .iter()
+                    .map(|package| format!("+{package}"))
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            );
+        }
+        if !stage.fixed_point.is_empty() {
+            println!("  fixed  {}", stage.fixed_point.join(", "));
+        }
+        if !stage.replaces.is_empty() {
+            println!(
+                "  replace {}",
+                stage
+                    .replaces
+                    .iter()
+                    .map(|(package, seeds)| format!("{package} -> {}", seeds.join(", ")))
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            );
+        }
+        println!("  order  {}", stage.order.join(", "));
+    }
+    if let Some(stage) = plan.stages.first() {
+        let arch = if plan.archs.len() > 1 {
+            format!(" --arch {}", stage.arch)
+        } else {
+            String::new()
+        };
+        println!("next: rpmx bootstrap build {}{arch}", plan.manifest);
+    }
 }
 
 pub fn plan(plan: &Plan) {
@@ -45,7 +126,13 @@ pub fn plan(plan: &Plan) {
             println!("  output {}", output.name);
         }
         for test in &cell.tests {
-            println!("  test   {} ({})", test.name, test.stage);
+            println!("  test   {} ({})", test.qualified_name(), test.stage);
+            if !test.packages.is_empty() {
+                println!("    root   {}", test.packages.join(", "));
+            }
+            for (key, value) in &test.environment {
+                println!("    env    {key}={value}");
+            }
             for step in &test.pipeline {
                 println!("    step   {}", step_summary(step));
             }

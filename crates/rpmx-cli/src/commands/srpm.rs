@@ -178,6 +178,7 @@ pub fn execute(request: SrpmRequest<'_>) -> Result<Vec<PathBuf>, Error> {
         sysroot_lock: request.sysroot_lock,
         cross: request.cross,
         sbom,
+        replaced: None,
     })?;
 
     std::fs::create_dir_all(request.output).map_err(|error| {

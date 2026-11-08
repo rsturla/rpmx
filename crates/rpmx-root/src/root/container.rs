@@ -182,7 +182,7 @@ pub(crate) fn podman_run_assembly(
 }
 
 pub enum OfflineRootMode<'a> {
-    Install { rpms: &'a Path },
+    Install { rpms: &'a [PathBuf] },
     Query,
 }
 
@@ -213,19 +213,28 @@ pub fn run_offline_root(command: OfflineRootCommand<'_>) -> Result<std::process:
     match &command.mode {
         OfflineRootMode::Install { rpms } => {
             let nodeps = if command.nodeps { " --nodeps" } else { "" };
-            process
-                .arg("--cap-add=CHOWN,DAC_OVERRIDE,FOWNER,FSETID,SETGID,SETUID,SYS_CHROOT")
-                .arg("-v")
-                .arg(format!("{}:/rpms:ro,Z", rpms.display()))
-                .arg(command.image)
-                .args([
-                    "sh",
-                    "-c",
-                    &format!(
-                        "rpm --root /root -i --replacefiles --replacepkgs \
-                         --oldpackage --noscripts{nodeps} /rpms/*.rpm"
-                    ),
-                ]);
+            process.arg("--cap-add=CHOWN,DAC_OVERRIDE,FOWNER,FSETID,SETGID,SETUID,SYS_CHROOT");
+            for rpm in *rpms {
+                let name = rpm.file_name().ok_or_else(|| {
+                    Error::new(
+                        codes::ROOT_012,
+                        format!("cannot mount {}: it has no file name", rpm.display()),
+                    )
+                })?;
+                process.arg("-v").arg(format!(
+                    "{}:/rpms/{}:ro,Z",
+                    rpm.display(),
+                    name.to_string_lossy()
+                ));
+            }
+            process.arg(command.image).args([
+                "sh",
+                "-c",
+                &format!(
+                    "rpm --root /root -i --replacefiles --replacepkgs \
+                     --oldpackage --noscripts{nodeps} /rpms/*.rpm"
+                ),
+            ]);
         }
         OfflineRootMode::Query => {
             process.arg(command.image).args([

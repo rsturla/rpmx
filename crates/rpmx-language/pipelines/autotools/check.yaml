@@ -1,9 +1,16 @@
 name: autotools/check
-version: 1
+version: 2
 summary: Run an autotools project's checks
+inputs:
+  dir:
+    type: string
+    default: .
+  args:
+    type: list<string>
+    default: []
 needs:
   tools: [make]
 run:
   cwd: "${source.dir}"
   runs: |
-    make check
+    make -C "${inputs.dir}" check ${inputs.args}

@@ -1,0 +1,10 @@
+schema: 1
+package:
+  name: filesystem
+  version: "1.0"
+  release: 1
+  summary: Base filesystem layout.
+  license: MIT
+outputs:
+  - name: filesystem
+    metapackage: true

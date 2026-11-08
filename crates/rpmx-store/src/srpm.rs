@@ -255,6 +255,10 @@ pub struct LockRoot {
 pub struct LockCross {
     pub sysroot: LockRoot,
     pub triple: String,
+    /// True when the build used the seed's native command names instead of
+    /// `<triple>-*` wrappers. Rebuild needs this to reconstruct the toolchain.
+    #[serde(default)]
+    pub native: bool,
     #[serde(default)]
     pub cflags: Vec<String>,
     #[serde(default)]
@@ -282,6 +286,28 @@ pub struct LockBuildRef<'a> {
     pub root_lock: Option<&'a LockRoot>,
     pub cross: Option<&'a LockCross>,
     pub build: &'a LockBuild,
+    /// Old root identities replaced by a bootstrap rebuild.
+    pub replaced: Option<&'a ReplacedLock>,
+}
+
+/// One root identity a bootstrap rebuild replaced.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct LockIdentity {
+    pub closure_digest: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root_digest: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<String>,
+}
+
+/// Provenance for `rpmx bootstrap rebuild`: the old embedded roots, while
+/// `root_lock`/`cross` point at the replacement locks.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ReplacedLock {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root: Option<LockIdentity>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cross: Option<LockIdentity>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -304,6 +330,9 @@ pub struct PackageLock {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cross: Option<LockCross>,
     pub build: LockBuild,
+    /// Present when a bootstrap rebuild replaced an embedded root lock.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replaced: Option<ReplacedLock>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -376,6 +405,7 @@ pub fn lock_json(
         root_lock: context.root_lock.cloned(),
         cross: context.cross.cloned(),
         build: context.build.clone(),
+        replaced: context.replaced.cloned(),
     };
     json(value)
 }
@@ -451,8 +481,43 @@ fn json(value: impl Serialize) -> Result<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::read_text_with_limit;
+    use super::{read_text_with_limit, LockBuild, LockBuildRef, LockIdentity, ReplacedLock};
     use rpmx_base::error::codes;
+
+    #[test]
+    fn replacement_provenance_round_trips() {
+        let build = LockBuild::default();
+        let replaced = ReplacedLock {
+            root: Some(LockIdentity {
+                closure_digest: "sha512:old".to_string(),
+                root_digest: Some("sha512:old-tree".to_string()),
+                profile: Some("stage0".to_string()),
+            }),
+            cross: None,
+        };
+        let text = super::lock_json(
+            "sha512:recipe",
+            "1",
+            "1",
+            None,
+            None,
+            1704067200,
+            &[],
+            &[],
+            LockBuildRef {
+                root_lock: None,
+                cross: None,
+                build: &build,
+                replaced: Some(&replaced),
+            },
+        )
+        .expect("lock");
+        let value: serde_json::Value = serde_json::from_str(&text).expect("json");
+        assert_eq!(value["replaced"]["root"]["closure_digest"], "sha512:old");
+        assert_eq!(value["replaced"]["root"]["profile"], "stage0");
+        let parsed: super::PackageLock = serde_json::from_str(&text).expect("round trip");
+        assert!(parsed.replaced.is_some());
+    }
 
     #[test]
     fn bundle_text_over_the_limit_is_rejected() {
