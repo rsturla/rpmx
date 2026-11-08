@@ -69,12 +69,18 @@ pub fn package_metadata(path: &Path) -> Result<PackageMetadata> {
             )
         })?
         .to_string();
-    let epoch = metadata.get_epoch().map_err(|error| {
-        Error::new(
-            codes::EXTRACT_001,
-            format!("cannot read epoch from {}: {error}", path.display()),
-        )
-    })?;
+    let epoch = match metadata.get_epoch() {
+        Ok(epoch) => epoch,
+        // Epoch is optional. rpm omits the tag entirely for epoch 0, so a
+        // missing tag means the package has no epoch rather than a bad header.
+        Err(rpm::Error::TagNotFound(_)) => 0,
+        Err(error) => {
+            return Err(Error::new(
+                codes::EXTRACT_001,
+                format!("cannot read epoch from {}: {error}", path.display()),
+            ));
+        }
+    };
     let version = metadata
         .get_version()
         .map_err(|error| {
@@ -139,4 +145,21 @@ fn dependencies(mut dependencies: Vec<rpm::Dependency>) -> Vec<rpm::Dependency> 
         left.name == right.name && left.flags == right.flags && left.version == right.version
     });
     dependencies
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn package_without_epoch_reads_as_zero() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(
+            "../../spikes/01-native-srpm/vendor/rpm/tests/assets/RPMS/v6/rpm-empty-0-0.x86_64.rpm",
+        );
+
+        let metadata = package_metadata(&path).expect("read an RPM without an epoch tag");
+
+        assert_eq!(metadata.epoch, 0);
+        assert_eq!(metadata.evr(), "0-0");
+    }
 }

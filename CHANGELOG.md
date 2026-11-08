@@ -75,6 +75,10 @@ does not promise a stable schema or CLI yet.
   resolved from a repository. Explicit test packages are still needed for tools
   or data that are not runtime requirements.
 
+- Reading built RPM metadata treats a missing `RPMTAG_EPOCH` as epoch 0. rpm
+  omits the tag for packages without an epoch, so test roots no longer fail
+  before installing them.
+
 - Tests accept a Wolfi/melange-style environment:
   `environment.contents.packages` lists packages installed only for that test's
   disposable root, and `environment.environment` sets test-only variables.
