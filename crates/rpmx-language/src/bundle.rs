@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use rpmx_base::error::{codes, Error, Result};
 use rpmx_base::hash::sha512_hex;
 
-use crate::model::{Maintainer, Package, RecipeFragment};
+use crate::model::{Build, Maintainer, Package, RecipeFragment};
 use crate::{parse_recipe, Recipe};
 
 const DEFAULTS_FILE: &str = "rpmx-defaults.yaml";
@@ -127,14 +127,16 @@ pub fn load_recipe_bundle(path: impl AsRef<Path>) -> Result<RecipeBundle> {
         )
         .at(root.display().to_string())
     })?;
-    let source_date_epoch_default = apply_repo_defaults(&root_dir, &mut package, &mut files)?;
+    let mut build = merged.build.unwrap_or_default();
+    let source_date_epoch_default =
+        apply_repo_defaults(&root_dir, &mut package, &mut build, &mut files)?;
 
     let recipe = Recipe {
         schema,
         package,
         context: merged.context,
         vars: merged.vars.unwrap_or_default(),
-        build: merged.build.unwrap_or_default(),
+        build,
         sources: merged.sources.unwrap_or_default(),
         patches: merged.patches.unwrap_or_default(),
         source_assembly: merged.source_assembly.unwrap_or_default(),
@@ -175,6 +177,15 @@ struct DefaultsDocument {
     #[serde(default)]
     schema: Option<u32>,
     package: PackageDefaults,
+    #[serde(default)]
+    build: BuildDefaults,
+}
+
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BuildDefaults {
+    #[serde(default)]
+    environment: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -192,6 +203,7 @@ struct DefaultsFile {
     digest: String,
     maintainers: Vec<Maintainer>,
     source_date_epoch: Option<u32>,
+    build_environment: BTreeMap<String, String>,
 }
 
 /// Apply `rpmx-defaults.yaml` when the recipe does not name maintainers.
@@ -202,6 +214,7 @@ struct DefaultsFile {
 fn apply_repo_defaults(
     root_dir: &Path,
     package: &mut Package,
+    build: &mut Build,
     files: &mut Vec<BundleFile>,
 ) -> Result<Option<u32>> {
     let Some(defaults) = find_defaults(root_dir)? else {
@@ -215,7 +228,11 @@ fn apply_repo_defaults(
         && defaults.source_date_epoch.is_some())
     .then_some(defaults.source_date_epoch)
     .flatten();
-    if use_maintainers || source_date_epoch.is_some() {
+    let use_build_environment = !defaults.build_environment.is_empty();
+    for (key, value) in defaults.build_environment {
+        build.environment.entry(key).or_insert(value);
+    }
+    if use_maintainers || source_date_epoch.is_some() || use_build_environment {
         files.push(BundleFile {
             path: defaults.path,
             name: DEFAULTS_FILE.to_string(),
@@ -295,6 +312,7 @@ fn read_defaults(path: &Path) -> Result<DefaultsFile> {
         path,
         maintainers: document.package.maintainers,
         source_date_epoch: document.package.source_date_epoch,
+        build_environment: document.build.environment,
     })
 }
 
@@ -603,6 +621,38 @@ mod tests {
             .files
             .iter()
             .any(|file| file.name == "rpmx-defaults.yaml"));
+    }
+
+    #[test]
+    fn repo_defaults_supply_build_environment_and_recipe_overrides_it() {
+        let (directory, recipe) = repo();
+        write(
+            &directory.path().join("rpmx-defaults.yaml"),
+            "schema: 1\npackage:\n  maintainers:\n    - name: Repo Maintainers\n      email: repo@example.org\nbuild:\n  environment:\n    PATH: /repo/bin\n    CC: repo-cc\n",
+        );
+        write(
+            &recipe,
+            &format!("{PACKAGE}build:\n  environment:\n    CC: recipe-cc\n"),
+        );
+        let bundle = load_recipe_bundle(&recipe).expect("bundle");
+        assert_eq!(
+            bundle
+                .recipe
+                .build
+                .environment
+                .get("PATH")
+                .map(String::as_str),
+            Some("/repo/bin")
+        );
+        assert_eq!(
+            bundle
+                .recipe
+                .build
+                .environment
+                .get("CC")
+                .map(String::as_str),
+            Some("recipe-cc")
+        );
     }
 
     #[test]
