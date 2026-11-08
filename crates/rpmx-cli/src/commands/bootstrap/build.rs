@@ -439,6 +439,16 @@ fn fixed_recipe_outputs(
     Ok((recipes, outputs))
 }
 
+fn file_url(path: &Path) -> Result<String, Error> {
+    let absolute = std::path::absolute(path).map_err(|error| {
+        Error::new(
+            codes::BOOTSTRAP_001,
+            format!("cannot make {} absolute: {error}", path.display()),
+        )
+    })?;
+    Ok(format!("file://{}", absolute.display()))
+}
+
 fn fixed_point_profile(
     effective: &Profile,
     stage: &rpmx_core::PlannedStage,
@@ -479,7 +489,7 @@ fn fixed_point_profile(
     }
     profile.repositories.push(Repository {
         id: output_id,
-        baseurl: Some(format!("file://{}", output.display())),
+        baseurl: Some(file_url(output)?),
         metalink: None,
         mirrorlist: None,
         gpgkey: None,
@@ -710,7 +720,7 @@ fn promote_candidate(
     requirement: &str,
 ) -> Result<(), Error> {
     let output_id = format!("bootstrap-{}-output", stage.name);
-    let output_url = format!("file://{}", output.display());
+    let output_url = file_url(output)?;
     let mut build_lock = candidate.build_lock.clone();
     update_output_repository(&mut build_lock, &output_id, &output_url);
     build_lock.requirement = Some(requirement.to_string());
@@ -823,7 +833,7 @@ fn synthesize_profile(
         let output = base.join(&dependency.output).join(arch);
         profile.repositories.push(Repository {
             id,
-            baseurl: Some(format!("file://{}", output.display())),
+            baseurl: Some(file_url(&output)?),
             metalink: None,
             mirrorlist: None,
             gpgkey: None,

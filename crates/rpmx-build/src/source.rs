@@ -546,9 +546,6 @@ pub fn pack_snapshot(workspace: &Path, snapshot: &Path, source_date_epoch: u32) 
             continue;
         }
         let mut header = tar::Header::new_gnu();
-        header.set_path(name).map_err(|error| {
-            Error::new(codes::SOURCE_032, format!("invalid path {name}: {error}"))
-        })?;
         header.set_mtime(u64::from(source_date_epoch));
         header.set_uid(0);
         header.set_gid(0);
@@ -556,40 +553,34 @@ pub fn pack_snapshot(workspace: &Path, snapshot: &Path, source_date_epoch: u32) 
             header.set_entry_type(tar::EntryType::Directory);
             header.set_size(0);
             header.set_mode(file.mode);
-            header.set_cksum();
-            tar.append(&header, std::io::empty()).map_err(|error| {
-                Error::new(
-                    codes::SOURCE_032,
-                    format!("cannot add directory {name} to snapshot: {error}"),
-                )
-            })?;
+            tar.append_data(&mut header, name, std::io::empty())
+                .map_err(|error| {
+                    Error::new(
+                        codes::SOURCE_032,
+                        format!("cannot add directory {name} to snapshot: {error}"),
+                    )
+                })?;
         } else if let Some(target) = &file.target {
             header.set_entry_type(tar::EntryType::Symlink);
             header.set_size(0);
             header.set_mode(0o777);
-            header.set_link_name(target).map_err(|error| {
-                Error::new(
-                    codes::SOURCE_032,
-                    format!("invalid symlink target for {name}: {error}"),
-                )
-            })?;
-            header.set_cksum();
-            tar.append(&header, std::io::empty()).map_err(|error| {
-                Error::new(
-                    codes::SOURCE_032,
-                    format!("cannot add symlink {name} to snapshot: {error}"),
-                )
-            })?;
+            tar.append_link(&mut header, name, target)
+                .map_err(|error| {
+                    Error::new(
+                        codes::SOURCE_032,
+                        format!("cannot add symlink {name} to snapshot: {error}"),
+                    )
+                })?;
         } else {
             header.set_size(file.data.len() as u64);
             header.set_mode(file.mode);
-            header.set_cksum();
-            tar.append(&header, file.data.as_slice()).map_err(|error| {
-                Error::new(
-                    codes::SOURCE_032,
-                    format!("cannot add {name} to snapshot: {error}"),
-                )
-            })?;
+            tar.append_data(&mut header, name, file.data.as_slice())
+                .map_err(|error| {
+                    Error::new(
+                        codes::SOURCE_032,
+                        format!("cannot add {name} to snapshot: {error}"),
+                    )
+                })?;
         }
     }
 
@@ -703,7 +694,7 @@ pub fn unpack_snapshot(snapshot: &Path, workspace: &Path) -> Result<()> {
 
 #[cfg(test)]
 mod extract_tests {
-    use super::materialize;
+    use super::{materialize, pack_snapshot, unpack_snapshot};
     use rpmx_language::model::Extract;
     use std::io::Write;
 
@@ -753,6 +744,26 @@ mod extract_tests {
         assert_eq!(
             std::fs::read_to_string(workspace.join("vendor/README")).expect("read"),
             "hello"
+        );
+    }
+
+    #[test]
+    fn snapshot_packs_paths_longer_than_the_gnu_name_field() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let workspace = directory.path().join("workspace");
+        let nested = workspace.join("a".repeat(90));
+        std::fs::create_dir_all(&nested).expect("mkdir");
+        let name = format!("{}.txt", "b".repeat(90));
+        std::fs::write(nested.join(&name), b"long path").expect("write");
+
+        let snapshot = directory.path().join("source.tar.gz");
+        pack_snapshot(&workspace, &snapshot, 1_704_067_200).expect("pack");
+
+        let unpacked = directory.path().join("unpacked");
+        unpack_snapshot(&snapshot, &unpacked).expect("unpack");
+        assert_eq!(
+            std::fs::read_to_string(unpacked.join("a".repeat(90)).join(name)).expect("read"),
+            "long path"
         );
     }
 
