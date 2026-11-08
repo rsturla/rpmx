@@ -32,12 +32,12 @@ jobs:
 
   advisories:
     runs-on: ubuntu-latest
-    # Advisory findings are informational. Keep them visible without blocking
-    # the build; a vulnerability report should be triaged, not merge-blocking
-    # by default.
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
+      # Advisory findings are informational. Keep them visible without turning
+      # the check red; a vulnerability report should be triaged, not
+      # merge-blocking by default.
       - uses: EmbarkStudios/cargo-deny-action@v2
+        continue-on-error: true
         with:
           command: check advisories
