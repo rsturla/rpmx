@@ -58,10 +58,9 @@ source-assembly:
 build:
   root:
     profile: ../fedora-44-cross.profile.yaml
-  dependencies:
-    tools: [make]
-    # A target library: it belongs in the sysroot, not the build root.
-    host: [zlib-devel]
+  packages: [make]
+  # A target library: it belongs in the sysroot, not the build root.
+  sysroot: [zlib-devel]
   pipeline:
     - uses: make/build
     - uses: make/install
@@ -85,8 +84,6 @@ tests:
   - name: installed
     stage: installed
     # The target test root needs the runtime library the binary links against.
-    environment:
-      contents:
-        packages: [zlib]
+    packages: [zlib]
     argv: ["c-hello-cross"]
 

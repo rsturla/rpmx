@@ -275,9 +275,8 @@ pub fn prepare(options: TestRootOptions<'_>) -> Result<PreparedTestRoot> {
             codes::BUILD_007,
             format!(
                 "cannot install the built RPMs into the test root: {}; \
-                 add missing runtime packages to the test's \
-                 environment.contents.packages or pass a pinned \
-                 --test-root-lock",
+                 add missing runtime packages to the test's packages or \
+                 pass a pinned --test-root-lock",
                 String::from_utf8_lossy(&output.stderr).trim()
             ),
         ));

@@ -50,15 +50,14 @@ rpmx test --install-dir packages/x86_64 --json --junit report.xml
 - Exit 6 on failure.
 
 Test roots are disposable and use real dependency checking. Tests with the
-same output and `test.environment.contents.packages` set share a root; a
-different output or set gets its own root. A recipe-level installed test sees
-every output. An output-level installed test sees that output plus the sibling
-outputs that provide its runtime dependencies, so a missing `Requires` between
-outputs is not hidden by installing the whole output set. Strong runtime
-requirements of the selected RPMs are resolved into the test root automatically
-from the root's repositories. If install still fails, add the missing package to that test's
-`environment.contents.packages` or pass `--test-root-lock` on
-`build`/`rebuild`.
+same output and `packages` set share a root; a different output or set gets its
+own root. A recipe-level installed test sees every output. An output-level
+installed test sees that output plus the sibling outputs that provide its
+runtime dependencies, so a missing `Requires` between outputs is not hidden by
+installing the whole output set. Strong runtime requirements of the selected
+RPMs are resolved into the test root automatically from the root's
+repositories. If install still fails, add the missing package to that test's
+`packages` or pass `--test-root-lock` on `build`/`rebuild`.
 
 `--save-test-root`, `--test-root` and `--test-root-lock` need a single test
 environment. If a recipe has several, select one with `--test NAME` or

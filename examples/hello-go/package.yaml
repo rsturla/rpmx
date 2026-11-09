@@ -37,9 +37,8 @@ build:
         output: /usr/bin/hello
   environment:
     CGO_ENABLED: "0"
-  dependencies:
-    tools:
-      - "go >= 1.24"
+  packages:
+    - "go >= 1.24"
 
 sources:
   - name: hello

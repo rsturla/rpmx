@@ -45,9 +45,9 @@ cross:
   that belong only to the cross build. Distribution-wide compiler policy comes
   from a package in the build root, not from the profile.
 
-Step dependencies choose their root automatically. `needs.tools` and
-`build.dependencies.tools` are build-root packages; `needs.host`,
-`build.dependencies.host` and `build.dependencies.target` are sysroot packages.
+Step dependencies choose their root automatically. `needs.packages` and
+`build.packages` are build-root packages; `needs.sysroot` and
+`build.sysroot` are sysroot packages.
 
 With a single target in the profile, `rpmx build recipe.yaml` builds that
 target without an `--arch` flag.

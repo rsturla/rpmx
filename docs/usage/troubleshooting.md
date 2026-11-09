@@ -17,9 +17,8 @@ The first resolve downloads and assembles the closure. Later builds reuse
 Strong runtime requirements of the selected RPMs are resolved into the test
 root automatically. A missing package here normally means the requirement is
 not available in the configured repositories or the test pins
-`--test-root-lock` to an older closure. Add it to that test's
-`environment.contents.packages`, refresh the pinned closure, or check the
-repository configuration.
+`--test-root-lock` to an older closure. Add it to that test's `packages`,
+refresh the pinned closure, or check the repository configuration.
 Ensure `TMPDIR` has space; a test root is a full distribution root.
 
 **An output-level test cannot find a sibling output**

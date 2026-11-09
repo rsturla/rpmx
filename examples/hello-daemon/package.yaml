@@ -47,8 +47,7 @@ source-assembly:
 build:
   root:
     profile: ../fedora-44-build.profile.yaml
-  dependencies:
-    tools: [bash]
+  packages: [bash]
   pipeline:
     - runs: |
         mkdir -p ${stage}/usr/bin ${stage}/usr/lib/systemd/system \

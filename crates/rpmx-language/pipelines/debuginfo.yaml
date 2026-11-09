@@ -2,7 +2,7 @@ name: debuginfo
 version: 1
 summary: Keep debug sections in a separate tree and strip the binaries
 needs:
-  tools: [binutils, findutils]
+  packages: [binutils, findutils]
 run:
   runs: |
     debug_root="$STAGE$PREFIX/lib/debug"

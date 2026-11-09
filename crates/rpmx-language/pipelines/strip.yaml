@@ -2,7 +2,7 @@ name: strip
 version: 2
 summary: Strip ELF files and optionally extract debuginfo
 needs:
-  tools: [binutils, findutils]
+  packages: [binutils, findutils]
 run:
   runs: |
     find "$STAGE" -type f -exec sh -c '

@@ -42,7 +42,7 @@ inputs:
     type: string
     required: true
 needs:
-  tools: [binutils]
+  packages: [binutils]
 run:
   cwd: "${source.dir}"
   argv: ["strip", "--strip-unneeded", "${inputs.path}"]

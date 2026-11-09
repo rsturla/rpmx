@@ -130,9 +130,8 @@ pub fn prepare_source_packages(
     let mut packages = Vec::with_capacity(options.plan.cells.len());
     for cell in &options.plan.cells {
         let build = srpm::LockBuild {
-            tools: cell.tools.clone(),
-            host: cell.host.clone(),
-            target: cell.target.clone(),
+            packages: cell.packages.clone(),
+            sysroot: cell.sysroot.clone(),
             tests: cell
                 .tests
                 .iter()

@@ -32,7 +32,7 @@ This is how a new packaging format earns trust: by producing the same artifacts 
 | `Name`, `Version`, `Epoch`, `Release` | `[package]` | High |
 | `Summary`, `License`, `URL` | `[package]` | High |
 | `SourceN`, `PatchN` | `[[source]]`, `[[patch]]` | High if URL + hash are available |
-| `BuildRequires` | `[build.dependencies]` | Medium: scope must be inferred |
+| `BuildRequires` | `build.packages` / `build.sysroot` | Medium: scope must be inferred |
 | `Requires`, `Recommends`, etc. | `[output.dependencies]` | High for atoms; low for rich deps |
 | `%description` | `package` / `outputs[]` | High |
 | `%package` | `outputs[]` | Medium: inheritance rules need review |

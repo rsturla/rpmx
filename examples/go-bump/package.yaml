@@ -38,9 +38,8 @@ build:
   environment:
     CGO_ENABLED: "0"
     GOTOOLCHAIN: local
-  dependencies:
-    tools:
-      - "go >= 1.24"
+  packages:
+    - "go >= 1.24"
 
 sources:
   - name: hello-api

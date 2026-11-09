@@ -2,7 +2,7 @@ name: meson/install
 version: 1
 summary: Install a Meson project into the staging root
 needs:
-  tools: [meson]
+  packages: [meson]
 run:
   cwd: "${source.dir}"
   runs: |

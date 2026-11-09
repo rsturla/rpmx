@@ -237,11 +237,9 @@ Tests live next to the package or subpackage:
 
 ```yaml
 test:
-  environment:
-    contents:
-      packages:
-        - busybox
-        - python-3
+  packages:
+    - busybox
+    - python-3
   pipeline:
     - runs: |
         python3 -c 'import pandas'
@@ -468,8 +466,7 @@ package:
   summary: "a"        # one character
   license: "MIT OR"   # invalid SPDX expression
 build:
-  dependencies:
-    tools: [gcc, gcc] # duplicate
+  packages: [gcc, gcc] # duplicate
 ```
 
 **[verified]**
@@ -662,9 +659,8 @@ build:
       - https://fedoraproject.org/fedora.gpg
     packages: [bash, coreutils]   # optional; merged with dependencies
 
-  dependencies:
-    tools: [gcc, make, sh]
-    host: [zlib-devel]
+  packages: [gcc, make, sh]
+  sysroot: [zlib-devel]
 ```
 
 Resolution rules (this is the contract that must be written down before code):
@@ -943,11 +939,9 @@ separate `dependencies.run` list is still open.
 tests:
   - name: cli
     stage: installed
+    packages: [jq, ca-certificates]
     environment:
-      contents:
-        packages: [jq, ca-certificates]
-      environment:
-        FOOBAR: "1"
+      FOOBAR: "1"
     argv: [curl, --version]
 
 outputs:

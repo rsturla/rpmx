@@ -59,9 +59,10 @@ pub struct PlannedCell {
     pub version: String,
     pub release: String,
     pub package: String,
-    pub tools: Vec<String>,
-    pub host: Vec<String>,
-    pub target: Vec<String>,
+    /// Packages installed into the build root.
+    pub packages: Vec<String>,
+    /// Packages installed into the target sysroot.
+    pub sysroot: Vec<String>,
     pub pipeline: Vec<PlannedStep>,
     pub outputs: Vec<PlannedOutput>,
     pub tests: Vec<PlannedTest>,
@@ -77,12 +78,12 @@ pub struct PlannedStep {
     pub args: Vec<String>,
     pub cwd: Option<String>,
     pub env: BTreeMap<String, String>,
-    /// Union of `needs_tools` and `needs_host`, for native builds.
+    /// Union of `needs_packages` and `needs_sysroot`, for native builds.
     pub needs: Vec<String>,
     /// Packages the build root needs: the compiler, generators, `make`.
-    pub needs_tools: Vec<String>,
+    pub needs_packages: Vec<String>,
     /// Packages the target sysroot needs: headers and libraries.
-    pub needs_host: Vec<String>,
+    pub needs_sysroot: Vec<String>,
     pub tool_digest: Option<String>,
     pub step_digest: Option<String>,
     pub builtin: bool,
@@ -436,8 +437,8 @@ pub(crate) fn plan_steps(
                 cwd: resolved.cwd,
                 env: resolved.env,
                 needs: resolved.needs,
-                needs_tools: resolved.needs_tools,
-                needs_host: resolved.needs_host,
+                needs_packages: resolved.needs_packages,
+                needs_sysroot: resolved.needs_sysroot,
                 tool_digest: None,
                 step_digest: Some(resolved.digest),
                 builtin: resolved.builtin,
@@ -460,8 +461,8 @@ pub(crate) fn plan_steps(
                 cwd: step.cwd.clone(),
                 env: step.env.clone().unwrap_or_default(),
                 needs: Vec::new(),
-                needs_tools: Vec::new(),
-                needs_host: Vec::new(),
+                needs_packages: Vec::new(),
+                needs_sysroot: Vec::new(),
                 tool_digest: None,
                 step_digest: None,
                 builtin: false,
@@ -484,8 +485,8 @@ pub(crate) fn plan_steps(
             cwd: step.cwd.clone(),
             env: step.env.clone().unwrap_or_default(),
             needs: Vec::new(),
-            needs_tools: Vec::new(),
-            needs_host: Vec::new(),
+            needs_packages: Vec::new(),
+            needs_sysroot: Vec::new(),
             tool_digest: None,
             step_digest: None,
             builtin: false,
@@ -597,9 +598,8 @@ fn plan_cell(
         Value::String(release.clone()),
     );
 
-    let tools = expand_dependencies(&recipe.build.dependencies.tools, &scope, "tools")?;
-    let host = expand_dependencies(&recipe.build.dependencies.host, &scope, "host")?;
-    let target = expand_dependencies(&recipe.build.dependencies.target, &scope, "target")?;
+    let packages = expand_dependencies(&recipe.build.packages, &scope, "packages")?;
+    let sysroot = expand_dependencies(&recipe.build.sysroot, &scope, "sysroot")?;
 
     let pipeline = expand_pipeline(&recipe.build.pipeline, &scope)?;
     let mut pipeline = plan_steps(
@@ -640,9 +640,8 @@ fn plan_cell(
         version,
         release,
         package,
-        tools,
-        host,
-        target,
+        packages,
+        sysroot,
         pipeline,
         outputs,
         tests,
@@ -671,11 +670,9 @@ outputs:
 tests:
   - name: installed
     stage: installed
+    packages: [python3, "${package.name}-test"]
     environment:
-      contents:
-        packages: [python3, "${package.name}-test"]
-      environment:
-        HOME: /tmp
+      HOME: /tmp
     pipeline:
       - runs: "true"
 "#;

@@ -9,8 +9,7 @@ package:
   summary: "a"
   license: "MIT OR"
 build:
-  dependencies:
-    tools: [gcc, gcc]
+  packages: [gcc, gcc]
   pipeline:
     - runs: "true"
 outputs:
@@ -28,8 +27,7 @@ package:
   license: MIT
   source-date-epoch: 1704067200
 build:
-  dependencies:
-    tools: [gcc]
+  packages: [gcc]
   pipeline:
     - runs: "true"
 outputs:

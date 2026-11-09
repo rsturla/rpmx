@@ -12,8 +12,7 @@ package:
 build:
   root:
     profile: ../fedora-44-build.profile.yaml
-  dependencies:
-    tools: [python3, bash]
+  packages: [python3, bash]
   pipeline:
     - runs: |
         python3 -m build --wheel --no-isolation --outdir dist
@@ -50,7 +49,5 @@ outputs:
 tests:
   - name: installed
     stage: installed
-    environment:
-      contents:
-        packages: [python3]
+    packages: [python3]
     argv: ["python3", "-c", "import pyhello; assert pyhello.answer() == 42"]

@@ -32,10 +32,9 @@ build:
       with:
         python: /usr/bin/python${matrix.python.version}
         prefix: /usr
-  dependencies:
-    tools:
-      - "${matrix.python.package}-devel"
-      - python3-pip
+  packages:
+    - "${matrix.python.package}-devel"
+    - python3-pip
 
 sources:
   - name: foo

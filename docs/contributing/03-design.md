@@ -277,13 +277,12 @@ The array order is the application order. There is no `series` file. `reason` is
 
 ```yaml
 build:
-  dependencies:
-    tools:
-      - cmake
-      - ninja-build
-    host:
-      - openssl-devel
-      - zlib-devel
+  packages:
+    - cmake
+    - ninja-build
+  sysroot:
+    - openssl-devel
+    - zlib-devel
   environment:
     CURL_CA_BUNDLE: /etc/pki/tls/certs/ca-bundle.crt
   pipeline:
@@ -792,7 +791,7 @@ set:
   package.vendor: Fedora Project
 
 append:
-  build.dependencies.tools:
+  build.packages:
     - redhat-rpm-config
     - gcc
     - gcc-c++
