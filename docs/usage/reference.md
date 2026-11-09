@@ -180,10 +180,26 @@ A profile with a `cross` block also exports:
 - Java, Conan and vcpkg component catalogers are not implemented. Go, Cargo,
   npm, Yarn, pnpm, Python, Ruby, PHP and explicit C/C++ declarations are. See
   [`../contributing/19-bundled-provides.md`](../contributing/19-bundled-provides.md).
-- SELinux labels, `%ghost`, `%lang` and arbitrary xattrs are not implemented;
-  file capabilities are.
+- SELinux labels, `%ghost`, `%lang`, multilib and arbitrary xattrs are not
+  implemented; file capabilities are.
 - Debug information is opt-in per recipe (`uses: debuginfo` plus an output that
-  claims `/usr/lib/debug/**`). `-debugsource` is not generated.
+  claims `/usr/lib/debug/**`). `-debugsource`, build-id debug links and
+  per-subpackage debuginfo are not generated.
+- Dependency generators cover ELF, pkgconfig, shebangs, Python, Perl,
+  desktop/AppStream and debuginfo. Fontconfig, OCaml, sysusers/usergroup and
+  rpm macro provides are not generated; Python emits versioned
+  `pythonX.Ydist(...)` names only, so a major-only alias or an extras
+  subpackage is declared by the runtime package. A `#!/usr/bin/env name`
+  shebang requires `/usr/bin/env`, not `name`, and scriptlet dependencies are
+  not generated.
+- Multi-arch `build` rejects `--locked`, `--stage`, `--root`, `--root-lock`,
+  `--test-root-lock`, `--junit` and `--sbom` until per-arch lock and evidence
+  aggregation lands. `--run-tests` and `--cell` work per architecture.
+- Repository snapshots, module streams and seccomp/cgroup enforcement are not
+  implemented.
+- CPE is emitted in SBOMs, not in the RPM header.
+- The language pipelines are partial: Cargo, npm, Go and Python have
+  build/vendor steps, but not every ecosystem has a complete source path.
 - Step-level `timeout` is parsed but not enforced individually; use
   `--step-timeout`.
 - Local `file://` repository paths are host-specific and not portable.
