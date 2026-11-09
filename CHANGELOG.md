@@ -39,6 +39,13 @@ does not promise a stable schema or CLI yet.
   argument list through to configure/build/install. `autotools/configure`
   supports out-of-tree builds and derives `--host`/`--build` in a cross build.
   Build and check steps use the sandbox `$JOBS` instead of a hardcoded `-j1`.
+- **Breaking:** a step is named after the command it runs, so a command has
+  exactly one step. `autotools/build`, `autotools/check` and `autotools/install`
+  ran the same `make` commands as `make/build`, `make/check` and `make/install`
+  and are removed; replace them with the `make` steps and keep
+  `autotools/configure` in front. `autotools/check` had no callers. CMake and
+  Meson keep their own build, check and install steps because those tools drive
+  the build themselves.
 - Added `license/copy`, which installs per-output license copies under
   `$PREFIX/share/licenses/<output>/` without repeating a shell loop.
 - Added `test/hardening-check`, which walks the staged ELF files and checks
