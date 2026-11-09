@@ -67,9 +67,8 @@ pub(crate) fn read_rpms(paths: &[PathBuf]) -> Result<Vec<TestRpm>, Error> {
     paths.iter().map(|path| TestRpm::read(path)).collect()
 }
 
-pub(crate) fn packages_for(global: &[String], test: &PlannedTest) -> Vec<String> {
-    let mut packages = global.to_vec();
-    packages.extend(test.packages.iter().cloned());
+pub(crate) fn packages_for(test: &PlannedTest) -> Vec<String> {
+    let mut packages = test.packages.clone();
     packages.sort();
     packages.dedup();
     packages
@@ -79,19 +78,19 @@ fn owner_key(test: &PlannedTest) -> &str {
     test.output.as_deref().unwrap_or("*")
 }
 
-pub(crate) fn key_for(global: &[String], test: &PlannedTest) -> String {
+pub(crate) fn key_for(test: &PlannedTest) -> String {
     format!(
         "{}\u{1e}{}",
         owner_key(test),
-        packages_for(global, test).join("\u{1f}")
+        packages_for(test).join("\u{1f}")
     )
 }
 
-pub(crate) fn grouped(tests: &[PlannedTest], global: &[String]) -> Vec<TestGroup> {
+pub(crate) fn grouped(tests: &[PlannedTest]) -> Vec<TestGroup> {
     let mut groups: BTreeMap<String, TestGroup> = BTreeMap::new();
     for test in tests.iter().filter(|test| test.stage == "installed") {
-        let packages = packages_for(global, test);
-        let key = key_for(global, test);
+        let packages = packages_for(test);
+        let key = key_for(test);
         groups
             .entry(key.clone())
             .or_insert_with(|| TestGroup {
@@ -263,34 +262,23 @@ mod tests {
 
     #[test]
     fn tests_with_the_same_package_set_and_output_share_a_root() {
-        let global = vec!["bash".to_string()];
-        let groups = grouped(
-            &[test("one", &["python3"]), test("two", &["python3"])],
-            &global,
-        );
+        let groups = grouped(&[test("one", &["python3"]), test("two", &["python3"])]);
         assert_eq!(groups.len(), 1);
-        assert_eq!(groups[0].packages, ["bash", "python3"]);
+        assert_eq!(groups[0].packages, ["python3"]);
         assert_eq!(groups[0].tests.len(), 2);
-        assert_eq!(groups[0].key, key_for(&global, &test("one", &["python3"])));
+        assert_eq!(groups[0].key, key_for(&test("one", &["python3"])));
     }
 
     #[test]
     fn a_different_package_set_or_output_gets_its_own_root() {
-        let global = vec!["bash".to_string()];
-        let groups = grouped(
-            &[
-                test("plain", &[]),
-                test("python", &["python3"]),
-                test_for(Some("lib"), "symbols", &[]),
-            ],
-            &global,
-        );
+        let groups = grouped(&[
+            test("plain", &[]),
+            test("python", &["python3"]),
+            test_for(Some("lib"), "symbols", &[]),
+        ]);
         assert_eq!(groups.len(), 3);
-        assert_eq!(packages_for(&global, &test("plain", &[])), ["bash"]);
-        assert_eq!(
-            packages_for(&global, &test("python", &["python3"])),
-            ["bash", "python3"]
-        );
+        assert!(packages_for(&test("plain", &[])).is_empty());
+        assert_eq!(packages_for(&test("python", &["python3"])), ["python3"]);
     }
 
     #[test]

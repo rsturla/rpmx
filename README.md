@@ -99,7 +99,6 @@ build:
     profile: profiles/fedora-44.yaml
   dependencies:
     tools: [gcc, make, bash, coreutils, gawk]
-    tests: [gcc]
   pipeline:
     - uses: autotools/configure
     - uses: make/build

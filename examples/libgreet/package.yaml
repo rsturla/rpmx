@@ -18,7 +18,6 @@ build:
     profile: ../fedora-44-build.profile.yaml
   dependencies:
     tools: [gcc, make, bash]
-    tests: [gcc]
   pipeline:
     - uses: make
     - uses: strip
@@ -77,4 +76,7 @@ tests:
     argv: ["sh", "-c", "test -s libgreet.so.1.0.0"]
   - name: installed
     stage: installed
+    environment:
+      contents:
+        packages: [gcc]
     argv: ["sh", "-c", "printf '#include <greet.h>\\nint main(void){return greet() != 42;}\\n' > /tmp/t.c && cc /tmp/t.c -o /tmp/t -lgreet && /tmp/t"]

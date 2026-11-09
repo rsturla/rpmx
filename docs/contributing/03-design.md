@@ -380,7 +380,8 @@ outputs:
 
 Dependency strings may use the closed template scope, typically `${package.version}`, `${package.release}` and matrix fields. They are resolved by the planner, not by a general macro expander; see [`12-templates.md`](12-templates.md).
 
-`recommends`, `suggests`, `supplements` and `enhances` map to RPM's weak dependency tags. They are solver hints, not guarantees: rpm itself ignores them when installing packages directly, so installed-stage tests must list any weak dependency they rely on in `build.dependencies.tests`. Weak dependencies currently accept the same simple atoms as `run`; rich weak dependencies are not implemented yet. Installed-stage tests resolve the selected RPMs' strong runtime requirements automatically; weak requirements remain hints and must be listed explicitly if a test needs them.
+`recommends`, `suggests`, `supplements` and `enhances` map to RPM's weak dependency tags. They are solver hints, not guarantees: rpm itself ignores them when installing packages directly, so installed-stage tests must list any weak dependency they rely on in that
+test's `environment.contents.packages`. Weak dependencies currently accept the same simple atoms as `run`; rich weak dependencies are not implemented yet. Installed-stage tests resolve the selected RPMs' strong runtime requirements automatically; weak requirements remain hints and must be listed explicitly if a test needs them.
 
 **Rich dependencies.** Common cases are typed:
 

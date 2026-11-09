@@ -108,15 +108,15 @@ pub fn run(args: TestArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
     // build-stage test must not cost a network resolution first.
     let installed = if args.test_root.is_some() {
         // The package is already installed in the prebuilt root.
-        let (tests, tools) = installed_tests(&plan, &args.selected)?;
-        Some((Vec::<TestRpm>::new(), tests, tools))
+        let tests = installed_tests(&plan, &args.selected)?;
+        Some((Vec::<TestRpm>::new(), tests))
     } else {
         match args.install_dir.as_deref() {
             Some(directory) => {
                 let rpms = rpms_in(directory)?;
                 let rpms = read_rpms(&rpms)?;
-                let (tests, tools) = installed_tests(&plan, &args.selected)?;
-                Some((rpms, tests, tools))
+                let tests = installed_tests(&plan, &args.selected)?;
+                Some((rpms, tests))
             }
             None => None,
         }
@@ -200,7 +200,7 @@ pub fn run(args: TestArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
                 .map(|package| package.name.clone())
                 .collect()
         });
-    if let Some((rpms, tests, tools)) = installed {
+    if let Some((rpms, tests)) = installed {
         // A cross package is tested in a target root, which is the sysroot
         // lock, not the host build root. An explicit --test-root-lock wins.
         let test_lock = args
@@ -231,7 +231,7 @@ pub fn run(args: TestArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
                 "the test root has no lock; pass --test-root-lock or use a root saved by --save-test-root",
             ));
         };
-        return run_installed(&args, &arch, test_lock, &rpms, &tests, &tools);
+        return run_installed(&args, &arch, test_lock, &rpms, &tests);
     }
 
     let output = crate::commands::default_output(&arch);
@@ -286,15 +286,8 @@ pub fn run(args: TestArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
 fn installed_tests(
     plan: &rpmx_core::Plan,
     selected: &[String],
-) -> Result<
-    (
-        Vec<rpmx_core::PlannedTest>,
-        std::collections::BTreeSet<String>,
-    ),
-    Error,
-> {
+) -> Result<Vec<rpmx_core::PlannedTest>, Error> {
     let mut tests = Vec::new();
-    let mut tools = std::collections::BTreeSet::new();
     for cell in &plan.cells {
         for test in &cell.tests {
             let wanted = if selected.is_empty() {
@@ -317,7 +310,6 @@ fn installed_tests(
                 ));
             }
             tests.push(test.clone());
-            tools.extend(cell.test_tools.iter().cloned());
         }
     }
     if tests.is_empty() {
@@ -326,7 +318,7 @@ fn installed_tests(
             "no installed-stage test matches; --install-dir tests existing RPMs",
         ));
     }
-    Ok((tests, tools))
+    Ok(tests)
 }
 
 fn run_installed(
@@ -335,7 +327,6 @@ fn run_installed(
     root_lock_path: &Path,
     rpms: &[TestRpm],
     selected: &[rpmx_core::PlannedTest],
-    tools: &std::collections::BTreeSet<String>,
 ) -> Result<(), Error> {
     let lock = rpmx_core::root::load_lock(root_lock_path)?;
     let runner = args.runner.parse::<rpmx_core::runner::RunnerKind>()?;
@@ -360,8 +351,7 @@ fn run_installed(
             format!("cannot create {}: {error}", stage.display()),
         )
     })?;
-    let global_tools: Vec<String> = tools.iter().cloned().collect();
-    let groups = grouped(selected, &global_tools);
+    let groups = grouped(selected);
     let mut prepared_roots = Vec::new();
     let mut roots: std::collections::BTreeMap<String, PathBuf> = std::collections::BTreeMap::new();
     if let Some(directory) = &args.test_root {
@@ -478,7 +468,7 @@ fn run_installed(
     let mut outcomes = Vec::new();
     for test in selected {
         let test_root = roots
-            .get(&key_for(&global_tools, test))
+            .get(&key_for(test))
             .map(PathBuf::as_path)
             .ok_or_else(|| {
                 Error::new(

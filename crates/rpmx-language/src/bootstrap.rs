@@ -1108,7 +1108,6 @@ fn package_order(
             .iter()
             .chain(deps.host.iter())
             .chain(deps.target.iter())
-            .chain(deps.tests.iter())
         {
             if dependency == &item.name || !by_name.contains_key(dependency.as_str()) {
                 continue;

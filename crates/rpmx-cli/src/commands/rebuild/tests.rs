@@ -56,7 +56,7 @@ pub(super) fn run(options: TestRunOptions<'_>) -> Result<Vec<PathBuf>, Error> {
         return Ok(Vec::new());
     }
     let cache = crate::commands::fetch::default_cache()?;
-    let groups = grouped(&tests, &options.cell.test_tools);
+    let groups = grouped(&tests);
     if groups.len() > 1 && options.save_test_root.is_some() {
         return Err(Error::new(
             codes::TEST_004,
@@ -130,9 +130,7 @@ pub(super) fn run(options: TestRunOptions<'_>) -> Result<Vec<PathBuf>, Error> {
     let mut outcomes = Vec::new();
     for test in &tests {
         let test_root = if test.stage == "installed" {
-            roots
-                .get(&key_for(&options.cell.test_tools, test))
-                .map(|root| root.path.as_path())
+            roots.get(&key_for(test)).map(|root| root.path.as_path())
         } else {
             None
         };

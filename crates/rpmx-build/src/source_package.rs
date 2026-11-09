@@ -133,7 +133,13 @@ pub fn prepare_source_packages(
             tools: cell.tools.clone(),
             host: cell.host.clone(),
             target: cell.target.clone(),
-            tests: cell.test_tools.clone(),
+            tests: cell
+                .tests
+                .iter()
+                .flat_map(|test| test.packages.iter().cloned())
+                .collect::<std::collections::BTreeSet<_>>()
+                .into_iter()
+                .collect(),
             sbom: options.sbom,
         };
         let lock_root = root_lock.as_ref().map(|(_, reference)| reference);

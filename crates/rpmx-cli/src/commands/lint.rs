@@ -289,7 +289,6 @@ fn check(
             "build.dependencies.target",
             &recipe.build.dependencies.target,
         ),
-        ("build.dependencies.tests", &recipe.build.dependencies.tests),
     ] {
         let mut seen = BTreeSet::new();
         for value in values {

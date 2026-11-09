@@ -273,20 +273,12 @@ pub fn execute(request: RebuildRequest<'_>) -> Result<RebuildOutput, Error> {
         } else if trusted {
             available.extend(cell.host.iter().chain(cell.target.iter()).cloned());
         }
-        // A cross build installs test dependencies into a target test root
-        // when the tests run, not into the build root or the sysroot.
-        let test_tools: &[String] = if effective_sysroot.is_some() {
-            &[]
-        } else {
-            &cell.test_tools
-        };
         check_build_tools(
             &sandbox,
             &build,
             &cell.tools,
             &cell.host,
             &cell.target,
-            test_tools,
             &available,
         )?;
         rpmx_core::output::phase("build", format!("{arch} · {} steps", cell.pipeline.len()));

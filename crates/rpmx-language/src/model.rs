@@ -291,8 +291,6 @@ pub struct Dependencies {
     pub host: Vec<String>,
     #[serde(default)]
     pub target: Vec<String>,
-    #[serde(default)]
-    pub tests: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]

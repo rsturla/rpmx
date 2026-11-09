@@ -1124,7 +1124,6 @@ pub(crate) fn required_packages(plan: &Plan) -> RequiredPackages {
         build.extend(cell.tools.iter().cloned());
         target.extend(cell.host.iter().cloned());
         target.extend(cell.target.iter().cloned());
-        target.extend(cell.test_tools.iter().cloned());
         for step in &cell.pipeline {
             split_needs(step, false, &mut build, &mut target);
         }
@@ -1878,12 +1877,18 @@ build:
   dependencies:
     tools: [gcc]
     host: [zlib-devel]
-    tests: [pytest]
   pipeline:
     - uses: strip
 outputs:
   - name: p
     metapackage: true
+tests:
+  - name: installed
+    stage: installed
+    environment:
+      contents:
+        packages: [pytest]
+    argv: ["true"]
 "#,
         );
         let plan = rpmx_core::plan_with_options(
@@ -1898,8 +1903,8 @@ outputs:
         )
         .expect("plan");
         let packages = required_packages(&plan);
-        // Tools belong to the build root; libraries and test tools to the
-        // target sysroot.
+        // Tools belong to the build root; libraries and a test's own packages
+        // to the target root the test runs in.
         assert!(packages.build.contains("gcc"));
         assert!(!packages.target.contains("gcc"));
         assert!(packages.target.contains("zlib-devel"));

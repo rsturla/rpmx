@@ -41,8 +41,6 @@ build:
   dependencies:
     tools:
       - "go >= 1.24"
-    tests:
-      - govulncheck
 
 sources:
   - name: hello-api

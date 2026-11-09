@@ -20,11 +20,10 @@ pub fn check_build_tools(
     tools: &[String],
     host: &[String],
     target: &[String],
-    test_tools: &[String],
     locked_packages: &BTreeSet<String>,
 ) -> Result<()> {
     let mut missing_packages = BTreeSet::new();
-    for dependency in host.iter().chain(target).chain(test_tools) {
+    for dependency in host.iter().chain(target) {
         let name = dependency_name(dependency);
         if !name.is_empty() && !locked_packages.contains(name) {
             missing_packages.insert(name.to_string());
@@ -34,7 +33,7 @@ pub fn check_build_tools(
         return Err(Error::new(
             codes::ROOT_018,
             format!(
-                "build host/test dependencies missing from the selected root: {}; \
+                "build host dependencies missing from the selected root: {}; \
                  add them to the profile's packages.install",
                 missing_packages.into_iter().collect::<Vec<_>>().join(", ")
             ),

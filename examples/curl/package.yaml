@@ -56,8 +56,6 @@ build:
       - "openssl-devel >= 3.0"
       - zlib-devel
       - libpsl-devel
-    tests:
-      - python3
 
 sources:
   - name: curl
@@ -205,10 +203,10 @@ tests:
     argv: [ctest, --output-on-failure, --test-dir, build]
   - name: smoke
     stage: installed
+    environment:
+      contents:
+        packages: [ca-certificates]
     argv: [curl, --version]
-    dependencies:
-      run:
-        - ca-certificates
   - name: abi
     stage: installed
     kind: abi
