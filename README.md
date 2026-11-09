@@ -63,8 +63,9 @@ rpmx build --locked
 
 ## A recipe
 
-GNU Hello, end to end: fetch and verify a source archive, build it with the
-Autotools steps, copy the license, strip, and test the installed package.
+GNU Hello, end to end: fetch and verify a source archive, configure and build
+it with the Autotools and Make steps, copy the license, strip, and test the
+installed package.
 
 ```yaml
 schema: 1
@@ -101,8 +102,8 @@ build:
     tests: [gcc]
   pipeline:
     - uses: autotools/configure
-    - uses: autotools/build
-    - uses: autotools/install
+    - uses: make/build
+    - uses: make/install
     - uses: license/copy
       with:
         files: [COPYING]
