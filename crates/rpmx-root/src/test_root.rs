@@ -7,15 +7,18 @@
 //! selected RPMs' runtime requirements. Tests with different outputs or
 //! explicit test packages therefore get separate roots.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use crate::profile::{Packages, Profile};
+use crate::profile::{Packages, Profile, Repository};
 use crate::root::{self, RootLock};
 use rpmx_base::arch::Arch;
 use rpmx_base::error::{codes, Error, Result};
 use rpmx_payload::metadata::package_metadata;
 use rpmx_runner::runner::emulation_available;
+
+/// Repository id of the packages under test inside the test root's profile.
+const UNDER_TEST: &str = "test-under-test";
 
 pub struct TestRootOptions<'a> {
     pub lock: &'a RootLock,
@@ -25,6 +28,9 @@ pub struct TestRootOptions<'a> {
     pub pinned: Option<&'a Path>,
     pub tools: &'a [String],
     pub rpms: &'a [PathBuf],
+    /// Directory holding exactly `rpms` and their `repodata`, so the resolver
+    /// can install the packages under test as if they had been published.
+    pub repo: &'a Path,
     pub image: Option<&'a str>,
     pub cache: &'a Path,
     pub work: &'a Path,
@@ -35,104 +41,54 @@ pub struct PreparedTestRoot {
     pub lock: RootLock,
 }
 
-/// Runtime requirements of the built RPMs that must come from the test root
-/// repositories. Capabilities provided by another selected RPM are omitted,
-/// because those packages are installed from the build output, not resolved
-/// from a repository.
-fn external_requirements(rpms: &[PathBuf]) -> Result<Vec<String>> {
-    let mut provided: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    let mut required = Vec::new();
+/// The package names of the RPMs under test, in selection order.
+///
+/// They are installed from the local repository so the resolver can satisfy
+/// their requirements the way it would for a published package: by name, by
+/// soname, and by file. The packages themselves are removed from the resolved
+/// lock and installed from the build output instead.
+fn under_test_packages(rpms: &[PathBuf]) -> Result<Vec<String>> {
+    let mut names = Vec::new();
     for path in rpms {
         let metadata = package_metadata(path)?;
-        for dependency in &metadata.provides {
-            provided
-                .entry(dependency.name.clone())
-                .or_default()
-                .push(dependency.version.clone());
+        if !names.contains(&metadata.name) {
+            names.push(metadata.name);
         }
-        provided
-            .entry(metadata.name.clone())
-            .or_default()
-            .push(metadata.evr());
-        for file in &metadata.files {
-            provided.entry(file.clone()).or_default();
-        }
-        required.extend(metadata.requires);
     }
-    Ok(missing_requirements(required, &provided))
+    Ok(names)
 }
 
-fn missing_requirements(
-    mut required: Vec<rpm::Dependency>,
-    provided: &BTreeMap<String, Vec<String>>,
-) -> Vec<String> {
-    required.sort_by(|left, right| {
-        (&left.name, left.flags.bits(), &left.version).cmp(&(
-            &right.name,
-            right.flags.bits(),
-            &right.version,
-        ))
-    });
-    required.dedup_by(|left, right| {
-        left.name == right.name && left.flags == right.flags && left.version == right.version
-    });
-    required
-        .into_iter()
-        .filter(|requirement| {
-            is_package_requirement(&requirement.name)
-                && !provided
-                    .get(&requirement.name)
-                    .is_some_and(|versions| satisfies(requirement, versions))
-        })
-        .map(requirement_spec)
-        .collect()
-}
-
-/// Whether a requirement names a package rather than a file or a library
-/// soname. Resolving a soname and a package name independently can select two
-/// different providers for the same library (for example Fedora's `pcre2` for
-/// the name and Eternal's `pcre2-libs` for the soname), and the transaction
-/// then fails on the file conflict. The seeded root already supplies sonames;
-/// only the package-level requirements need an explicit install.
-fn is_package_requirement(name: &str) -> bool {
-    !name.starts_with("rpmlib(")
-        && !name.starts_with("config(")
-        && !name.starts_with("rtld(")
-        && !name.starts_with('/')
-        && !name.contains(".so")
-}
-
-fn satisfies(requirement: &rpm::Dependency, versions: &[String]) -> bool {
-    let comparator = requirement.flags.comparator_str();
-    if comparator.is_empty() {
-        return true;
+/// The repository that holds the packages under test, mounted for the resolver.
+fn under_test_repository(repo: &Path) -> Repository {
+    Repository {
+        id: UNDER_TEST.to_string(),
+        baseurl: Some(format!("file://{}", repo.display())),
+        metalink: None,
+        mirrorlist: None,
+        gpgkey: None,
+        repo_gpgcheck: false,
+        exclude: Vec::new(),
+        auth: None,
     }
-    versions.iter().any(|provided| {
-        if provided.is_empty() {
-            return false;
-        }
-        let ordering = rpmx_base::version::compare_evr(provided, &requirement.version);
-        match comparator {
-            "=" => ordering == std::cmp::Ordering::Equal,
-            "<" => ordering == std::cmp::Ordering::Less,
-            "<=" => ordering != std::cmp::Ordering::Greater,
-            ">" => ordering == std::cmp::Ordering::Greater,
-            ">=" => ordering != std::cmp::Ordering::Less,
-            _ => false,
-        }
-    })
 }
 
-fn requirement_spec(requirement: rpm::Dependency) -> String {
-    let comparator = requirement.flags.comparator_str();
-    if comparator.is_empty() || requirement.version.is_empty() {
-        requirement.name
-    } else {
-        format!(
-            "{} {} {}",
-            requirement.name, comparator, requirement.version
-        )
+/// Drop the packages under test from the resolved lock.
+///
+/// The lock describes the disposable root: the packages that came from a
+/// repository. The packages under test are installed from the build output
+/// afterwards, so they neither belong in the lock nor in the repository list
+/// that a pinned lock replays.
+fn without_under_test(lock: &mut RootLock) {
+    lock.repositories.retain(|repo| repo.id != UNDER_TEST);
+    for packages in lock.packages.values_mut() {
+        packages.retain(|package| package.repo_id != UNDER_TEST);
     }
+    lock.closure_digest = root::closure_digest(
+        &lock.releasever,
+        &lock.archs,
+        &lock.repositories,
+        &lock.packages,
+    );
 }
 
 /// Build and install a disposable root for installed-stage tests.
@@ -170,16 +126,19 @@ pub fn prepare(options: TestRootOptions<'_>) -> Result<PreparedTestRoot> {
             install.push(name.to_string());
         }
     }
-    // The built RPMs are not in the repository closure yet, so resolve their
-    // external runtime requirements explicitly. Requirements provided by the
-    // selected RPMs themselves stay out of the repository lookup: the built
-    // packages are installed after the root has been assembled.
+    // The packages under test are not published, so a local repository holds
+    // them for the resolver. Resolving them like any other package keeps the
+    // test root's dependency handling identical to an install: sonames, file
+    // requirements and virtual provides all resolve from the same transaction,
+    // and a packager never has to spell out the libraries a package links.
+    let mut repositories = lock.repositories.clone();
     if options.pinned.is_none() {
-        for requirement in external_requirements(options.rpms)? {
-            if !install.iter().any(|package| package == &requirement) {
-                install.push(requirement);
+        for name in under_test_packages(options.rpms)? {
+            if !install.iter().any(|package| package == &name) {
+                install.push(name);
             }
         }
+        repositories.insert(0, under_test_repository(options.repo));
     }
 
     let profile = Profile {
@@ -192,7 +151,7 @@ pub fn prepare(options: TestRootOptions<'_>) -> Result<PreparedTestRoot> {
         builder: crate::profile::Builder {
             image: Some(image.to_string()),
         },
-        repositories: lock.repositories.clone(),
+        repositories,
         packages: Packages {
             install: install.clone(),
             reinstall: Vec::new(),
@@ -219,7 +178,12 @@ pub fn prepare(options: TestRootOptions<'_>) -> Result<PreparedTestRoot> {
             check_lock(path, &pinned, &install, &lock.archs)?;
             pinned
         }
-        None => root::resolve_profile(&profile, "test-root", &resolve_work, options.cache)?,
+        None => {
+            let mut resolved =
+                root::resolve_profile(&profile, "test-root", &resolve_work, options.cache)?;
+            without_under_test(&mut resolved);
+            resolved
+        }
     };
     root::assemble(
         &test_lock,
@@ -274,9 +238,9 @@ pub fn prepare(options: TestRootOptions<'_>) -> Result<PreparedTestRoot> {
         return Err(Error::new(
             codes::BUILD_007,
             format!(
-                "cannot install the built RPMs into the test root: {}; \
-                 add missing runtime packages to the test's packages or \
-                 pass a pinned --test-root-lock",
+                "cannot install the built RPMs into the test root: {}; the \
+                 resolved root cannot hold these packages, so pass \
+                 --test-root-lock to reuse a root that resolves",
                 String::from_utf8_lossy(&output.stderr).trim()
             ),
         ));
@@ -355,25 +319,93 @@ mod tests {
     use super::is_replacement_conflict;
 
     #[test]
-    fn only_missing_package_requirements_are_resolved() {
-        use rpm::Dependency;
+    fn the_packages_under_test_leave_the_lock() {
+        use crate::profile::Repository;
+        use crate::root::LockedPackage;
 
-        let mut provided = std::collections::BTreeMap::new();
-        provided.insert("libfoo.so.1()(64bit)".to_string(), vec![String::new()]);
-        provided.insert("libfoo".to_string(), vec!["1.2-3".to_string()]);
-        let required = vec![
-            Dependency::any("libfoo.so.1()(64bit)"),
-            Dependency::greater_eq("libfoo", "1.2"),
-            Dependency::greater_eq("libfoo", "2.0"),
-            Dependency::any("libbar.so.2()(64bit)"),
-            Dependency::any("/usr/bin/sh"),
-            Dependency::any("rtld(GNU_HASH)"),
-            Dependency::any("rpmlib(CompressedFileNames)"),
-            Dependency::any("config(libfoo)"),
-        ];
+        let package = |name: &str, repo_id: &str| LockedPackage {
+            name: name.to_string(),
+            repo_id: repo_id.to_string(),
+            evr: "1-1".to_string(),
+            checksum: "sha256:00".to_string(),
+            size: 1,
+            srpm: None,
+            module: None,
+            location: None,
+        };
+        let mut lock = super::RootLock {
+            document: "rpmx-root-lock".to_string(),
+            version: 1,
+            profile: "bootstrap".to_string(),
+            archs: vec!["x86_64".to_string()],
+            releasever: "44".to_string(),
+            dist_tag: None,
+            options: Default::default(),
+            prefix: "/usr".to_string(),
+            libdir: "lib64".to_string(),
+            sbom: false,
+            repositories: vec![
+                Repository {
+                    id: super::UNDER_TEST.to_string(),
+                    baseurl: Some("file:///tmp/rpms".to_string()),
+                    metalink: None,
+                    mirrorlist: None,
+                    gpgkey: None,
+                    repo_gpgcheck: false,
+                    exclude: Vec::new(),
+                    auth: None,
+                },
+                Repository {
+                    id: "fedora".to_string(),
+                    metalink: Some("https://mirrors.fedoraproject.org".to_string()),
+                    baseurl: None,
+                    mirrorlist: None,
+                    gpgkey: None,
+                    repo_gpgcheck: false,
+                    exclude: Vec::new(),
+                    auth: None,
+                },
+            ],
+            packages: [(
+                "x86_64".to_string(),
+                vec![
+                    package("gettext", super::UNDER_TEST),
+                    package("libxml2", "fedora"),
+                ],
+            )]
+            .into_iter()
+            .collect(),
+            closure_digest: "sha256:00".to_string(),
+            root_digest: None,
+            builder: None,
+            generation: None,
+            requirement: None,
+            seed: None,
+        };
+
+        let recorded = lock.closure_digest.clone();
+        super::without_under_test(&mut lock);
+        assert_ne!(
+            lock.closure_digest, recorded,
+            "the closure digest follows the stripped closure"
+        );
         assert_eq!(
-            super::missing_requirements(required, &provided),
-            vec!["libfoo >= 2.0".to_string()]
+            lock.closure_digest,
+            super::root::closure_digest(
+                &lock.releasever,
+                &lock.archs,
+                &lock.repositories,
+                &lock.packages
+            )
+        );
+        assert_eq!(lock.repositories.len(), 1);
+        assert_eq!(lock.repositories[0].id, "fedora");
+        assert_eq!(
+            lock.packages["x86_64"]
+                .iter()
+                .map(|package| package.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["libxml2"]
         );
     }
 

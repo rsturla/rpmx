@@ -54,10 +54,12 @@ same output and `packages` set share a root; a different output or set gets its
 own root. A recipe-level installed test sees every output. An output-level
 installed test sees that output plus the sibling outputs that provide its
 runtime dependencies, so a missing `Requires` between outputs is not hidden by
-installing the whole output set. Strong runtime requirements of the selected
-RPMs are resolved into the test root automatically from the root's
-repositories. If install still fails, add the missing package to that test's
-`packages` or pass `--test-root-lock` on `build`/`rebuild`.
+installing the whole output set. The selected RPMs are resolved like published
+packages: a local repository holds them while the test root is resolved, so
+their requirements, including shared-library and file requirements, resolve
+from the root's repositories in one transaction. A test never has to name the
+libraries the package links. `packages` is only for tools the test itself runs,
+such as a shell or `grep`.
 
 `--save-test-root`, `--test-root` and `--test-root-lock` need a single test
 environment. If a recipe has several, select one with `--test NAME` or

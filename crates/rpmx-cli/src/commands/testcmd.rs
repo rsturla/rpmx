@@ -14,7 +14,7 @@ use rpmx_core::test_runner::{run_planned_tests, TestSandboxConfig};
 use rpmx_core::Error;
 
 use crate::commands::test_roots::{
-    grouped, key_for, read_rpms, rpms_for_output, validate_selectors, TestRpm,
+    grouped, key_for, read_rpms, rpms_for_output, under_test_repo, validate_selectors, TestRpm,
 };
 use crate::commands::{
     load_plan, pipeline::BuildPipeline, report, resolve_policy, OptionalSigningArgs, PlanPolicy,
@@ -395,6 +395,7 @@ fn run_installed(
         for (index, group) in groups.iter().enumerate() {
             let group_work = work.path().join(format!("test-root-{index}"));
             let group_rpms = rpms_for_output(group.output.as_deref(), rpms)?;
+            let repo = under_test_repo(&group_work.join("test-rpms"), &group_rpms)?;
             let prepared = prepare_test_root(TestRootOptions {
                 lock: &lock,
                 destination: if groups.len() == 1 {
@@ -409,6 +410,7 @@ fn run_installed(
                 },
                 tools: &group.packages,
                 rpms: &group_rpms,
+                repo: &repo,
                 image: lock.builder.as_ref().map(|builder| builder.image.as_str()),
                 cache: &cache,
                 work: &group_work,
