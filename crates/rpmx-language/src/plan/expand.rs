@@ -141,6 +141,7 @@ pub(crate) struct ExpandedOutputs {
 
 pub(crate) fn expand_outputs(
     outputs: &[Output],
+    inherited_run: &[String],
     scope: &BTreeMap<String, Value>,
     step_root: Option<&std::path::Path>,
     allow_builtin_override: bool,
@@ -205,7 +206,7 @@ pub(crate) fn expand_outputs(
             noreplace: output.files.noreplace,
             directories: output.files.directories,
             attributes: output.files.attributes,
-            dependencies: output.dependencies.to_set(),
+            dependencies: effective_dependencies(&output.dependencies, inherited_run),
             bundled: output.bundled,
             generators: output.generators,
             lint: output.lint,
@@ -216,6 +217,23 @@ pub(crate) fn expand_outputs(
         outputs: planned,
         tests,
     })
+}
+
+/// Recipe-level `dependencies.run` first, then what the output declared, with
+/// `dependencies.exclude` entries removed by exact match from both.
+fn effective_dependencies(
+    declared: &crate::model::OutputDependencies,
+    inherited_run: &[String],
+) -> crate::model::DependencySet {
+    let mut dependencies = declared.to_set();
+    let mut run = Vec::with_capacity(inherited_run.len() + declared.run.len());
+    for entry in inherited_run.iter().chain(&declared.run) {
+        if !declared.exclude.contains(entry) && !run.contains(entry) {
+            run.push(entry.clone());
+        }
+    }
+    dependencies.requires = run;
+    dependencies
 }
 
 fn validate_bundled(output: &Output) -> Result<()> {

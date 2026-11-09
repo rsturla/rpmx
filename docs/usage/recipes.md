@@ -100,6 +100,8 @@ package:
 build:
   environment:
     PATH: /usr/libexec/example/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+dependencies:
+  run: [filesystem]  # every output of every package requires this
 ```
 
 rpmx looks in the recipe directory first, then each ancestor up to the
@@ -592,6 +594,48 @@ Rules:
 
 `scriptlets` phases: `pre`, `post`, `preun`, `postun`; `interpreter` defaults to
 `/bin/sh`.
+
+#### Dependencies every output shares
+
+A `Requires` that every subpackage needs is a property of the distribution,
+not of one artifact. Declare it once at the recipe level and every output
+inherits it:
+
+```yaml
+dependencies:
+  run: ["filesystem"]
+outputs:
+  - name: hello
+    files:
+      include: ["/usr/bin/hello"]
+  - name: hello-libs
+    files:
+      include: ["/usr/lib64/**"]
+```
+
+Both outputs require `filesystem`. An output that should not carry an
+inherited entry drops it by exact match:
+
+```yaml
+  - name: hello-debuginfo
+    metapackage: false
+    dependencies:
+      exclude: ["filesystem"]
+```
+
+Rules:
+
+- Only `run` is inherited. `provides`, `obsoletes`, `conflicts`, `recommends`
+  and the other weak relations stay per-output claims; the schema rejects them
+  at recipe level.
+- The output's own `dependencies.run` is appended, and duplicates collapse, so
+  a subpackage can add to the base without restating it.
+- `exclude` removes an entry from the merged list, inherited or declared.
+- Values are templated per cell, like every other dependency list.
+- The merged list is what the planning output, the RPM header and the SBOM
+  show, so nothing is hidden.
+- [`rpmx-defaults.yaml`](#repository-defaults) can supply the base for a whole
+  repository; its entries come first and a recipe adds to them.
 
 #### Debug information
 
