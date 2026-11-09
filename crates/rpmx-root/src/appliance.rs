@@ -237,6 +237,7 @@ pub fn ensure_cached(lock: &ApplianceLock, cache: &Path, offline: bool) -> Resul
             cache,
             work: work.path(),
             root: &root,
+            extra_rpms: &[],
         },
     )?;
     std::fs::write(&marker, &identity).map_err(|error| {
@@ -283,6 +284,7 @@ mod tests {
             gpgkey: None,
             repo_gpgcheck: false,
             exclude: Vec::new(),
+            priority: None,
             auth: None,
         }
     }

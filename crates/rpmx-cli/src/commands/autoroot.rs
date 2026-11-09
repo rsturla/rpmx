@@ -444,6 +444,7 @@ fn ensure_root(
                 cache: &cas,
                 work: work.path(),
                 root: &root_path,
+                extra_rpms: &[],
             },
         )?,
         Assembly::Extract => rpmx_core::root::assemble_sysroot(
@@ -452,6 +453,7 @@ fn ensure_root(
                 cache: &cas,
                 work: work.path(),
                 root: &root_path,
+                extra_rpms: &[],
             },
         )?,
     };
@@ -657,6 +659,7 @@ fn ensure_with(
                 cache: &cas,
                 work: work.path(),
                 root: &root_path,
+                extra_rpms: &[],
             },
         )?,
         Assembly::Extract => rpmx_core::root::assemble_sysroot(
@@ -665,6 +668,7 @@ fn ensure_with(
                 cache: &cas,
                 work: work.path(),
                 root: &root_path,
+                extra_rpms: &[],
             },
         )?,
     };
@@ -1014,6 +1018,7 @@ fn repository(source: &RootRepository) -> Repository {
         gpgkey: source.gpgkey.clone(),
         repo_gpgcheck: source.repo_gpgcheck,
         exclude: Vec::new(),
+        priority: None,
         auth: None,
     }
 }

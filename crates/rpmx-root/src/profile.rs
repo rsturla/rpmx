@@ -93,6 +93,11 @@ pub struct Repository {
     /// the stage output win over an input repository with the same NEVRA.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub exclude: Vec<String>,
+    /// Repository priority, lowest first. A repository without a priority
+    /// keeps dnf's default, so a local repository can sit behind the published
+    /// ones and still provide packages they do not carry.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub priority: Option<u32>,
     /// Credential references for an authenticated repository.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auth: Option<RepositoryAuth>,

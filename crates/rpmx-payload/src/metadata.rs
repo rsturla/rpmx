@@ -9,6 +9,7 @@ use rpmx_base::error::{codes, Error, Result};
 #[derive(Debug, Clone)]
 pub struct PackageMetadata {
     pub name: String,
+    pub arch: String,
     pub epoch: u32,
     pub version: String,
     pub release: String,
@@ -69,6 +70,7 @@ pub fn package_metadata(path: &Path) -> Result<PackageMetadata> {
             )
         })?
         .to_string();
+    let arch = metadata.get_arch().unwrap_or("noarch").to_string();
     let epoch = match metadata.get_epoch() {
         Ok(epoch) => epoch,
         // Epoch is optional. rpm omits the tag entirely for epoch 0, so a
@@ -124,6 +126,7 @@ pub fn package_metadata(path: &Path) -> Result<PackageMetadata> {
         .collect();
     Ok(PackageMetadata {
         name,
+        arch,
         epoch,
         version,
         release,

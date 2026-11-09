@@ -344,6 +344,9 @@ fn write_repositories(work: &Path, repositories: &[Repository]) -> Result<Reposi
             u8::from(repository.gpgcheck()),
             u8::from(repository.repo_gpgcheck),
         );
+        if let Some(priority) = repository.priority {
+            text.push_str(&format!("priority={priority}\n"));
+        }
         if let Some(key) = gpgkey {
             text.push_str(&format!("gpgkey={key}\n"));
         }
@@ -956,6 +959,7 @@ mod local_repository_tests {
             gpgkey: None,
             repo_gpgcheck: false,
             exclude: Vec::new(),
+            priority: None,
             auth: None,
         }
     }

@@ -41,21 +41,24 @@ pub struct PreparedTestRoot {
     pub lock: RootLock,
 }
 
-/// The package names of the RPMs under test, in selection order.
+/// The packages under test, in selection order, as exact `name-evr.arch` specs.
 ///
 /// They are installed from the local repository so the resolver can satisfy
 /// their requirements the way it would for a published package: by name, by
-/// soname, and by file. The packages themselves are removed from the resolved
-/// lock and installed from the build output instead.
-fn under_test_packages(rpms: &[PathBuf]) -> Result<Vec<String>> {
-    let mut names = Vec::new();
+/// soname, and by file. Asking for the exact build keeps the resolver on the
+/// package under test instead of a repository copy with a higher release, and
+/// the packages themselves are removed from the resolved lock afterwards
+/// because they still come from the build output.
+fn under_test_packages(rpms: &[PathBuf]) -> Result<Vec<(String, String)>> {
+    let mut packages: Vec<(String, String)> = Vec::new();
     for path in rpms {
         let metadata = package_metadata(path)?;
-        if !names.contains(&metadata.name) {
-            names.push(metadata.name);
+        let spec = format!("{}-{}.{}", metadata.name, metadata.evr(), metadata.arch);
+        if !packages.iter().any(|(_, known)| known == &spec) {
+            packages.push((metadata.name, spec));
         }
     }
-    Ok(names)
+    Ok(packages)
 }
 
 /// The repository that holds the packages under test, mounted for the resolver.
@@ -68,16 +71,21 @@ fn under_test_repository(repo: &Path) -> Repository {
         gpgkey: None,
         repo_gpgcheck: false,
         exclude: Vec::new(),
+        // Lowest priority, so a published copy of a package satisfies another
+        // package's requirement instead of the build under test. The exact
+        // `name-evr.arch` specs still select the build itself.
+        priority: Some(999),
         auth: None,
     }
 }
 
-/// Drop the packages under test from the resolved lock.
+/// Drop the packages that came from the under-test repository.
 ///
 /// The lock describes the disposable root: the packages that came from a
-/// repository. The packages under test are installed from the build output
-/// afterwards, so they neither belong in the lock nor in the repository list
-/// that a pinned lock replays.
+/// published repository. The packages under test are installed from the build
+/// output afterwards, so they neither belong in the lock nor in the repository
+/// list that a pinned lock replays. A published package of the same name stays,
+/// because another locked package may require its exact EVR.
 fn without_under_test(lock: &mut RootLock) {
     lock.repositories.retain(|repo| repo.id != UNDER_TEST);
     for packages in lock.packages.values_mut() {
@@ -133,9 +141,9 @@ pub fn prepare(options: TestRootOptions<'_>) -> Result<PreparedTestRoot> {
     // and a packager never has to spell out the libraries a package links.
     let mut repositories = lock.repositories.clone();
     if options.pinned.is_none() {
-        for name in under_test_packages(options.rpms)? {
-            if !install.iter().any(|package| package == &name) {
-                install.push(name);
+        for (_, spec) in under_test_packages(options.rpms)? {
+            if !install.iter().any(|package| package == &spec) {
+                install.push(spec);
             }
         }
         repositories.insert(0, under_test_repository(options.repo));
@@ -185,15 +193,6 @@ pub fn prepare(options: TestRootOptions<'_>) -> Result<PreparedTestRoot> {
             resolved
         }
     };
-    root::assemble(
-        &test_lock,
-        root::AssembleOptions {
-            cache: options.cache,
-            work: &assemble_work,
-            root: &root_path,
-        },
-    )?;
-
     if options.rpms.is_empty() {
         return Err(Error::new(
             codes::BUILD_007,
@@ -213,38 +212,18 @@ pub fn prepare(options: TestRootOptions<'_>) -> Result<PreparedTestRoot> {
             })
         })
         .collect::<Result<Vec<_>>>()?;
-    let install = |nodeps: bool| {
-        crate::root::container::run_offline_root(crate::root::container::OfflineRootCommand {
+    // The packages under test join the transaction that installs the lock, so
+    // a locked package can be satisfied by one of them and a replacement of a
+    // default implementation takes the same retry as an upgrade would.
+    root::assemble(
+        &test_lock,
+        root::AssembleOptions {
+            cache: options.cache,
+            work: &assemble_work,
             root: &root_path,
-            image,
-            target,
-            nodeps,
-            mode: crate::root::container::OfflineRootMode::Install { rpms: &rpms },
-        })
-    };
-    let mut output = install(false)?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-        if is_replacement_conflict(&stderr) {
-            rpmx_base::output::warning(
-                "test-root",
-                "the package under test conflicts with a package the test root \
-                 already has; replacing it for the test run",
-            );
-            output = install(true)?;
-        }
-    }
-    if !output.status.success() {
-        return Err(Error::new(
-            codes::BUILD_007,
-            format!(
-                "cannot install the built RPMs into the test root: {}; the \
-                 resolved root cannot hold these packages, so pass \
-                 --test-root-lock to reuse a root that resolves",
-                String::from_utf8_lossy(&output.stderr).trim()
-            ),
-        ));
-    }
+            extra_rpms: &rpms,
+        },
+    )?;
 
     if let Some(destination) = options.destination {
         // The root's own top directory is read-only once the filesystem
@@ -269,20 +248,6 @@ pub fn prepare(options: TestRootOptions<'_>) -> Result<PreparedTestRoot> {
 /// (`zlib` resolves to `zlib-ng-compat`), which the lock records under the
 /// provider's name. Only the fixed base environment is checked by name, so a
 /// pinned root stays usable without guessing provider names.
-/// Whether an install failure is a replacement conflict rather than a missing
-/// requirement.
-///
-/// A package under test may deliberately replace what the test root already
-/// has, for example a package that provides the same library as the
-/// distribution's default implementation. rpm reports that as a conflict, and
-/// installing with `--nodeps` resolves it. A genuine missing requirement must
-/// stay an error, so a failure that mentions one never takes the retry.
-fn is_replacement_conflict(stderr: &str) -> bool {
-    let conflict = stderr.contains("conflicts with");
-    let missing = stderr.contains("is needed by") || stderr.contains("Requires:");
-    conflict && !missing
-}
-
 fn check_lock(path: &Path, lock: &RootLock, _required: &[String], archs: &[String]) -> Result<()> {
     let arch = archs
         .first()
@@ -316,8 +281,6 @@ fn check_lock(path: &Path, lock: &RootLock, _required: &[String], archs: &[Strin
 
 #[cfg(test)]
 mod tests {
-    use super::is_replacement_conflict;
-
     #[test]
     fn the_packages_under_test_leave_the_lock() {
         use crate::profile::Repository;
@@ -353,6 +316,7 @@ mod tests {
                     gpgkey: None,
                     repo_gpgcheck: false,
                     exclude: Vec::new(),
+                    priority: None,
                     auth: None,
                 },
                 Repository {
@@ -363,6 +327,7 @@ mod tests {
                     gpgkey: None,
                     repo_gpgcheck: false,
                     exclude: Vec::new(),
+                    priority: None,
                     auth: None,
                 },
             ],
@@ -407,29 +372,5 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["libxml2"]
         );
-    }
-
-    #[test]
-    fn a_replacement_conflict_takes_the_retry_but_a_missing_requirement_does_not() {
-        // The zlib example: the test root's gcc pulls zlib-ng-compat, which
-        // the package under test replaces.
-        assert!(is_replacement_conflict(
-            "error: Failed dependencies:\n\
-             \tzlib(x86-64) conflicts with (installed) zlib-ng-compat-2.3.3-3.fc44.x86_64"
-        ));
-
-        assert!(!is_replacement_conflict(
-            "error: Failed dependencies:\n\
-             \tlibc.so.6()(64bit) is needed by zlib-1.3.1-1.fc44.x86_64"
-        ));
-
-        // Both in one report: the missing dependency is the real problem.
-        assert!(!is_replacement_conflict(
-            "error: Failed dependencies:\n\
-             \tzlib(x86-64) conflicts with (installed) zlib-ng-compat\n\
-             \tlibc.so.6()(64bit) is needed by zlib-1.3.1-1.fc44.x86_64"
-        ));
-
-        assert!(!is_replacement_conflict(""));
     }
 }

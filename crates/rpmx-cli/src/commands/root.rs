@@ -89,6 +89,7 @@ pub fn assemble(args: RootAssembleArgs) -> Result<(), Error> {
             cache: &cache,
             work: &work,
             root: &root,
+            extra_rpms: &[],
         },
     )
     .and_then(|root| {
