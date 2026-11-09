@@ -5,6 +5,12 @@ does not promise a stable schema or CLI yet.
 
 ## Unreleased
 
+- `generators.perl` accepts a mapping as well as a bool: `perl: { provides:
+  false }` or `perl: { requires: false }` keeps one side of the generated
+  `perl(...)` dependencies. A package that ships the interpreter needs its
+  module provides but not the requires its own files record, which name other
+  systems' helper modules and optional back ends that nothing provides.
+
 - **Breaking:** `@dev` no longer expands to `/usr/lib*/lib*.a`. Static archives
   are only selected by `@static`, so a development output cannot silently
   absorb a static-library output. Recipes that relied on `@dev` for static
