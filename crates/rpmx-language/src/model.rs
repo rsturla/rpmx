@@ -508,8 +508,8 @@ pub struct OutputGenerators {
     #[serde(default = "enabled")]
     pub python: bool,
     /// `perl(...)` provides and requires.
-    #[serde(default = "enabled")]
-    pub perl: bool,
+    #[serde(default)]
+    pub perl: PerlGenerators,
     /// `application(...)` and `mimehandler(...)` provides.
     #[serde(default = "enabled")]
     pub desktop: bool,
@@ -534,12 +534,66 @@ impl Default for OutputGenerators {
             pkgconfig: true,
             script: true,
             python: true,
-            perl: true,
+            perl: PerlGenerators::default(),
             desktop: true,
             metainfo: true,
             debuginfo: true,
             bundled: true,
             exclude: Vec::new(),
+        }
+    }
+}
+
+/// The Perl generator, on both sides or on one of them.
+///
+/// A package that ships the interpreter needs the `perl(Module)` provides to
+/// describe what it contains, but the requires its own files record are either
+/// satisfied by those provides or name modules no distribution carries: other
+/// systems' helpers (`Win32`, `VMS`, `Mac`), optional back ends, and imports
+/// that only the test suite makes. Publishing them makes the interpreter's own
+/// metadata unresolvable, so an output that ships Perl may keep the provides
+/// and drop the requires.
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[serde(untagged)]
+pub enum PerlGenerators {
+    /// `perl: false` turns both sides off.
+    Both(bool),
+    /// `perl: { provides: false }` turns one side off.
+    Sides(PerlSides),
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PerlSides {
+    #[serde(default = "enabled")]
+    pub provides: bool,
+    #[serde(default = "enabled")]
+    pub requires: bool,
+}
+
+impl Default for PerlGenerators {
+    fn default() -> Self {
+        Self::Both(true)
+    }
+}
+
+impl PerlGenerators {
+    /// Whether the scanner should inspect files at all.
+    pub fn enabled(self) -> bool {
+        self.provides() || self.requires()
+    }
+
+    pub fn provides(self) -> bool {
+        match self {
+            Self::Both(on) => on,
+            Self::Sides(sides) => sides.provides,
+        }
+    }
+
+    pub fn requires(self) -> bool {
+        match self {
+            Self::Both(on) => on,
+            Self::Sides(sides) => sides.requires,
         }
     }
 }
@@ -740,4 +794,51 @@ pub struct RecipeFragment {
     pub outputs: Option<Vec<Output>>,
     #[serde(default)]
     pub tests: Option<Vec<Test>>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn generators(yaml: &str) -> OutputGenerators {
+        serde_yaml_ng::from_str(yaml).expect("generators")
+    }
+
+    #[test]
+    fn the_perl_generator_is_on_for_both_sides_by_default() {
+        let generators = OutputGenerators::default();
+        assert!(generators.perl.enabled());
+        assert!(generators.perl.provides());
+        assert!(generators.perl.requires());
+    }
+
+    #[test]
+    fn a_bare_bool_turns_both_perl_sides_off() {
+        let off = generators("perl: false");
+        assert!(!off.perl.enabled());
+        assert!(!off.perl.provides());
+        assert!(!off.perl.requires());
+
+        let on = generators("perl: true");
+        assert!(on.perl.enabled());
+        assert!(on.perl.provides() && on.perl.requires());
+    }
+
+    #[test]
+    fn a_mapping_turns_one_perl_side_off() {
+        let no_requires = generators("perl:\n  requires: false\n");
+        assert!(no_requires.perl.enabled());
+        assert!(no_requires.perl.provides());
+        assert!(!no_requires.perl.requires());
+
+        let no_provides = generators("perl:\n  provides: false\n");
+        assert!(no_provides.perl.enabled());
+        assert!(!no_provides.perl.provides());
+        assert!(no_provides.perl.requires());
+    }
+
+    #[test]
+    fn a_mapping_rejects_an_unknown_perl_key() {
+        assert!(serde_yaml_ng::from_str::<OutputGenerators>("perl:\n  require: false\n").is_err());
+    }
 }

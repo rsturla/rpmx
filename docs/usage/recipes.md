@@ -264,6 +264,22 @@ The keys are `elf`, `pkgconfig`, `script`, `python`, `perl`, `desktop`,
 `metainfo`, `debuginfo` and `bundled`; all default to `true`. `elf` also
 controls the `.so` symlink requirement.
 
+`perl` also accepts a mapping, because the package that ships the interpreter
+needs one side and not the other: its `perl(Module)` provides describe what it
+contains, while the requires its own files record are either satisfied by those
+provides or name modules no distribution carries (other systems' helpers such
+as `Win32`, `VMS` and `Mac`, optional back ends, and imports only the test
+suite makes). Publishing those makes the interpreter's own metadata
+unresolvable, so a Perl package keeps the provides and drops the requires:
+
+```yaml
+outputs:
+  - name: perl-5.42
+    generators:
+      perl:
+        requires: false
+```
+
 #### 5.3.2 Bundled components
 
 `bundled(...)` provides describe code that is vendored into the package. They

@@ -60,8 +60,17 @@ impl Findings {
     }
 
     fn merge(&mut self, other: Findings) {
-        self.provides.extend(other.provides);
-        self.requires.extend(other.requires);
+        self.merge_sides(other, true, true);
+    }
+
+    /// Merge `other`, keeping only the side the caller asks for.
+    fn merge_sides(&mut self, other: Findings, provides: bool, requires: bool) {
+        if provides {
+            self.provides.extend(other.provides);
+        }
+        if requires {
+            self.requires.extend(other.requires);
+        }
         self.local_paths.extend(other.local_paths);
     }
 
@@ -170,7 +179,7 @@ pub fn generate(
                 if options.python {
                     python.inspect(file, target_arch);
                 }
-                if options.perl {
+                if options.perl.enabled() {
                     perl.inspect(file);
                 }
                 if options.desktop {
@@ -186,7 +195,11 @@ pub fn generate(
         }
     }
     findings.merge(python.finish());
-    findings.merge(perl.finish());
+    findings.merge_sides(
+        perl.finish(),
+        options.perl.provides(),
+        options.perl.requires(),
+    );
     findings.exclude(&options.exclude);
 
     findings.into_dependencies()
@@ -254,6 +267,25 @@ mod tests {
             sonames.get("/usr/lib64/libz.so.1"),
             Some(&"libz.so.1()(64bit)".to_string())
         );
+    }
+
+    fn perl_module() -> BinaryPackageFile {
+        test_file(
+            "/usr/share/perl5/5.44/Demo.pm",
+            b"package Demo;\nour $VERSION = '1.2';\nuse Win32;\n1;\n",
+        )
+    }
+
+    #[test]
+    fn the_perl_generator_can_keep_its_provides_and_drop_its_requires() {
+        let options: OutputGenerators =
+            serde_yaml_ng::from_str("perl:\n  requires: false\n").expect("generators");
+        let (provides, requires) = generate(&[perl_module()], "x86_64", &BTreeMap::new(), &options);
+        assert!(
+            provides.contains(&"perl(Demo) = 1.2".to_string()),
+            "{provides:?}"
+        );
+        assert!(requires.is_empty(), "{requires:?}");
     }
 
     #[test]
