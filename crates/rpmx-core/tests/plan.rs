@@ -419,6 +419,84 @@ outputs:
 }
 
 #[test]
+fn recipe_dependencies_reach_every_output() {
+    let yaml = r#"
+schema: 1
+package:
+  name: foo
+  version: "1.0"
+  release: 1
+  summary: x
+  license: MIT
+dependencies:
+  run: ["filesystem = ${package.version}"]
+outputs:
+  - name: foo
+    dependencies:
+      run: [bar, bar]
+    files:
+      include: ["/usr/bin/foo"]
+  - name: foo-libs
+    dependencies:
+      exclude: ["filesystem = 1.0"]
+    files:
+      include: ["/usr/lib64/**"]
+"#;
+    let plan = plan_str(yaml).expect("valid");
+    let outputs = &plan.cells[0].outputs;
+    assert_eq!(
+        outputs[0].dependencies.requires,
+        ["filesystem = 1.0", "bar"]
+    );
+    assert!(outputs[1].dependencies.requires.is_empty());
+}
+
+#[test]
+fn recipe_dependencies_are_templated_per_cell() {
+    let yaml = r#"
+schema: 1
+package:
+  name: foo
+  version: "1.0"
+  release: 1
+  summary: x
+  license: MIT
+matrix:
+  axes:
+    stream:
+      - value: "9"
+      - value: "10"
+dependencies:
+  run: ["base = ${matrix.stream}"]
+outputs:
+  - name: "foo${matrix.stream}"
+    files:
+      include: ["/usr/bin/foo"]
+"#;
+    let plan = plan_str(yaml).expect("valid");
+    let found: Vec<&str> = plan
+        .cells
+        .iter()
+        .map(|cell| cell.outputs[0].dependencies.requires[0].as_str())
+        .collect();
+    assert_eq!(found, ["base = 9", "base = 10"]);
+}
+
+#[test]
+fn recipe_dependencies_reject_other_relations() {
+    let yaml = minimal(
+        r#"dependencies:
+  recommends: [bar]
+outputs:
+  - name: foo
+    files:
+      include: ["/usr/bin/foo"]
+"#,
+    );
+    assert_eq!(error_code(&yaml), "RPMX-YAML-001");
+}
+
+#[test]
 fn weak_dependencies_are_planned_and_templated() {
     let yaml = r#"
 schema: 1

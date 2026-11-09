@@ -306,6 +306,15 @@ fn write_split(directory: &Path, recipe: &str, force: bool) -> Result<(), Error>
     if !parsed.outputs.is_empty() {
         write_section(directory, "outputs", &parsed.outputs, &mut include, force)?;
     }
+    if !parsed.dependencies.run.is_empty() {
+        write_section(
+            directory,
+            "dependencies",
+            &parsed.dependencies,
+            &mut include,
+            force,
+        )?;
+    }
     if !parsed.tests.is_empty() {
         write_section(directory, "tests", &parsed.tests, &mut include, force)?;
     }

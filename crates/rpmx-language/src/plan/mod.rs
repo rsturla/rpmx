@@ -600,6 +600,7 @@ fn plan_cell(
 
     let packages = expand_dependencies(&recipe.build.packages, &scope, "packages")?;
     let sysroot = expand_dependencies(&recipe.build.sysroot, &scope, "sysroot")?;
+    let inherited_run = expand_dependencies(&recipe.dependencies.run, &scope, "dependencies.run")?;
 
     let pipeline = expand_pipeline(&recipe.build.pipeline, &scope)?;
     let mut pipeline = plan_steps(
@@ -620,6 +621,7 @@ fn plan_cell(
         tests: output_tests,
     } = expand_outputs(
         &recipe.outputs,
+        &inherited_run,
         &scope,
         options.step_root,
         options.allow_builtin_override,

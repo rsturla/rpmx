@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use rpmx_base::error::{codes, Error, Result};
 use rpmx_base::hash::sha512_hex;
 
-use crate::model::{Build, Maintainer, Package, RecipeFragment};
+use crate::model::{Build, Maintainer, Package, RecipeDependencies, RecipeFragment};
 use crate::{parse_recipe, Recipe};
 
 const DEFAULTS_FILE: &str = "rpmx-defaults.yaml";
@@ -75,6 +75,7 @@ struct Merged {
     matrix: Option<crate::model::Matrix>,
     outputs: Option<Vec<crate::model::Output>>,
     tests: Option<Vec<crate::model::Test>>,
+    dependencies: Option<RecipeDependencies>,
 }
 
 /// Load a recipe, following `include:` entries relative to each file.
@@ -128,8 +129,14 @@ pub fn load_recipe_bundle(path: impl AsRef<Path>) -> Result<RecipeBundle> {
         .at(root.display().to_string())
     })?;
     let mut build = merged.build.unwrap_or_default();
-    let source_date_epoch_default =
-        apply_repo_defaults(&root_dir, &mut package, &mut build, &mut files)?;
+    let mut dependencies = merged.dependencies.unwrap_or_default();
+    let source_date_epoch_default = apply_repo_defaults(
+        &root_dir,
+        &mut package,
+        &mut build,
+        &mut dependencies,
+        &mut files,
+    )?;
 
     let recipe = Recipe {
         schema,
@@ -143,6 +150,7 @@ pub fn load_recipe_bundle(path: impl AsRef<Path>) -> Result<RecipeBundle> {
         matrix: merged.matrix,
         outputs: merged.outputs.unwrap_or_default(),
         tests: merged.tests.unwrap_or_default(),
+        dependencies,
     };
     // The merged document must satisfy the same strict schema as a single
     // file. This catches a fragment that is missing a required field.
@@ -179,6 +187,8 @@ struct DefaultsDocument {
     package: PackageDefaults,
     #[serde(default)]
     build: BuildDefaults,
+    #[serde(default)]
+    dependencies: RecipeDependencies,
 }
 
 #[derive(Debug, Clone, Default, serde::Deserialize)]
@@ -204,6 +214,7 @@ struct DefaultsFile {
     maintainers: Vec<Maintainer>,
     source_date_epoch: Option<u32>,
     build_environment: BTreeMap<String, String>,
+    dependencies: RecipeDependencies,
 }
 
 /// Apply `rpmx-defaults.yaml` when the recipe does not name maintainers.
@@ -215,6 +226,7 @@ fn apply_repo_defaults(
     root_dir: &Path,
     package: &mut Package,
     build: &mut Build,
+    dependencies: &mut RecipeDependencies,
     files: &mut Vec<BundleFile>,
 ) -> Result<Option<u32>> {
     let Some(defaults) = find_defaults(root_dir)? else {
@@ -232,7 +244,19 @@ fn apply_repo_defaults(
     for (key, value) in defaults.build_environment {
         build.environment.entry(key).or_insert(value);
     }
-    if use_maintainers || source_date_epoch.is_some() || use_build_environment {
+    // Repository-wide runtime dependencies come first: a recipe adds to the
+    // base a distribution gives every output, it does not replace it.
+    let use_dependencies = !defaults.dependencies.run.is_empty();
+    if use_dependencies {
+        let mut run = defaults.dependencies.run;
+        for entry in std::mem::take(&mut dependencies.run) {
+            if !run.contains(&entry) {
+                run.push(entry);
+            }
+        }
+        dependencies.run = run;
+    }
+    if use_maintainers || source_date_epoch.is_some() || use_build_environment || use_dependencies {
         files.push(BundleFile {
             path: defaults.path,
             name: DEFAULTS_FILE.to_string(),
@@ -296,7 +320,10 @@ fn read_defaults(path: &Path) -> Result<DefaultsFile> {
         )
         .at(path.display().to_string()));
     }
-    if document.package.maintainers.is_empty() && document.package.source_date_epoch.is_none() {
+    if document.package.maintainers.is_empty()
+        && document.package.source_date_epoch.is_none()
+        && document.dependencies.run.is_empty()
+    {
         return Err(Error::new(
             codes::INCLUDE_003,
             format!(
@@ -313,6 +340,7 @@ fn read_defaults(path: &Path) -> Result<DefaultsFile> {
         maintainers: document.package.maintainers,
         source_date_epoch: document.package.source_date_epoch,
         build_environment: document.build.environment,
+        dependencies: document.dependencies,
     })
 }
 
@@ -453,6 +481,7 @@ fn merge(
     set!(matrix, "matrix", fragment.matrix);
     set!(outputs, "outputs", fragment.outputs);
     set!(tests, "tests", fragment.tests);
+    set!(dependencies, "dependencies", fragment.dependencies);
     Ok(())
 }
 
@@ -653,6 +682,25 @@ mod tests {
                 .map(String::as_str),
             Some("recipe-cc")
         );
+    }
+
+    #[test]
+    fn repo_defaults_supply_runtime_dependencies_for_every_output() {
+        let (directory, recipe) = repo();
+        write(
+            &directory.path().join("rpmx-defaults.yaml"),
+            "schema: 1\npackage:\n  maintainers:\n    - name: Repo Maintainers\n      email: repo@example.org\ndependencies:\n  run: [filesystem]\n",
+        );
+        write(
+            &recipe,
+            &format!("{PACKAGE}dependencies:\n  run: [glibc]\n"),
+        );
+        let bundle = load_recipe_bundle(&recipe).expect("bundle");
+        assert_eq!(bundle.recipe.dependencies.run, ["filesystem", "glibc"]);
+        assert!(bundle
+            .files
+            .iter()
+            .any(|file| file.name == "rpmx-defaults.yaml"));
     }
 
     #[test]

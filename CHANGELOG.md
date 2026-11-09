@@ -5,6 +5,13 @@ does not promise a stable schema or CLI yet.
 
 ## Unreleased
 
+- Runtime dependencies can be declared once for every output: a recipe-level
+  `dependencies.run` is merged into each output's `dependencies.run`, and
+  `outputs[].dependencies.exclude` drops an entry by exact match. Only `run` is
+  inherited; the per-artifact relations stay per output. `rpmx-defaults.yaml`
+  accepts the same block, so a repository can make one package (such as
+  `filesystem`) a dependency of everything without repeating it 90 times.
+
 - **Breaking:** dependency declarations name their root directly. The
   `build.dependencies` object is gone: `build.dependencies.tools` is now
   `build.packages`, and `build.dependencies.host` plus
