@@ -1102,13 +1102,8 @@ fn package_order(
         .collect();
 
     for item in selected {
-        let deps = &item.recipe.build.dependencies;
-        for dependency in deps
-            .tools
-            .iter()
-            .chain(deps.host.iter())
-            .chain(deps.target.iter())
-        {
+        let deps = &item.recipe.build;
+        for dependency in deps.packages.iter().chain(deps.sysroot.iter()) {
             if dependency == &item.name || !by_name.contains_key(dependency.as_str()) {
                 continue;
             }
@@ -1419,7 +1414,6 @@ package:
   summary: {name}
   license: MIT
 build:
-  dependencies:
 {deps}
 outputs:
   - name: {name}
@@ -1459,8 +1453,8 @@ packages:
     fn setup(extra: &str) -> (tempfile::TempDir, std::path::PathBuf) {
         let directory = tempfile::tempdir().unwrap();
         let root = directory.path();
-        write_recipe(root, "gcc", "    tools: []");
-        write_recipe(root, "glibc", "    tools: [gcc]");
+        write_recipe(root, "gcc", "  packages: []");
+        write_recipe(root, "glibc", "  packages: [gcc]");
         write_profile(root, "stage0", true);
         write_profile(root, "stage1", false);
         let manifest_path = root.join("bootstrap.yaml");
@@ -1471,8 +1465,8 @@ packages:
     fn setup_for(text: &str) -> (tempfile::TempDir, std::path::PathBuf) {
         let directory = tempfile::tempdir().unwrap();
         let root = directory.path();
-        write_recipe(root, "gcc", "    tools: []");
-        write_recipe(root, "glibc", "    tools: [gcc]");
+        write_recipe(root, "gcc", "  packages: []");
+        write_recipe(root, "glibc", "  packages: [gcc]");
         write_profile(root, "stage0", true);
         write_profile(root, "stage1", false);
         let manifest_path = root.join("bootstrap.yaml");
@@ -1551,7 +1545,7 @@ packages:
     fn relative_parent_paths_resolve_from_a_nested_manifest() {
         let directory = tempfile::tempdir().unwrap();
         let root = directory.path();
-        write_recipe(root, "gcc", "    tools: []");
+        write_recipe(root, "gcc", "  packages: []");
         write_profile(root, "stage0", false);
         let manifest_dir = root.join(".bootstrap");
         std::fs::create_dir(&manifest_dir).unwrap();
@@ -1701,8 +1695,8 @@ stages:
     fn recipe_epochs_must_agree_without_an_explicit_value() {
         let directory = tempfile::tempdir().unwrap();
         let root = directory.path();
-        write_recipe(root, "gcc", "    tools: []");
-        write_recipe(root, "glibc", "    tools: []");
+        write_recipe(root, "gcc", "  packages: []");
+        write_recipe(root, "glibc", "  packages: []");
         write_profile(root, "stage0", false);
         let path = root.join("bootstrap.yaml");
         std::fs::write(

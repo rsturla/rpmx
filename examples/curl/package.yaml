@@ -45,17 +45,16 @@ build:
     - uses: strip
   environment:
     CURL_CA_BUNDLE: /etc/pki/tls/certs/ca-bundle.crt
-  dependencies:
-    tools:
-      - "cmake >= 3.20"
-      - ninja
-      - pkgconf
-      - gcc
-      - gcc-c++
-    host:
-      - "openssl-devel >= 3.0"
-      - zlib-devel
-      - libpsl-devel
+  packages:
+    - "cmake >= 3.20"
+    - ninja
+    - pkgconf
+    - gcc
+    - gcc-c++
+  sysroot:
+    - "openssl-devel >= 3.0"
+    - zlib-devel
+    - libpsl-devel
 
 sources:
   - name: curl
@@ -203,9 +202,7 @@ tests:
     argv: [ctest, --output-on-failure, --test-dir, build]
   - name: smoke
     stage: installed
-    environment:
-      contents:
-        packages: [ca-certificates]
+    packages: [ca-certificates]
     argv: [curl, --version]
   - name: abi
     stage: installed

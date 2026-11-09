@@ -2,7 +2,7 @@ name: npm/ci
 version: 1
 summary: Install npm dependencies from the lockfile, offline
 needs:
-  tools: [npm]
+  packages: [npm]
 run:
   cwd: "${source.dir}"
   runs: |

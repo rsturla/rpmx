@@ -269,18 +269,11 @@ pub fn execute(request: RebuildRequest<'_>) -> Result<RebuildOutput, Error> {
             // `zlib-ng-compat-devel`. Resolution already proved the declared
             // dependency exists; the link-closure check proves the library
             // does, which is the stronger claim.
-            available.extend(cell.host.iter().chain(cell.target.iter()).cloned());
+            available.extend(cell.sysroot.iter().cloned());
         } else if trusted {
-            available.extend(cell.host.iter().chain(cell.target.iter()).cloned());
+            available.extend(cell.sysroot.iter().cloned());
         }
-        check_build_tools(
-            &sandbox,
-            &build,
-            &cell.tools,
-            &cell.host,
-            &cell.target,
-            &available,
-        )?;
+        check_build_tools(&sandbox, &build, &cell.packages, &cell.sysroot, &available)?;
         rpmx_core::output::phase("build", format!("{arch} · {} steps", cell.pipeline.len()));
         let total_steps = cell.pipeline.len();
         for (index, step) in cell.pipeline.iter().enumerate() {

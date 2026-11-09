@@ -191,7 +191,7 @@ Manifest-level fields:
   two different seeds; the profile and its root lock remain the source of truth.
 
 Why stage-level `extra-tools` for #3 instead of a recipe-level
-`build.dependencies.bootstrap` list:
+`build.bootstrap` list:
 
 - It satisfies the acceptance criteria: the tool is in the stage root lock and
   build log, is absent from later stages, and cannot leak into runtime
@@ -201,7 +201,7 @@ Why stage-level `extra-tools` for #3 instead of a recipe-level
 - It avoids making planning, lock verification and SRPM rebuild aware of a
   second conditional dependency list.
 
-A recipe-level `build.dependencies.bootstrap` list remains a reasonable future
+A recipe-level `build.bootstrap` list remains a reasonable future
 extension if a distro needs per-recipe seed-only tools. The manifest stage can
 then select it with `seed: true`. Do not add both mechanisms in v1.
 
@@ -354,8 +354,8 @@ Files:
   - `BootstrapManifest`, `Stage`, parsing with `yaml::parse_strict`, validation.
   - Stage name/path validation, unique outputs, forward-reference checks.
   - Recipe discovery contract (scan `recipe-root` for `package.yaml`).
-  - Build-order computation from `build.dependencies.tools`/`host`/`target`/
-    `tests` names that match other stage packages, plus explicit `order` edges.
+  - Build-order computation from `build.packages`/`build.sysroot`/test package
+    names that match other stage packages, plus explicit `order` edges.
   - Cycle detection; a cycle is allowed only when every member is in
     `fixed-point`, otherwise `BOOTSTRAP_004` with the cycle names and a hint.
   - `packages: all` expansion and duplicate-name detection.
@@ -496,7 +496,7 @@ stage and recipe in the message, followed by the exact retry command.
 
 No recipe model, `PlannedCell`, `LockBuild` or runtime dependency change is
 needed for this version. A future recipe-level
-`build.dependencies.bootstrap` can feed the same stage requirement when a stage
+`build.bootstrap` can feed the same stage requirement when a stage
 is marked `seed: true`.
 
 ### 5.5 CLI

@@ -984,10 +984,9 @@ fn build_tools_are_expanded_and_carried_into_the_plan() {
     let yaml = minimal(
         r#"
 build:
-  dependencies:
-    tools:
-      - "${package.name}-tool"
-      - "make >= 4"
+  packages:
+    - "${package.name}-tool"
+    - "make >= 4"
 outputs:
   - name: foo
     files:
@@ -995,7 +994,7 @@ outputs:
 "#,
     );
     let plan = plan_str(&yaml).expect("plan");
-    assert_eq!(plan.cells[0].tools, ["foo-tool", "make >= 4"]);
+    assert_eq!(plan.cells[0].packages, ["foo-tool", "make >= 4"]);
 }
 
 #[test]

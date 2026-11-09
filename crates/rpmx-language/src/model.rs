@@ -172,8 +172,13 @@ pub struct Maintainer {
 pub struct Build {
     #[serde(default)]
     pub pipeline: Vec<Step>,
+    /// Packages installed into the build root.
     #[serde(default)]
-    pub dependencies: Dependencies,
+    pub packages: Vec<String>,
+    /// Packages installed into the target sysroot in a cross build. A native
+    /// build installs them into the build root.
+    #[serde(default)]
+    pub sysroot: Vec<String>,
     #[serde(default)]
     pub environment: BTreeMap<String, String>,
     /// Build root source. Either a named profile or an inline environment.
@@ -280,17 +285,6 @@ impl RepositoryAuth {
 #[serde(deny_unknown_fields)]
 pub struct RootBuilder {
     pub image: String,
-}
-
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct Dependencies {
-    #[serde(default)]
-    pub tools: Vec<String>,
-    #[serde(default)]
-    pub host: Vec<String>,
-    #[serde(default)]
-    pub target: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -730,34 +724,17 @@ impl OutputDependencies {
 pub struct Test {
     pub name: String,
     pub stage: String,
+    /// Packages installed only for this test's root.
     #[serde(default)]
-    pub argv: Option<Vec<String>>,
-    #[serde(default)]
-    pub pipeline: Option<Vec<Step>>,
-    /// Test-only root and environment, analogous to a Wolfi/melange test
-    /// environment. Installed-stage tests run in a disposable root; the
-    /// packages here are added to that root.
-    #[serde(default)]
-    pub environment: TestEnvironment,
-}
-
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct TestEnvironment {
-    #[serde(default)]
-    pub contents: TestContents,
+    pub packages: Vec<String>,
     /// Variables applied to every step of this test. A step's own `env`
     /// entries win.
     #[serde(default)]
     pub environment: BTreeMap<String, String>,
-}
-
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct TestContents {
-    /// Packages installed only for this test.
     #[serde(default)]
-    pub packages: Vec<String>,
+    pub argv: Option<Vec<String>>,
+    #[serde(default)]
+    pub pipeline: Option<Vec<Step>>,
 }
 
 /// One YAML file in a recipe bundle.

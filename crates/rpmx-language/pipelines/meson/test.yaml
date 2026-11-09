@@ -2,7 +2,7 @@ name: meson/test
 version: 1
 summary: Run Meson tests
 needs:
-  tools: [meson]
+  packages: [meson]
 run:
   cwd: "${source.dir}"
   runs: |

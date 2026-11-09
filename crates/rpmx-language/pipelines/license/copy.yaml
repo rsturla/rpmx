@@ -12,7 +12,7 @@ inputs:
     type: string
     default: "${prefix}/share/licenses"
 needs:
-  tools: [coreutils]
+  packages: [coreutils]
 run:
   cwd: "${source.dir}"
   runs: |

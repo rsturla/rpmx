@@ -5,6 +5,17 @@ does not promise a stable schema or CLI yet.
 
 ## Unreleased
 
+- **Breaking:** dependency declarations name their root directly. The
+  `build.dependencies` object is gone: `build.dependencies.tools` is now
+  `build.packages`, and `build.dependencies.host` plus
+  `build.dependencies.target` are one `build.sysroot` list. A local step's
+  `needs` uses the same pair, `needs.packages` and `needs.sysroot`. Tests drop
+  the `environment.contents` wrapper: `tests[].environment.contents.packages`
+  is `tests[].packages`, and `tests[].environment.environment` is
+  `tests[].environment`, so a build root and a test root finally read alike.
+  The `--json` plan reports `cells[].packages`/`cells[].sysroot`, and step
+  needs are reported as `needs.packages`/`needs.sysroot`.
+
 - `generators.perl` accepts a mapping as well as a bool: `perl: { provides:
   false }` or `perl: { requires: false }` keeps one side of the generated
   `perl(...)` dependencies. A package that ships the interpreter needs its
@@ -40,8 +51,8 @@ does not promise a stable schema or CLI yet.
   supports out-of-tree builds and derives `--host`/`--build` in a cross build.
   Build and check steps use the sandbox `$JOBS` instead of a hardcoded `-j1`.
 - **Breaking:** test-root packages live only on the test that needs them.
-  `build.dependencies.tests` is removed; move each entry to
-  `tests[].environment.contents.packages` (or `outputs[].tests[]` for an
+  `build.dependencies.tests` is removed; move each entry to the test's
+  `packages` list (or `outputs[].tests[]` for an
   output-level test). The installed test root already contains `bash`,
   `coreutils`, the test's own packages and the RPMs' external runtime
   requirements, so a recipe-wide list mostly restated that. `rpmx plan --json`

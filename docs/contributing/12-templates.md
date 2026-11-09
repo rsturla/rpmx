@@ -166,9 +166,8 @@ matrix:
 
 ```yaml
 build:
-  dependencies:
-    host:
-      - "${matrix.python.package}-devel"
+  sysroot:
+    - "${matrix.python.package}-devel"
 ```
 
 ## 8. Escaping

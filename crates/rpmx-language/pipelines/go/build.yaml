@@ -18,7 +18,7 @@ inputs:
     type: boolean
     default: true
 needs:
-  tools: [go]
+  packages: [go]
 run:
   cwd: "${source.dir}"
   runs: |

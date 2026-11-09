@@ -42,8 +42,7 @@ package:
   summary: glibc
   license: MIT
 build:
-  dependencies:
-    tools: [gcc]
+  packages: [gcc]
 outputs:
   - name: glibc
     metapackage: true

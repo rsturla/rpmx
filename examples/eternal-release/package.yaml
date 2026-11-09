@@ -36,8 +36,7 @@ context: files
 build:
   root:
     profile: ../fedora-44-build.profile.yaml
-  dependencies:
-    tools: [bash, coreutils]
+  packages: [bash, coreutils]
   pipeline:
     - runs: |
         install -d ${stage}/etc/yum.repos.d \

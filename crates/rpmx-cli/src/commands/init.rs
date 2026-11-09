@@ -61,8 +61,7 @@ package:
 build:
   root:
     profile: fedora-44
-  dependencies:
-    tools: [gcc, make, bash]
+  packages: [gcc, make, bash]
   pipeline:
     - uses: make
     - runs: |
@@ -134,8 +133,7 @@ package:
 build:
   root:
     profile: fedora-44
-  dependencies:
-    tools: [bash]
+  packages: [bash]
   pipeline:
     - runs: "true"
 
@@ -160,8 +158,7 @@ package:
 build:
   root:
     profile: fedora-44
-  dependencies:
-    tools: [python3, python3-pip, python3-setuptools, bash]
+  packages: [python3, python3-pip, python3-setuptools, bash]
   pipeline:
     - runs: |
         python3 -m pip install . --root "$STAGE" --prefix /usr --no-deps --no-build-isolation
@@ -283,7 +280,7 @@ fn write_split(directory: &Path, recipe: &str, force: bool) -> Result<(), Error>
         write_section(directory, "vars", &parsed.vars, &mut include, force)?;
     }
     if !parsed.build.pipeline.is_empty()
-        || !parsed.build.dependencies.tools.is_empty()
+        || !parsed.build.packages.is_empty()
         || parsed.build.root.is_some()
     {
         write_section(directory, "build", &parsed.build, &mut include, force)?;

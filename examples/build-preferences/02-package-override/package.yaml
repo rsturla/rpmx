@@ -19,9 +19,8 @@ build:
   pipeline:
     - uses: autotools
     - uses: strip
-  dependencies:
-    tools: [gcc, make, autoconf, automake, libtool]
-    host: []
+  packages: [gcc, make, autoconf, automake, libtool]
+  sysroot: []
 
 features:
   default: [ssl]

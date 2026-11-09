@@ -6,7 +6,7 @@ inputs:
     type: list<map>
     required: true
 needs:
-  tools: [go, omnibump]
+  packages: [go, omnibump]
 render: omnibump-deps
 run:
   cwd: "${source.dir}"

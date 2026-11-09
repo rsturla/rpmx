@@ -2,7 +2,7 @@ name: meson/compile
 version: 1
 summary: Compile a Meson project
 needs:
-  tools: [meson]
+  packages: [meson]
 run:
   cwd: "${source.dir}"
   runs: |

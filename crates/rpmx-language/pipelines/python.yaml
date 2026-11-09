@@ -9,7 +9,7 @@ inputs:
     type: string
     default: "${prefix}"
 needs:
-  tools: [python3-build, python3-setuptools, python3-wheel, python3-pip]
+  packages: [python3-build, python3-setuptools, python3-wheel, python3-pip]
 run:
   cwd: "${source.dir}"
   runs: |
