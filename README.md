@@ -1,172 +1,123 @@
 # rpmx
 
-`rpmx` builds ordinary RPM packages from a strict YAML recipe. It produces a
-native source RPM, runs builds in a locked root, and never invokes `rpmbuild`
-or a spec file.
+[![CI](https://github.com/rsturla/rpmx/actions/workflows/ci.yml/badge.svg)](https://github.com/rsturla/rpmx/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)](#license)
 
-It is aimed at a small, image-first distribution: packages are built once,
-signed, recorded in an SBOM, and composed into OCI images. It is an early
-prototype, not production software.
+Build RPM packages from a strict YAML recipe. No spec file, no `rpmbuild`.
 
-## What it does
+`rpmx` is the package builder behind
+[Eternal Linux](https://github.com/rsturla/eternal-os). A package is one
+schema-versioned `package.yaml`; every build produces a native source RPM, runs
+in a locked and offline build root, and embeds an SPDX SBOM. It is built for
+small, image-first distributions: packages are built once, signed, and composed
+into OCI images.
 
-- **Strict recipes.** One schema-versioned `package.yaml`, optionally split
-  into one file per section with `include:`. Unknown fields are errors. No
-  macros, no `%if`, no spec language.
-- **Native SRPMs.** Every build writes a real `.src.rpm` containing the recipe,
-  locks, sources, patches and step definitions. `rpmx rebuild` starts from that
-  SRPM, not from loose sources.
-- **Locked roots.** Package closure and the assembled root are pinned by
-  NEVRA and SHA-512 digest. Builds run offline from the content-addressed
-  cache.
-- **Real tests.** `rpmx build` runs the recipe's tests by default
-  (`--no-tests` opts out). Build-stage tests run in the build sandbox.
-  Installed-stage tests run in a fresh test root with the produced RPMs
-  installed and real dependency checking.
-- **SBOM and CPE.** Every package embeds an SPDX 2.3 document at
-  `/usr/share/sbom/<name>-<version>-<release>.spdx.json`. Build-level SPDX and
-  CPE references are written beside the RPMs.
-- **Optional signing.** Caller-supplied OpenPGP keys, applied after the build.
-  `rpmx` never stores or discovers keys.
-- **Repositories.** `rpmx repo` writes `repodata` and can sign `repomd.xml.asc`.
-- **Bootstrap ladders.** `rpmx bootstrap plan` validates an ordered, seed-based
-  toolchain rebuild and its stage dependency graph without resolving roots.
-  `rpmx bootstrap build` resolves one root/sysroot pair per stage, builds the
-  stage in order, indexes its repository with a deterministic timestamp, and
-  publishes the output atomically. `extra-tools`/`extra-sysroot` stay scoped to
-  the declaring stage. Fixed-point stages filter the input repositories and
-  rebuild only the listed packages until their bytes and root digests stop
-  changing. `rpmx bootstrap rebuild` replaces an embedded stage lock and emits a
-  new SRPM while leaving the input untouched.
-- **Explicit file metadata.** Empty directories, per-path owner/group/mode and
-  file capabilities are recipe data.
-- **Automatic dependencies.** ELF sonames and symbol versions, pkgconfig,
-  interpreter shebangs, Python ABI/distribution names, Perl modules,
-  desktop/AppStream metadata and debuginfo build-ids are derived from the
-  packaged files. Recipe-declared dependencies are merged, and a per-output
-  `generators:` block can disable a class or exclude one generated entry.
-- **Git sources.** Sources can be pinned to a full git commit and are archived
-  deterministically before entering the cache.
-- **Bundled components.** `bundled(...)` provides are discovered from Go,
-  Cargo, npm/Yarn/pnpm, Python, Ruby and PHP vendor metadata. C and C++ declare
-  them explicitly with `outputs[].bundled`, the `bundled/declare` step, or a
-  build-time declaration file. `rpmx explain components` shows the evidence and
-  final provides per output.
+> [!WARNING]
+> Early prototype, not production software. See
+> [current limitations](docs/usage/reference.md#current-limitations).
 
-## Status
+## Features
 
-Early prototype. The build, test, signing and repository paths are exercised
-end to end on x86_64. Foreign targets run through bubblewrap + qemu-user binfmt
-by default; `--runner qemu` selects the full-VM path instead. A profile with a
-`cross` block builds a target natively against a target sysroot, and a cross
-SRPM embeds that sysroot so `rpmx rebuild` needs no profile. The supported RPM
-feature set is intentionally small; see [Known limitations](#known-limitations).
+- **Strict recipes.** One `package.yaml`, optionally split into one file per
+  section with `include:`. Unknown fields are errors. No macros, no `%if`, no
+  spec language.
+- **SRPM-first.** Every build writes a real `.src.rpm` containing the recipe,
+  locks, sources, patches and steps; `rpmx rebuild` starts from it.
+- **Locked, offline builds.** The root closure is pinned by NEVRA and SHA-512
+  digest and builds run in a sandbox with no network.
+- **Tests by default.** Build- and installed-stage tests run on every build,
+  the latter in a fresh root with real dependency checking.
+- **Generated metadata.** Dependencies from ELF sonames, pkgconfig, shebangs,
+  Python, Perl and desktop/AppStream data; SPDX SBOMs; optional OpenPGP signing
+  and repository metadata.
 
-## Requirements
-
-- Linux
-- Rust 1.88 or newer
-- `bubblewrap` for host sandboxing, or `podman` for root resolution and
-  container-backed builds
-- `dnf5` in the builder image used for root resolution
-- `glibc` targets for now
-- `qemu-user-static` with an enabled `F`-flag binfmt handler for foreign
-  targets (build steps, root assembly and test-root installation)
-- `qemu-system-<arch>` on PATH (or `RPMX_QEMU_SYSTEM`) only for `--runner qemu`
-- `ssh`, `ssh-keygen`, `mke2fs`, `debugfs` and `tar` for the QEMU workspace transport
-
-You do **not** need `rpmbuild`, `rpm-sign`, or a spec file.
-
-## Build from source
+## Install
 
 ```console
-cargo build --release
-./target/release/rpmx --help
+cargo install --git https://github.com/rsturla/rpmx --locked rpmx
 ```
 
-The binary is `target/release/rpmx`.
+Linux, Rust 1.88 or newer, `bubblewrap`, `podman` and `dnf5` on the host.
+`rpmx doctor` checks the rest. You do not need `rpmbuild`, `rpm-sign`, or a
+spec file.
 
 ## Quick start
 
 ```console
-cargo build --release
-./target/release/rpmx init hello
+rpmx init hello
 cd hello
 
-./target/release/rpmx lint         # every rule, one pass
-./target/release/rpmx build        # resolve root, build, package, index
-./target/release/rpmx test         # build- and installed-stage tests
+rpmx lint     # every rule, one pass
+rpmx build    # resolve root, source, SRPM, build, test, package, index
+rpmx test     # build- and installed-stage tests
 ```
 
-`rpmx init` writes a recipe, a root profile, a README and a `.gitignore`. The
-recipe names its root (`build.root.profile`); rpmx resolves and assembles it on
-the first build, then reuses it from the cache.
-
-Output lands in `packages/<arch>/`:
-
-```text
-packages/x86_64/hello-0.1.0-1.fc44.x86_64.rpm
-packages/x86_64/src/hello-0.1.0-1.fc44.src.rpm
-packages/x86_64/hello-0.1.0-1.fc44.build.spdx.json
-packages/x86_64/repodata/repomd.xml
-```
-
-Pin what was resolved and make CI reject drift:
+The first build resolves the root over the network; later builds reuse the
+cache. Artifacts land in `packages/<arch>/` with repository metadata already
+written. Pin what was resolved and make CI reject drift:
 
 ```console
-./target/release/rpmx lock
-./target/release/rpmx build --locked
-```
-
-Rebuild from the SRPM without the recipe. The root lock is embedded, so the
-root is assembled from the cache automatically:
-
-```console
-./target/release/rpmx rebuild packages/x86_64/src/hello-0.1.0-1.fc44.src.rpm
+rpmx lock
+rpmx build --locked
 ```
 
 ## A recipe
 
+GNU Hello, end to end: fetch and verify a source archive, build it with the
+Autotools steps, copy the license, strip, and test the installed package.
+
 ```yaml
 schema: 1
+
 package:
   name: hello
-  version: "1.0"
+  version: "2.12.1"
   release: 1
-  summary: A tiny hello package
-  license: MIT
-  source-date-epoch: 1704067200
+  summary: The GNU hello program
+  license: GPL-3.0-or-later
+  upstream: https://www.gnu.org/software/hello/
   cpe:
-    vendor: example
+    vendor: gnu
     product: hello
 
+sources:
+  - name: hello-2.12.1.tar.gz
+    kind: archive
+    digest: "sha512:f871e5f8f64b0633ee45855c886ddf37565ae7a13d68a2d7d2df007e508355fcc85736b93c0274c4fed5e628a94d8a3f699925c7f44857dcd0aba78b747749e2"
+    locators:
+      - kind: https
+        url: https://ftp.gnu.org/gnu/hello/hello-2.12.1.tar.gz
+      - kind: https
+        url: https://mirrors.kernel.org/gnu/hello/hello-2.12.1.tar.gz
+    extract:
+      format: tar.gz
+      strip-components: 1
+
 build:
+  root:
+    profile: profiles/fedora-44.yaml
   dependencies:
-    tools: [gcc, make, sh]
-    tests: [gcc]
+    tools: [gcc, make, bash, coreutils, gawk]
   pipeline:
-    - runs: |
-        cd hello-1.0
-        make
-        make install DESTDIR=${stage}
+    - uses: autotools/configure
+    - uses: autotools/build
+    - uses: autotools/install
+    - uses: license/copy
+      with:
+        files: [COPYING]
+        outputs: [hello]
     - uses: strip
 
 outputs:
   - name: hello
     files:
-      include:
-        - /usr/bin/hello
-        - /usr/share/man/**
-    directories:
-      - path: /var/lib/hello
-        mode: "0750"
-        user: root
-        group: root
-    attributes:
-      - path: /usr/bin/hello
-        mode: "0755"
-        user: root
-        group: root
+      license:
+        - /usr/share/licenses/hello/COPYING
+      attributes:
+        - path: /usr/bin/hello
+          mode: "0755"
+          user: root
+          group: root
 
 tests:
   - name: installed
@@ -174,270 +125,25 @@ tests:
     argv: ["hello", "--version"]
 ```
 
-See [`examples/`](examples/) for tested recipes, including a shared library,
-Autotools packages, Lua, jq, a noarch Python wheel, and a systemd service.
-
-## Commands
-
-| Command | Purpose |
-|---|---|
-| `rpmx init [DIR]` | Create a package that builds on the first try. |
-| `rpmx bump VERSION` | Update the version, source URLs and digests. |
-| `rpmx lint [FILE]` | Validate a recipe, report every rule, and expand its matrix. |
-| `rpmx lock [FILE]` | Write `package.lock.json`; `--check` verifies it. |
-| `rpmx plan [FILE]` | Show cells, outputs and expanded steps. |
-| `rpmx build [FILE]` | Resolve the root, build, package and index. |
-| `rpmx test [FILE]` | Run tests; `--test` selects and `--install-dir DIR` tests existing RPMs. |
-| `rpmx rebuild SRPM` | Rebuild binaries from an SRPM, assembling its root. |
-| `rpmx explain TOPIC` | Explain policy, root, steps, matrix, requires, files or components. |
-| `rpmx shell` | Enter the recipe's build sandbox with the build mount layout. |
-| `rpmx steps list\|show` | Browse the built-in step library. |
-| `rpmx doctor` | Check host tools, runners, cache and cached QEMU appliances. |
-| `rpmx fetch [FILE]` | Populate the content-addressed cache. |
-| `rpmx source [FILE]` | Assemble the deterministic source snapshot. |
-| `rpmx srpm [FILE]` | Write a native SRPM, assembling sources when `--sources` is omitted. |
-| `rpmx root resolve\|assemble\|digest` | Explicit root plumbing for debugging. |
-| `rpmx keygen` / `rpmx sign` | Generate a key; sign existing RPMs. |
-| `rpmx repo --rpms DIR --output DIR` | Write and optionally sign repository metadata. |
-| `rpmx cache gc --lock L --recipe R` | Remove unreferenced cache blobs. |
-
-Recipe commands default `FILE` to `./package.yaml`. `build`, `test` and
-`rebuild` default their output to `./packages/<arch>/`, default `--jobs` to the
-host CPU count (exported to build steps as `JOBS`), and write repository
-metadata unless `--no-index` is set. Progress is leveled `INFO`/`WARN` output on
-stderr, including guest output; stdout carries only artifact paths or the
-`--json` document. `--keep-workdir` preserves a failed workspace and prints a
-labelled path per directory; `--debug` echoes the commands a step runs;
-`--verbose` lists resolved detail and step durations; `--color=auto|always|never`
-controls ANSI color.
-
-## Local repositories
-
-A profile repository may point at a directory on the host:
-
-```yaml
-repositories:
-  - id: local
-    baseurl: file:///srv/rpmx/packages
-```
-
-rpmx mounts that directory read-only in the resolver container, so a package
-built earlier can satisfy another package's build dependency:
-
-```console
-rpmx repo --rpms out/ --output /srv/rpmx/packages
-rpmx root resolve local.profile.yaml
-```
-
-The same applies to a local `gpgkey`; it is copied into the resolver work
-directory and referenced by `file://`.
-
-## Authenticated repositories
-
-A profile can authenticate to an RPM repository with a TLS client certificate
-(RHEL CDN), basic auth (Satellite or a private mirror), or a proxy. Secret
-values are never written into the recipe, lock or SRPM. The profile names an
-`env:NAME` reference or an absolute file path; rpmx resolves it at resolve time.
-
-```yaml
-repositories:
-  - id: rhel-baseos
-    baseurl: https://cdn.redhat.com/content/dist/rhel9/$releasever/$basearch/baseos/os
-    gpgkey: file:///etc/pki/rpm-gpg/RPM-GPG-KEY-redhat-release
-    repo-gpgcheck: true
-    auth:
-      ca: /etc/pki/entitlement/...-ca.pem
-      cert: env:RHEL_CLIENT_CERT
-      key: env:RHEL_CLIENT_KEY
-```
-
-Basic auth uses `auth.username` and `auth.password`. The password must be an
-`env:NAME` reference or a file path, so a literal secret is a profile error.
-Proxy credentials use `auth.proxy`, `auth.proxy-username` and
-`auth.proxy-password`.
-
-Credential files are copied into a private temporary directory, mounted
-read-only into the resolver container, and removed when resolution finishes.
-They are never mounted into the build sandbox, which has no network. Repository
-URLs must not embed a user name or password; use the `auth` block instead.
-
-Credentials are honoured only in a profile the user controls: one passed with
-`--profile` or found under `$XDG_CONFIG_HOME/rpmx/profiles`. A profile selected
-by a recipe cannot carry `auth`, so an untrusted recipe cannot redirect the
-user's credentials to its own repository.
-
-`root assemble` and `rebuild` use payloads from the content-addressed cache, so
-they do not need the credentials. A host without entitlement can build from a
-cache populated by an entitled host.
-
-## Policies and artifacts
-
-The profile carries artifact policy:
-
-```yaml
-debuginfo: false
-sbom: true
-```
-
-- `debuginfo: true` injects `-g`, extracts debug sections and emits a
-  `<name>-debuginfo` package.
-- `sbom: true` embeds SPDX in each RPM and writes a build-level SPDX document.
-- Signing is explicit:
-
-```console
-./target/release/rpmx keygen --output key.asc
-./target/release/rpmx build package.yaml --root-lock root.assembled.yaml \
-  --root ./root --signing-key key.asc --output ./out
-./target/release/rpmx repo --rpms ./out/x86_64 --output ./repo --signing-key key.asc
-```
-
-`rpmx` does not sign automatically and does not hold keys.
-
-## Sources and patches
-
-Sources are content-addressed and support `https`, `file`, `go-module` and
-`git` locators. Git sources require a full commit:
-
-```yaml
-sources:
-  - name: mytool
-    kind: git
-    digest: "sha512:..."
-    locators:
-      - kind: git
-        url: https://github.com/example/mytool.git
-        commit: 0123456789abcdef0123456789abcdef01234567
-```
-
-Patches are a top-level list and are applied before source assembly.
-
-## Runners and architectures
-
-Every command distinguishes the **host architecture** (where `rpmx` runs) from
-the **target architecture** (the packages it produces). `--arch` defaults to
-the native architecture and drives templates, SRPM metadata, outputs and the
-repository. On `rpmx build` it is repeatable or comma-separated:
-`--arch x86_64,aarch64`; `--arch all` expands to the profile's allowed arches
-(capped to x86_64/aarch64 for `--runner qemu`). `--arch-jobs N|all` controls
-how many architecture builds run at once. Each architecture writes to
-`<output>/<arch>/`, default `packages/<arch>/`.
-
-The runner is session-based. A runner creates an execution environment once;
-the session runs every step and is destroyed at the end:
-
-```rust
-pub trait Runner {
-    fn name(&self) -> &'static str;
-    fn supports(&self, host: Arch, target: Arch) -> bool;
-    fn start(&self, config: &RunnerConfig<'_>) -> Result<Box<dyn Session>>;
-}
-
-pub trait Session {
-    fn run(&mut self, request: &RunnerRequest<'_>) -> Result<()>;
-    /// Copy host-visible outputs back from the session. Native bind-mounted
-    /// sessions do nothing; the VM tars the workspace and stage back.
-    fn sync_out(&mut self) -> Result<()>;
-    fn stop(&mut self) -> Result<()>;
-}
-```
-
-Three backends are implemented:
-
-- **bubblewrap** — native `host == target` runs directly. A foreign target
-  runs the assembled target root through the host's qemu-user binfmt handler.
-  The sandbox is still bubblewrap: namespaces, a read-only guest root and no
-  network.
-- **podman** — native `host == target`, a long-lived container with
-  `--network=none`, a read-only root, dropped capabilities and no new
-  privileges.
-- **qemu-system** — a full VM, selected explicitly with `--runner qemu`. It
-  boots a separate runner-owned appliance (kernel, initramfs, systemd, SSH and
-  tar), attaches a disposable copy of the build root as a second disk, and runs
-  steps on a chrooted build channel. A separate control channel mounts the disk
-  and moves the workspace and stage. There is no 9p or virtiofs share. The
-  guest has one host-only NIC (`restrict=on`) whose only purpose is the two SSH
-  port forwards; it cannot reach the host network or the internet.
-
-`auto` uses bubblewrap for both native and foreign targets; foreign execution
-goes through binfmt. It never starts a VM. A missing or non-`F` binfmt handler
-fails before any step with `RPMX-RUNNER-002`.
-
-The QEMU appliance is a runner asset, resolved from the same profile
-repositories, releasever and builder image with a package list owned by rpmx.
-It is cached separately from the build root. `rpmx runner resolve|assemble|inspect`
-handles it independently; pass `--runner-asset-root DIR` to `build`, `source`,
-`test` or `rebuild` to use a pre-assembled one. Local x86_64 hosts can build
-aarch64 with `qemu-system-aarch64` and TCG; native aarch64 CI uses KVM when
-available. `RPMX_QEMU_SYSTEM` overrides the qemu-system binary path.
-
-Root assembly and test-root installation use podman's `--arch` and the host
-binfmt handler. Build steps use binfmt when the execution architecture is foreign and
-bubblewrap or qemu is selected; they do not use podman. A cross build executes
-natively, so it never touches binfmt.
-
-The sandbox passes `RPMX_HOST_ARCH`, `RPMX_EXEC_ARCH`, `RPMX_TARGET_ARCH`,
-`RPMX_CROSS` and `RPMX_EMULATED` to steps. A runner that cannot execute the
-target fails with `RPMX-RUNNER-002` before any step runs.
-
-A profile with a `cross` block builds the target with a host-native toolchain
-against a target sysroot: nothing is emulated, and the sysroot is unpacked from
-the locked packages rather than installed by a target-arch dnf. See
-[`docs/usage/reference.md`](docs/usage/reference.md) for the exported
-toolchain variables.
-
-## Sandbox
-
-Build steps run with no network, a cleared environment, a read-only root, and
-writable `/tmp/build` and `/tmp/stage`. Steps have a wall-clock timeout.
-Source assembly uses a separate locked root. `--unsafe-host-root` is the
-explicit escape hatch.
-
-## Known limitations
-
-- Rich dependencies are not implemented; weak dependencies
-  (`recommends`, `suggests`, `supplements`, `enhances`) are.
-- Dependency generators cover ELF, pkgconfig, shebangs, Python, Perl,
-  desktop/AppStream and debuginfo. Bundled components cover Go, Cargo,
-  npm/Yarn/pnpm, Python, Ruby, PHP and explicit C/C++. Fontconfig, OCaml,
-  sysusers/usergroup and rpm macro provides are not generated; Python emits versioned
-  `pythonX.Ydist(...)` names only; a distro that wants a major-only alias or
-  extras subpackages declares them on its runtime package. A
-  `#!/usr/bin/env name` shebang requires `/usr/bin/env`, not `name`, and
-  scriptlet dependencies are not generated.
-- SELinux labels, `%ghost`, `%lang`, multilib and arbitrary xattrs are not
-  implemented. File capabilities are.
-- `-debugsource`, build-id debug links and per-subpackage debuginfo are not
-  implemented.
-- A cross build is driven by a profile with a `cross` block; it uses a
-  host-native toolchain and a target sysroot, and needs no binfmt handler. Its
-  SRPM embeds the sysroot lock and toolchain, so a rebuild needs no profile.
-  Emulated foreign builds still use bubblewrap + host binfmt; `--runner qemu`
-  is the explicit full-VM path and requires `qemu-system-<arch>` plus an
-  assembled transport appliance. The build root itself is not bootable and
-  does not need kernel or SSH packages.
-- Multi-arch `build` rejects `--locked`, `--stage`, `--root`, `--root-lock`,
-  `--test-root-lock`, `--junit` and `--sbom` until per-arch lock/evidence
-  aggregation lands. `--run-tests` and `--cell` work per architecture.
-- Repository snapshots, module streams and seccomp/cgroup enforcement are not
-  implemented.
-- CPE is emitted in SBOMs, not in the RPM header.
-- The language pipelines are partial: Cargo, npm, Go and Python have
-  build/vendor steps, but not every ecosystem has a complete source path.
+Every field is documented in [`docs/usage/recipes.md`](docs/usage/recipes.md).
+[`examples/`](examples/) has tested recipes for libraries, CMake, Go, Python,
+systemd and more.
 
 ## Documentation
 
-Usage:
+| Guide | Contents |
+|---|---|
+| [Getting started](docs/usage/getting-started.md) | Requirements, first package, command map |
+| [Recipes](docs/usage/recipes.md) | The complete `package.yaml` reference |
+| [Profiles and roots](docs/usage/profiles-and-roots.md) | Repositories, authentication, resolution |
+| [Building](docs/usage/building.md) | Artifacts, locks, signing, repositories, SRPMs |
+| [Testing](docs/usage/testing.md) | Build and installed stages, selection, JUnit |
+| [Cross-compilation](docs/usage/cross-compilation.md) | Native toolchain, target sysroot |
+| [Bootstrap](docs/usage/bootstrap.md) | Seed-based toolchain ladders |
+| [Debugging](docs/usage/debugging.md) · [Troubleshooting](docs/usage/troubleshooting.md) · [Reference](docs/usage/reference.md) | `plan`, `explain`, `doctor`, errors, limits |
 
-- [`docs/usage/`](docs/usage/) — start here: getting started, recipe reference,
-  profiles and roots, building, testing, debugging and troubleshooting.
-- [`examples/README.md`](examples/README.md) — the tested example corpus.
-
-Contributing and design:
-
-- [`CONTRIBUTING.md`](CONTRIBUTING.md) — build/test commands and design rules.
-- [`RELEASING.md`](RELEASING.md) — the release and packaging checklist.
-- [`docs/contributing/`](docs/contributing/) — the design study, format
-  choices, build model, sandbox contract and the UX audit against Melange.
+Design notes and contribution rules live in
+[`docs/contributing/`](docs/contributing/) and [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ## Security
 
@@ -447,9 +153,7 @@ sandbox, parsing, signature, digest or key-handling issues privately; see
 
 ## License
 
-Dual-licensed under Apache-2.0 or MIT. See [`LICENSE-APACHE`](LICENSE-APACHE)
-and [`LICENSE-MIT`](LICENSE-MIT). Contributions are accepted under the same
-terms.
-
-The vendored `rpm-rs` crate and the Rust dependency license summary are in
+Dual-licensed under [Apache-2.0](LICENSE-APACHE) or [MIT](LICENSE-MIT).
+Contributions are accepted under the same terms. The vendored `rpm-rs` crate
+and the Rust dependency license summary are in
 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
