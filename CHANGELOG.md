@@ -5,6 +5,13 @@ does not promise a stable schema or CLI yet.
 
 ## Unreleased
 
+- Installed tests resolve their own runtime closure. The RPMs under test are
+  published to a local repository for the resolver, so a test root satisfies
+  their requirements, including shared-library and file requirements, in one
+  dnf transaction. A recipe no longer lists the libraries a package links in a
+  test's `packages`, and an unresolvable requirement fails at resolution time
+  instead of during the install.
+
 - Runtime dependencies can be declared once for every output: a recipe-level
   `dependencies.run` is merged into each output's `dependencies.run`, and
   `outputs[].dependencies.exclude` drops an entry by exact match. Only `run` is

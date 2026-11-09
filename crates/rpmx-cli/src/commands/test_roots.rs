@@ -67,6 +67,48 @@ pub(crate) fn read_rpms(paths: &[PathBuf]) -> Result<Vec<TestRpm>, Error> {
     paths.iter().map(|path| TestRpm::read(path)).collect()
 }
 
+/// Collect the packages under test into a local repository.
+///
+/// The resolver installs them like published packages, so their requirements
+/// resolve by name, soname and file without the recipe naming any of them. The
+/// directory holds exactly the RPMs under test, which keeps a requirement on a
+/// sibling output from resolving to an unpublished package.
+pub(crate) fn under_test_repo(path: &Path, rpms: &[PathBuf]) -> Result<PathBuf, Error> {
+    if path.exists() {
+        std::fs::remove_dir_all(path).map_err(|error| {
+            Error::new(
+                codes::TEST_004,
+                format!("cannot clear {}: {error}", path.display()),
+            )
+        })?;
+    }
+    std::fs::create_dir_all(path).map_err(|error| {
+        Error::new(
+            codes::TEST_004,
+            format!("cannot create {}: {error}", path.display()),
+        )
+    })?;
+    for rpm in rpms {
+        let name = rpm.file_name().ok_or_else(|| {
+            Error::new(
+                codes::TEST_004,
+                format!("{} is not a file name", rpm.display()),
+            )
+        })?;
+        let target = path.join(name);
+        if std::fs::hard_link(rpm, &target).is_err() {
+            std::fs::copy(rpm, &target).map_err(|error| {
+                Error::new(
+                    codes::TEST_004,
+                    format!("cannot copy {}: {error}", rpm.display()),
+                )
+            })?;
+        }
+    }
+    crate::commands::repo::index(path, None, 0)?;
+    Ok(path.to_path_buf())
+}
+
 pub(crate) fn packages_for(test: &PlannedTest) -> Vec<String> {
     let mut packages = test.packages.clone();
     packages.sort();

@@ -12,7 +12,9 @@ use rpmx_core::test_runner::{run_planned_tests, TestSandboxConfig};
 use rpmx_core::Error;
 
 use crate::commands::report::{self, TestOutcome};
-use crate::commands::test_roots::{filter_tests, grouped, key_for, read_rpms, rpms_for_output};
+use crate::commands::test_roots::{
+    filter_tests, grouped, key_for, read_rpms, rpms_for_output, under_test_repo,
+};
 
 pub(super) struct TestRunOptions<'a> {
     pub(super) sandbox: &'a Sandbox<'a>,
@@ -85,6 +87,7 @@ pub(super) fn run(options: TestRunOptions<'_>) -> Result<Vec<PathBuf>, Error> {
         for (index, group) in groups.iter().enumerate() {
             let work = options.work.join(format!("test-root-{index}"));
             let group_rpms = rpms_for_output(group.output.as_deref(), &test_rpms)?;
+            let repo = under_test_repo(&work.join("test-rpms"), &group_rpms)?;
             let prepared = prepare_test_root(TestRootOptions {
                 lock,
                 destination: if groups.len() == 1 {
@@ -99,6 +102,7 @@ pub(super) fn run(options: TestRunOptions<'_>) -> Result<Vec<PathBuf>, Error> {
                 },
                 tools: &group.packages,
                 rpms: &group_rpms,
+                repo: &repo,
                 image: options.builder_image,
                 cache: &cache,
                 work: &work,
