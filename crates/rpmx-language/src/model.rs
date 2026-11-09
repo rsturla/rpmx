@@ -54,6 +54,9 @@ pub struct Recipe {
     pub outputs: Vec<Output>,
     #[serde(default)]
     pub tests: Vec<Test>,
+    /// Runtime relations every output inherits.
+    #[serde(default)]
+    pub dependencies: RecipeDependencies,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -683,6 +686,20 @@ pub struct DependencySet {
     pub conflicts: Vec<String>,
 }
 
+/// Runtime relations a recipe gives to every output.
+///
+/// Only `run` is inherited: a `Requires` that every subpackage needs is a
+/// property of the distribution, while `provides`, `obsoletes` and
+/// `conflicts` are per-artifact claims that inheritance would only obscure.
+/// An output drops an inherited entry with `dependencies.exclude`.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RecipeDependencies {
+    /// Added to every output's `dependencies.run`.
+    #[serde(default)]
+    pub run: Vec<String>,
+}
+
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct OutputDependencies {
@@ -702,6 +719,9 @@ pub struct OutputDependencies {
     pub obsoletes: Vec<String>,
     #[serde(default)]
     pub conflicts: Vec<String>,
+    /// Runtime dependencies to drop by exact match, inherited ones included.
+    #[serde(default)]
+    pub exclude: Vec<String>,
 }
 
 impl OutputDependencies {
@@ -769,6 +789,8 @@ pub struct RecipeFragment {
     pub outputs: Option<Vec<Output>>,
     #[serde(default)]
     pub tests: Option<Vec<Test>>,
+    #[serde(default)]
+    pub dependencies: Option<RecipeDependencies>,
 }
 
 #[cfg(test)]

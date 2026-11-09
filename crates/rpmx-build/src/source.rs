@@ -812,6 +812,7 @@ mod tests {
             matrix: None,
             outputs: Vec::new(),
             tests: Vec::new(),
+            dependencies: Default::default(),
         }
     }
 
