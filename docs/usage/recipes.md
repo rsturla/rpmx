@@ -178,8 +178,7 @@ available in `files.include` and `files.exclude`:
 - `build.dependencies.tools`
 - `build.dependencies.host`
 - `build.dependencies.target`
-- `build.dependencies.tests`
-- every `needs.tools` from every resolved step (source-assembly, build, tests)
+- every `needs.tools` from every resolved step (source-assembly, build)
 
 `tools` entries are **package names**, not command names. Use `bash` rather
 than `sh`, `gcc` rather than `cc`.
@@ -210,7 +209,6 @@ build:
     tools: [gcc, make, bash, pkgconf-pkg-config]
     host: [zlib-devel, openssl-devel]
     target: []
-    tests: [python3-pytest, jq]
   environment:
     CFLAGS: "-O2 -g"
 ```
@@ -218,9 +216,10 @@ build:
 For a native build every scope is installed into the same root. In a cross
 build (a profile with a `cross` block) `tools` is installed in the host build
 root and `host`/`target` in the target sysroot; see
-[`cross-compilation.md`](cross-compilation.md). `tests` is used when building
-the installed-stage test root. `environment` is merged into every build step's
-environment; a step's own `env` wins.
+[`cross-compilation.md`](cross-compilation.md). Test-root packages are not
+here; they belong to the test that needs them, in
+`tests[].environment.contents.packages`. `environment` is merged into every
+build step's environment; a step's own `env` wins.
 
 #### 5.3.1 Automatic dependencies
 
@@ -680,8 +679,8 @@ outputs:
   and the external runtime requirements of the selected RPMs. Those
   requirements are resolved from the same repositories as the test root;
   capabilities provided by another selected output are installed from the
-  build output instead. `build.dependencies.tests` remains the place for
-  tools or data the test needs that are not runtime requirements.
+  build output instead. Tools or data that are not runtime requirements of the
+  package go in that test's `environment.contents.packages`.
 - `stage: package` is not implemented yet.
 - Tests run with `rpmx build`, `rpmx rebuild` and `rpmx test`; `--no-tests`
   skips them on a build.
@@ -741,10 +740,8 @@ spec can add `-pie` only to executables.
 - `test.environment.contents.packages` lists packages installed only for that
   test's root. This mirrors Wolfi/melange test environments. Tests with the
   same output and package set share a root; a different set gets a separate
-  root. It is valid only for `stage: installed`; build-stage tests use
-  `build.dependencies.tools`.
-- `build.dependencies.tests` remains the package-wide list of test-root
-  packages, applied to every installed test.
+  root. It is valid only for `stage: installed`; build-stage tests run in the
+  build sandbox and use `build.dependencies.tools`.
 - `test.environment.environment` sets variables for every step of that test. A
   step's own `env` entries win.
 - Real dependency checking is performed; the only retry is for a conflict with

@@ -1,4 +1,7 @@
 tests:
   - name: installed
     stage: installed
+    environment:
+      contents:
+        packages: [oniguruma]
     argv: ["sh", "-c", "echo '{\"a\":1}' | jq -r .a | grep -qx 1"]

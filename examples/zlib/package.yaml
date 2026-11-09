@@ -18,7 +18,6 @@ build:
     profile: ../fedora-44-build.profile.yaml
   dependencies:
     tools: [gcc, make, bash]
-    tests: [gcc]
   pipeline:
     - runs: |
         ./configure --prefix=/usr --libdir=/usr/lib64
@@ -44,4 +43,7 @@ outputs:
 tests:
   - name: installed
     stage: installed
+    environment:
+      contents:
+        packages: [gcc]
     argv: ["sh", "-c", "printf '#include <zlib.h>\\nint main(void){return zlibVersion()==0;}\\n' > /tmp/z.c && cc /tmp/z.c -o /tmp/z -lz && /tmp/z"]

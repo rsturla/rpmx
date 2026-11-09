@@ -36,8 +36,6 @@ build:
       - ninja
       - python3
     host: []
-    tests:
-      - pkg-config
 
 sources:
   - name: libfoo
@@ -90,7 +88,7 @@ tests:
 
   - name: installed
     stage: installed
+    environment:
+      contents:
+        packages: [pkg-config]
     argv: [pkg-config, --modversion, foo]
-    dependencies:
-      run:
-        - pkg-config

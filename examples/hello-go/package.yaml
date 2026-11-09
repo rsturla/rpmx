@@ -40,7 +40,6 @@ build:
   dependencies:
     tools:
       - "go >= 1.24"
-    tests: []
 
 sources:
   - name: hello

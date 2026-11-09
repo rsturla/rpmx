@@ -62,7 +62,6 @@ pub struct PlannedCell {
     pub tools: Vec<String>,
     pub host: Vec<String>,
     pub target: Vec<String>,
-    pub test_tools: Vec<String>,
     pub pipeline: Vec<PlannedStep>,
     pub outputs: Vec<PlannedOutput>,
     pub tests: Vec<PlannedTest>,
@@ -601,7 +600,6 @@ fn plan_cell(
     let tools = expand_dependencies(&recipe.build.dependencies.tools, &scope, "tools")?;
     let host = expand_dependencies(&recipe.build.dependencies.host, &scope, "host")?;
     let target = expand_dependencies(&recipe.build.dependencies.target, &scope, "target")?;
-    let test_tools = expand_dependencies(&recipe.build.dependencies.tests, &scope, "tests")?;
 
     let pipeline = expand_pipeline(&recipe.build.pipeline, &scope)?;
     let mut pipeline = plan_steps(
@@ -645,7 +643,6 @@ fn plan_cell(
         tools,
         host,
         target,
-        test_tools,
         pipeline,
         outputs,
         tests,

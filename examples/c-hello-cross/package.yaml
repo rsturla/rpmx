@@ -62,8 +62,6 @@ build:
     tools: [make]
     # A target library: it belongs in the sysroot, not the build root.
     host: [zlib-devel]
-    # The installed test needs the runtime library in its target test root.
-    tests: [zlib]
   pipeline:
     - uses: make/build
     - uses: make/install
@@ -86,5 +84,9 @@ tests:
   # proves the packaged dynamic links resolve on the real architecture.
   - name: installed
     stage: installed
+    # The target test root needs the runtime library the binary links against.
+    environment:
+      contents:
+        packages: [zlib]
     argv: ["c-hello-cross"]
 

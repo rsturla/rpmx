@@ -39,6 +39,16 @@ does not promise a stable schema or CLI yet.
   argument list through to configure/build/install. `autotools/configure`
   supports out-of-tree builds and derives `--host`/`--build` in a cross build.
   Build and check steps use the sandbox `$JOBS` instead of a hardcoded `-j1`.
+- **Breaking:** test-root packages live only on the test that needs them.
+  `build.dependencies.tests` is removed; move each entry to
+  `tests[].environment.contents.packages` (or `outputs[].tests[]` for an
+  output-level test). The installed test root already contains `bash`,
+  `coreutils`, the test's own packages and the RPMs' external runtime
+  requirements, so a recipe-wide list mostly restated that. `rpmx plan --json`
+  no longer has `cells[].test_tools`, the SRPM lock records the union of the
+  per-test packages, and an SRPM written before this change no longer parses:
+  its embedded recipe still carries the old field.
+
 - **Breaking:** a step is named after the command it runs, so a command has
   exactly one step. `autotools/build`, `autotools/check` and `autotools/install`
   ran the same `make` commands as `make/build`, `make/check` and `make/install`

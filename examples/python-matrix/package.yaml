@@ -36,8 +36,6 @@ build:
     tools:
       - "${matrix.python.package}-devel"
       - python3-pip
-    tests:
-      - "${matrix.python.package}-pytest"
 
 sources:
   - name: foo

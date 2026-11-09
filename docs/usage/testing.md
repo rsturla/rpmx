@@ -57,8 +57,8 @@ outputs that provide its runtime dependencies, so a missing `Requires` between
 outputs is not hidden by installing the whole output set. Strong runtime
 requirements of the selected RPMs are resolved into the test root automatically
 from the root's repositories. If install still fails, add the missing package to that test's
-`environment.contents.packages` (or the package-wide
-`build.dependencies.tests`) or pass `--test-root-lock` on `build`/`rebuild`.
+`environment.contents.packages` or pass `--test-root-lock` on
+`build`/`rebuild`.
 
 `--save-test-root`, `--test-root` and `--test-root-lock` need a single test
 environment. If a recipe has several, select one with `--test NAME` or

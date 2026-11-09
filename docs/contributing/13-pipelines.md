@@ -221,9 +221,9 @@ Source assembly runs in a locked root by default (`--root-lock --root`) and
 records `source-root.lock.json`; `--unsafe-host-root` is the explicit exception.
 
 Tests run after packaging. `stage: build` tests run in the build sandbox.
-`stage: installed` tests run in a fresh test root: `build.dependencies.tests`,
-each test's `environment.contents.packages`, and the selected RPMs' external
-runtime requirements are resolved from the same repositories, assembled
+`stage: installed` tests run in a fresh test root: each test's
+`environment.contents.packages` and the selected RPMs' external runtime
+requirements are resolved from the same repositories, assembled
 offline, and the selected built RPMs are installed over it with real dependency
 checking, not `--nodeps` (`--run-tests`). Requirements provided by another
 selected output stay out of the repository resolution. A
