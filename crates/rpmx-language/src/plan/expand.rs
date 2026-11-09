@@ -15,7 +15,7 @@ pub(crate) fn expand_dependencies(
     scope: &BTreeMap<String, Value>,
     field: &str,
 ) -> Result<Vec<String>> {
-    expand_values(values, scope, &format!("build.dependencies.{field}"))
+    expand_values(values, scope, &format!("build.{field}"))
 }
 
 pub(crate) fn expand_values(
@@ -370,30 +370,25 @@ pub(crate) fn expand_tests(
             ));
         }
         let name = test.name;
-        let packages = expand_values(
-            &test.environment.contents.packages,
-            scope,
-            &format!("{path}[{index}].environment.contents.packages"),
-        )?;
+        let packages = expand_values(&test.packages, scope, &format!("{path}[{index}].packages"))?;
         if test.stage != "installed" && !packages.is_empty() {
             return Err(Error::new(
                 codes::TEST_004,
                 format!(
-                    "test '{name}' declares environment.contents.packages but uses stage '{}'; \
+                    "test '{name}' declares packages but uses stage '{}'; \
                      test packages are installed into the disposable installed-stage root",
                     test.stage
                 ),
             )
-            .at(format!("{path}[{index}].environment.contents.packages")));
+            .at(format!("{path}[{index}].packages")));
         }
         let environment = test
-            .environment
             .environment
             .iter()
             .map(|(key, value)| {
                 template::expand_string(value, scope)
                     .map(|value| (key.clone(), value))
-                    .map_err(|error| error.at(format!("{path}[{index}].environment.environment")))
+                    .map_err(|error| error.at(format!("{path}[{index}].environment")))
             })
             .collect::<Result<BTreeMap<_, _>>>()?;
         let step_scope = owner

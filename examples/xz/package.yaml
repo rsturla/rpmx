@@ -16,8 +16,7 @@ sources:
 build:
   root:
     profile: ../fedora-44-build.profile.yaml
-  dependencies:
-    tools: [gcc, make, bash]
+  packages: [gcc, make, bash]
   pipeline:
     - runs: |
         ./configure --prefix=/usr --libdir=/usr/lib64 --disable-static --disable-doc --disable-nls

@@ -6,8 +6,7 @@ package:
   summary: Shell.
   license: MIT
 build:
-  dependencies:
-    tools: [gcc]
+  packages: [gcc]
 outputs:
   - name: bash
     metapackage: true

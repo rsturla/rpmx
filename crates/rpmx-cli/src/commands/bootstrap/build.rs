@@ -1292,9 +1292,8 @@ package:
   summary: gcc
   license: MIT
 build:
-  dependencies:
-    tools: [make]
-    host: [zlib-devel]
+  packages: [make]
+  sysroot: [zlib-devel]
 outputs:
   - name: gcc
     metapackage: true

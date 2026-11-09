@@ -9,7 +9,7 @@ inputs:
     type: list<string>
     default: []
 needs:
-  tools: [binutils, coreutils, findutils, grep, sed]
+  packages: [binutils, coreutils, findutils, grep, sed]
 run:
   runs: |
     set -eu

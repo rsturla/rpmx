@@ -37,10 +37,12 @@ pub struct InputSpec {
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Needs {
+    /// Packages installed into the build root.
     #[serde(default)]
-    pub tools: Vec<String>,
+    pub packages: Vec<String>,
+    /// Packages installed into the target sysroot.
     #[serde(default)]
-    pub host: Vec<String>,
+    pub sysroot: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -63,10 +65,10 @@ pub struct ResolvedStep {
     pub args: Vec<String>,
     pub cwd: Option<String>,
     pub env: BTreeMap<String, String>,
-    /// Build-root tools, from `needs.tools`.
-    pub needs_tools: Vec<String>,
-    /// Target libraries, from `needs.host`.
-    pub needs_host: Vec<String>,
+    /// Build-root packages, from `needs.packages`.
+    pub needs_packages: Vec<String>,
+    /// Target sysroot packages, from `needs.sysroot`.
+    pub needs_sysroot: Vec<String>,
     /// Union of both, for callers that do not distinguish the two roots.
     pub needs: Vec<String>,
     pub digest: String,
@@ -276,10 +278,10 @@ pub fn resolve(
         env.insert(key.clone(), template::expand_inputs(value, &scope)?);
     }
 
-    let needs_tools = file.needs.tools.clone();
-    let needs_host = file.needs.host.clone();
-    let mut needs = needs_tools.clone();
-    needs.extend(needs_host.iter().cloned());
+    let needs_packages = file.needs.packages.clone();
+    let needs_sysroot = file.needs.sysroot.clone();
+    let mut needs = needs_packages.clone();
+    needs.extend(needs_sysroot.iter().cloned());
 
     let (input, input_file) = match file.render.as_deref() {
         None => (None, None),
@@ -303,8 +305,8 @@ pub fn resolve(
         args,
         cwd,
         env,
-        needs_tools,
-        needs_host,
+        needs_packages,
+        needs_sysroot,
         needs,
         digest,
         builtin,

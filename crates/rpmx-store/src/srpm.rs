@@ -269,12 +269,12 @@ pub struct LockCross {
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct LockBuild {
+    /// Packages installed into the build root.
     #[serde(default)]
-    pub tools: Vec<String>,
+    pub packages: Vec<String>,
+    /// Packages installed into the target sysroot.
     #[serde(default)]
-    pub host: Vec<String>,
-    #[serde(default)]
-    pub target: Vec<String>,
+    pub sysroot: Vec<String>,
     #[serde(default)]
     pub tests: Vec<String>,
     #[serde(default = "default_sbom")]

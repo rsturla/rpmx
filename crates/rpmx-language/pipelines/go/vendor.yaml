@@ -2,7 +2,7 @@ name: go/vendor
 version: 1
 summary: Vendor Go modules
 needs:
-  tools: [go]
+  packages: [go]
 run:
   cwd: "${source.dir}"
   runs: |

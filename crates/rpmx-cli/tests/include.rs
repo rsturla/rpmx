@@ -50,8 +50,7 @@ package:
     write(
         &directory.join("build.yaml"),
         r#"build:
-  dependencies:
-    tools: [bash]
+  packages: [bash]
   pipeline:
     - runs: "true"
 "#,
@@ -84,15 +83,12 @@ fn a_diagnostic_names_the_file_that_owns_the_section() {
     let root = bundle(directory.path());
     write(
         &directory.path().join("build.yaml"),
-        "build:\n  dependencies:\n    tools: [bash, bash]\n  pipeline:\n    - runs: \"true\"\n",
+        "build:\n  packages: [bash, bash]\n  pipeline:\n    - runs: \"true\"\n",
     );
     let output = rpmx(&["lint", &root]);
     assert!(output.status.success(), "{output:?}");
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stdout.contains("build.yaml: build.dependencies.tools"),
-        "{stdout}"
-    );
+    assert!(stdout.contains("build.yaml: build.packages"), "{stdout}");
 }
 
 #[test]
@@ -142,7 +138,7 @@ fn the_lock_records_every_recipe_file_and_detects_drift() {
     assert!(check.status.success(), "{check:?}");
     write(
         &directory.path().join("build.yaml"),
-        "build:\n  dependencies:\n    tools: [bash, make]\n  pipeline:\n    - runs: \"true\"\n",
+        "build:\n  packages: [bash, make]\n  pipeline:\n    - runs: \"true\"\n",
     );
     let check = rpmx(&["lock", &root, "--check"]);
     assert_eq!(check.status.code(), Some(3), "{check:?}");

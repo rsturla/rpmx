@@ -6,7 +6,7 @@ inputs:
     type: string
     default: cc
 needs:
-  tools: [bash, binutils, coreutils, findutils, gcc, grep, sed]
+  packages: [bash, binutils, coreutils, findutils, gcc, grep, sed]
 run:
   runs: |
     set -eu

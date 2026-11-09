@@ -36,8 +36,7 @@ build:
         - ${stage}/usr/bin/toolbox
     - uses: strip
 
-  dependencies:
-    tools: [gcc, make, autoconf, automake, libtool]
+  packages: [gcc, make, autoconf, automake, libtool]
 
 sources:
   - name: toolbox

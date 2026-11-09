@@ -6,8 +6,7 @@ package:
   summary: Build automation.
   license: MIT
 build:
-  dependencies:
-    tools: [gcc]
+  packages: [gcc]
 outputs:
   - name: make
     metapackage: true

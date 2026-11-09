@@ -12,13 +12,12 @@ This is a deliberate reversal of the earlier design, which put a typed adapter i
 
 ```yaml
 build:
-  dependencies:
-    tools:
-      - cmake
-      - ninja-build
-    host:
-      - openssl-devel
-      - zlib-devel
+  packages:
+    - cmake
+    - ninja-build
+  sysroot:
+    - openssl-devel
+    - zlib-devel
   environment:
     CURL_CA_BUNDLE: /etc/pki/tls/certs/ca-bundle.crt
   pipeline:
@@ -255,7 +254,7 @@ overrides only the build-level path. The generator is behind the
 `rpmx_core::sbom::Generator` trait; `NativeSpdx` is the current implementation,
 so a Syft-backed generator can replace it without changing callers.
 
-Before the first build step, `build.dependencies.tools` is checked against the
+Before the first build step, `build.packages` is checked against the
 selected root. A tool is accepted when the locked root contains a package with
 that name, or when `command -v` finds an executable with that name inside the
 root (`RPMX-ROOT-018` otherwise). A version constraint is parsed off the name
@@ -416,9 +415,7 @@ outputs:
     tests:
       - name: import
         stage: installed
-        environment:
-          contents:
-            packages: [python3-pytest]
+        packages: [python3-pytest]
         pipeline:
           - uses: python/import
             with:

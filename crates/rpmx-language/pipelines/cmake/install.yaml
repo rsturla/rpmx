@@ -2,7 +2,7 @@ name: cmake/install
 version: 1
 summary: Install a CMake project into the staging root
 needs:
-  tools: [cmake]
+  packages: [cmake]
 run:
   cwd: "${source.dir}"
   runs: |

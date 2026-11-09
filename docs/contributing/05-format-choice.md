@@ -171,13 +171,12 @@ build:
         args:
           - -DCMAKE_BUILD_TYPE=Release
           - -DCURL_USE_OPENSSL=ON
-  dependencies:
-    tools:
-      - cmake >= 3.20
-      - ninja
-    host:
-      - openssl-devel >= 3.0
-      - zlib-devel
+  packages:
+    - cmake >= 3.20
+    - ninja
+  sysroot:
+    - openssl-devel >= 3.0
+    - zlib-devel
 
 features:
   default: [ssl, http2]

@@ -4,8 +4,8 @@
 # with a cross toolchain: the cgo stubs are compiled by the target gcc against
 # the sysroot, and the final binary is dynamically linked to libz and libc.
 #
-# The build root gets `go` from the go/build step's needs.tools, so the profile
-# does not have to list it.
+# The build root gets `go` from the go/build step's needs.packages, so the
+# profile does not have to list it.
 
 schema: 1
 
@@ -57,8 +57,7 @@ source-assembly:
 build:
   root:
     profile: ../fedora-44-cross.profile.yaml
-  dependencies:
-    host: [zlib-devel]
+  sysroot: [zlib-devel]
   pipeline:
     - uses: go/build
       with:

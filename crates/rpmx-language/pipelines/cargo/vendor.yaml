@@ -2,7 +2,7 @@ name: cargo/vendor
 version: 1
 summary: Vendor Cargo dependencies
 needs:
-  tools: [cargo]
+  packages: [cargo]
 run:
   cwd: "${source.dir}"
   runs: |

@@ -1,7 +1,7 @@
 //! Select and group installed-stage tests by the root they need.
 //!
-//! A test may add packages through `test.environment.contents.packages`, the
-//! same shape Wolfi/melange uses. An output-level test also selects the RPMs
+//! A test may add packages through `test.packages`, the shape Wolfi/melange
+//! uses for test environments. An output-level test also selects the RPMs
 //! for that output and its runtime dependencies instead of installing every
 //! sibling output. Tests with the same package set and output share one
 //! prepared root.

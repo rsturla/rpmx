@@ -1121,9 +1121,8 @@ pub(crate) fn required_packages(plan: &Plan) -> RequiredPackages {
         }
     }
     for cell in &plan.cells {
-        build.extend(cell.tools.iter().cloned());
-        target.extend(cell.host.iter().cloned());
-        target.extend(cell.target.iter().cloned());
+        build.extend(cell.packages.iter().cloned());
+        target.extend(cell.sysroot.iter().cloned());
         for step in &cell.pipeline {
             split_needs(step, false, &mut build, &mut target);
         }
@@ -1147,7 +1146,7 @@ fn split_needs(
     build: &mut BTreeSet<String>,
     target: &mut BTreeSet<String>,
 ) {
-    if step.needs_tools.is_empty() && step.needs_host.is_empty() {
+    if step.needs_packages.is_empty() && step.needs_sysroot.is_empty() {
         // A step that only carries the union still has to be installed
         // somewhere. Built-in steps always fill both lists.
         if target_only {
@@ -1159,11 +1158,11 @@ fn split_needs(
         return;
     }
     if target_only {
-        target.extend(step.needs_tools.iter().cloned());
+        target.extend(step.needs_packages.iter().cloned());
     } else {
-        build.extend(step.needs_tools.iter().cloned());
+        build.extend(step.needs_packages.iter().cloned());
     }
-    target.extend(step.needs_host.iter().cloned());
+    target.extend(step.needs_sysroot.iter().cloned());
 }
 
 fn count_packages(lock: &RootLock) -> usize {
@@ -1378,9 +1377,8 @@ package:
   summary: p
   license: MIT
 build:
-  dependencies:
-    tools: [make]
-    host: [zlib-devel]
+  packages: [make]
+  sysroot: [zlib-devel]
   pipeline:
     - uses: strip
 outputs:
@@ -1472,9 +1470,8 @@ package:
   summary: p
   license: MIT
 build:
-  dependencies:
-    tools: [make]
-    host: [zlib-devel]
+  packages: [make]
+  sysroot: [zlib-devel]
   pipeline:
     - uses: strip
 outputs:
@@ -1874,9 +1871,8 @@ package:
   summary: p
   license: MIT
 build:
-  dependencies:
-    tools: [gcc]
-    host: [zlib-devel]
+  packages: [gcc]
+  sysroot: [zlib-devel]
   pipeline:
     - uses: strip
 outputs:
@@ -1885,9 +1881,7 @@ outputs:
 tests:
   - name: installed
     stage: installed
-    environment:
-      contents:
-        packages: [pytest]
+    packages: [pytest]
     argv: ["true"]
 "#,
         );

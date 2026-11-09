@@ -30,12 +30,11 @@ build:
     profile: ../fedora-44-build.profile.yaml
   pipeline:
     - uses: meson
-  dependencies:
-    tools:
-      - "meson >= 1.4"
-      - ninja
-      - python3
-    host: []
+  packages:
+    - "meson >= 1.4"
+    - ninja
+    - python3
+  sysroot: []
 
 sources:
   - name: libfoo
@@ -88,7 +87,5 @@ tests:
 
   - name: installed
     stage: installed
-    environment:
-      contents:
-        packages: [pkg-config]
+    packages: [pkg-config]
     argv: [pkg-config, --modversion, foo]

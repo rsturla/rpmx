@@ -6,8 +6,7 @@ package:
   summary: C and C++ compiler.
   license: MIT
 build:
-  dependencies:
-    tools: [glibc]
+  packages: [glibc]
 outputs:
   - name: gcc
     metapackage: true

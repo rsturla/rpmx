@@ -28,8 +28,7 @@ sources:
 build:
   root:
     profile: ../fedora-44-build.profile.yaml
-  dependencies:
-    tools: [gcc, make, bash]
+  packages: [gcc, make, bash]
   pipeline:
     - runs: |
         make -j"$JOBS" ARFLAGS=rcsD

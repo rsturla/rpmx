@@ -6,7 +6,7 @@ inputs:
     type: string
     default: python3
 needs:
-  tools: [python3-build, python3-setuptools, python3-wheel]
+  packages: [python3-build, python3-setuptools, python3-wheel]
 run:
   cwd: "${source.dir}"
   runs: |

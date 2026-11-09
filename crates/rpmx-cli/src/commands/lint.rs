@@ -283,12 +283,8 @@ fn check(
     }
 
     for (scope, values) in [
-        ("build.dependencies.tools", &recipe.build.dependencies.tools),
-        ("build.dependencies.host", &recipe.build.dependencies.host),
-        (
-            "build.dependencies.target",
-            &recipe.build.dependencies.target,
-        ),
+        ("build.packages", &recipe.build.packages),
+        ("build.sysroot", &recipe.build.sysroot),
     ] {
         let mut seen = BTreeSet::new();
         for value in values {
@@ -544,8 +540,7 @@ vars:
   used: "${package.version}"
   unused: "x"
 build:
-  dependencies:
-    tools: [gcc, gcc]
+  packages: [gcc, gcc]
   pipeline:
     - runs: "echo ${vars.used}"
 outputs:
@@ -619,7 +614,7 @@ tests:
     #[test]
     fn a_clean_recipe_has_no_diagnostics() {
         let clean = RECIPE
-            .replace("tools: [gcc, gcc]", "tools: [gcc]")
+            .replace("packages: [gcc, gcc]", "packages: [gcc]")
             .replace("  unused: \"x\"\n", "")
             .replace(
                 "tests:\n  - name: broken\n    stage: build\n",

@@ -2,7 +2,7 @@ name: cmake/check
 version: 1
 summary: Run CTest tests
 needs:
-  tools: [cmake]
+  packages: [cmake]
 run:
   cwd: "${source.dir}"
   runs: |

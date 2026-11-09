@@ -1,8 +1,7 @@
 build:
   root:
     profile: ../fedora-44-build.profile.yaml
-  dependencies:
-    tools: [gcc, make, bash]
+  packages: [gcc, make, bash]
   pipeline:
     - runs: |
         CFLAGS="-O2 -Wno-incompatible-pointer-types" ./configure --prefix=/usr --libdir=/usr/lib64 --disable-maintainer-mode --disable-docs --with-oniguruma=/usr
