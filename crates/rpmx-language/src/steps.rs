@@ -116,18 +116,6 @@ const BUILTINS: &[(&str, &str)] = &[
         "autotools/configure",
         include_str!("../pipelines/autotools/configure.yaml"),
     ),
-    (
-        "autotools/build",
-        include_str!("../pipelines/autotools/build.yaml"),
-    ),
-    (
-        "autotools/check",
-        include_str!("../pipelines/autotools/check.yaml"),
-    ),
-    (
-        "autotools/install",
-        include_str!("../pipelines/autotools/install.yaml"),
-    ),
     ("strip", include_str!("../pipelines/strip.yaml")),
     (
         "license/copy",

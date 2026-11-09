@@ -482,10 +482,16 @@ The standard build systems have individual reusable steps:
 
 | Build system | Steps |
 | --- | --- |
-| autotools | `autotools/configure`, `autotools/build`, `autotools/check`, `autotools/install` |
+| autotools | `autotools/configure`, then the `make` steps |
 | Make | `make/build`, `make/check`, `make/install` |
 | CMake | `cmake/configure`, `cmake/build`, `cmake/check`, `cmake/install` |
 | Meson | `meson/setup`, `meson/compile`, `meson/test`, `meson/install` |
+
+A step is named after the command it runs, so a command has exactly one step.
+`autotools/configure` only configures; the Makefile it writes is built,
+checked and installed with `make/build`, `make/check` and `make/install`, which
+are the same steps a plain Makefile project uses. CMake and Meson still drive
+their own build and install, so they keep their own steps.
 
 Prefer the individual steps. They get their own progress line, can be skipped
 or reordered, and take their own `with:` inputs. The single-name `autotools`,
