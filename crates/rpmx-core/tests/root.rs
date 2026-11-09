@@ -30,6 +30,7 @@ fn repository() -> Repository {
         gpgkey: None,
         repo_gpgcheck: false,
         exclude: Vec::new(),
+        priority: None,
         auth: None,
     }
 }

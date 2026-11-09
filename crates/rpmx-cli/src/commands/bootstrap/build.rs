@@ -495,6 +495,7 @@ fn fixed_point_profile(
         gpgkey: None,
         repo_gpgcheck: false,
         exclude: Vec::new(),
+        priority: None,
         auth: None,
     });
     Ok(profile)
@@ -839,6 +840,7 @@ fn synthesize_profile(
             gpgkey: None,
             repo_gpgcheck: false,
             exclude: Vec::new(),
+            priority: None,
             auth: None,
         });
     }
@@ -1036,6 +1038,7 @@ fn resolve_one_root(
         cache,
         work: assemble_work.path(),
         root: &temp_root,
+        extra_rpms: &[],
     };
     let assembled = if sysroot {
         assemble_sysroot(&lock, options)?

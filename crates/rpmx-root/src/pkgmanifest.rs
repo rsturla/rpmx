@@ -140,6 +140,7 @@ pub fn to_lock(
             gpgkey: None,
             repo_gpgcheck: false,
             exclude: Vec::new(),
+            priority: None,
             auth: None,
         })
         .collect::<Vec<_>>();
