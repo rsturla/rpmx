@@ -61,6 +61,17 @@ fn under_test_packages(rpms: &[PathBuf]) -> Result<Vec<(String, String)>> {
     Ok(packages)
 }
 
+fn add_under_test(install: &mut Vec<String>, packages: Vec<(String, String)>) {
+    for (name, spec) in packages {
+        // An exact request already satisfies the generic request for this
+        // package. Keeping both makes DNF demand the newest published version.
+        install.retain(|request| request != &name);
+        if !install.contains(&spec) {
+            install.push(spec);
+        }
+    }
+}
+
 /// The repository that holds the packages under test, mounted for the resolver.
 fn under_test_repository(repo: &Path) -> Repository {
     Repository {
@@ -141,11 +152,7 @@ pub fn prepare(options: TestRootOptions<'_>) -> Result<PreparedTestRoot> {
     // and a packager never has to spell out the libraries a package links.
     let mut repositories = lock.repositories.clone();
     if options.pinned.is_none() {
-        for (_, spec) in under_test_packages(options.rpms)? {
-            if !install.iter().any(|package| package == &spec) {
-                install.push(spec);
-            }
-        }
+        add_under_test(&mut install, under_test_packages(options.rpms)?);
         repositories.insert(0, under_test_repository(options.repo));
     }
 
@@ -281,6 +288,16 @@ fn check_lock(path: &Path, lock: &RootLock, _required: &[String], archs: &[Strin
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn exact_test_packages_replace_only_matching_generic_requests() {
+        let mut install = vec!["bash".into(), "coreutils".into(), "python3".into()];
+        super::add_under_test(
+            &mut install,
+            vec![("coreutils".into(), "coreutils-1-1.x86_64".into())],
+        );
+        assert_eq!(install, ["bash", "python3", "coreutils-1-1.x86_64"]);
+    }
+
     #[test]
     fn the_packages_under_test_leave_the_lock() {
         use crate::profile::Repository;

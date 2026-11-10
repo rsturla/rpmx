@@ -69,7 +69,7 @@ fn exact_package_requests_and_dependencies_form_one_installable_transaction() {
             {"id": "published", "baseurl": format!("file://{}", root.join("published").join(arch).display())},
             {"id": "under-test", "baseurl": format!("file://{}", root.join("under-test").join(arch).display()), "priority": 999},
         ],
-        "packages": {"install": ["demo-consumer", "demo-lib", "demo-lib-1-1.noarch"]},
+        "packages": {"install": ["demo-consumer", "demo-lib-1-1.noarch"]},
         "options": {"weak_deps": false},
     });
     let mut unconstrained = profile.clone();
@@ -161,11 +161,8 @@ fn exact_package_requests_and_dependencies_form_one_installable_transaction() {
         ],
     );
     let mut incompatible = profile.clone();
-    incompatible["packages"]["install"] = serde_json::json!([
-        "demo-consumer-2-1.noarch",
-        "demo-lib",
-        "demo-lib-1-1.noarch"
-    ]);
+    incompatible["packages"]["install"] =
+        serde_json::json!(["demo-consumer-2-1.noarch", "demo-lib-1-1.noarch"]);
     std::fs::write(
         root.join("incompatible.yaml"),
         serde_yaml_ng::to_string(&incompatible).unwrap(),
