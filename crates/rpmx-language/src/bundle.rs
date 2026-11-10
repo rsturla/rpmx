@@ -185,6 +185,9 @@ struct DefaultsDocument {
     #[serde(default)]
     schema: Option<u32>,
     package: PackageDefaults,
+    /// Repository policy metadata, preserved in the bundle for other tools.
+    #[serde(default)]
+    metadata: BTreeMap<String, serde_json::Value>,
     #[serde(default)]
     build: BuildDefaults,
     #[serde(default)]
@@ -214,6 +217,7 @@ struct DefaultsFile {
     maintainers: Vec<Maintainer>,
     source_date_epoch: Option<u32>,
     build_environment: BTreeMap<String, String>,
+    has_metadata: bool,
     dependencies: RecipeDependencies,
 }
 
@@ -256,7 +260,12 @@ fn apply_repo_defaults(
         }
         dependencies.run = run;
     }
-    if use_maintainers || source_date_epoch.is_some() || use_build_environment || use_dependencies {
+    if use_maintainers
+        || source_date_epoch.is_some()
+        || use_build_environment
+        || use_dependencies
+        || defaults.has_metadata
+    {
         files.push(BundleFile {
             path: defaults.path,
             name: DEFAULTS_FILE.to_string(),
@@ -323,6 +332,8 @@ fn read_defaults(path: &Path) -> Result<DefaultsFile> {
     if document.package.maintainers.is_empty()
         && document.package.source_date_epoch.is_none()
         && document.dependencies.run.is_empty()
+        && document.build.environment.is_empty()
+        && document.metadata.is_empty()
     {
         return Err(Error::new(
             codes::INCLUDE_003,
@@ -340,6 +351,7 @@ fn read_defaults(path: &Path) -> Result<DefaultsFile> {
         maintainers: document.package.maintainers,
         source_date_epoch: document.package.source_date_epoch,
         build_environment: document.build.environment,
+        has_metadata: !document.metadata.is_empty(),
         dependencies: document.dependencies,
     })
 }
@@ -701,6 +713,24 @@ mod tests {
             .files
             .iter()
             .any(|file| file.name == "rpmx-defaults.yaml"));
+    }
+
+    #[test]
+    fn repository_policy_metadata_is_embedded_without_creating_recipe_variables() {
+        let (directory, recipe) = repo();
+        write(
+            &directory.path().join("rpmx-defaults.yaml"),
+            "schema: 1\npackage: {}\nmetadata:\n  python:\n    default-stream: '3.14'\n",
+        );
+        let bundle = load_recipe_bundle(&recipe).expect("bundle");
+        assert!(bundle.recipe.vars.is_empty());
+        let file = bundle
+            .files
+            .iter()
+            .find(|file| file.name == "rpmx-defaults.yaml")
+            .expect("bundled policy");
+        let metadata: serde_json::Value = serde_yaml_ng::from_slice(&file.bytes).unwrap();
+        assert_eq!(metadata["metadata"]["python"]["default-stream"], "3.14");
     }
 
     #[test]
