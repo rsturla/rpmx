@@ -52,7 +52,7 @@ fn meson_runs_all_phases_from_yaml() {
 
 #[test]
 fn python_builds_and_installs_from_yaml() {
-    let plan = plan_with("    - uses: python\n      with:\n        python: /usr/bin/python3.12");
+    let plan = plan_with("    - uses: python\n      with:\n        python: /usr/bin/python3.12\n        build-package: python-3.12-build\n        pip-package: python-3.12-pip");
     let steps = &plan.cells[0].pipeline;
     assert_eq!(steps.len(), 1);
     let script = &steps[0].args[1];

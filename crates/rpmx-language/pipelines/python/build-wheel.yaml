@@ -7,7 +7,7 @@ inputs:
     default: python3
   build-package:
     type: string
-    default: python-build
+    required: true
   frontend:
     type: string
     default: build

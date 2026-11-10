@@ -508,7 +508,8 @@ build:
         script-version: ${matrix.python.version}
 ```
 
-`build-package` defaults to `python-build`. The step installs only the build
+`build-package` selects the build frontend package for the chosen interpreter.
+The step installs only the build
 frontend. Declare the project's backend dependencies in `build.packages`.
 The frontend reads the backend and its paths from `pyproject.toml`. Bootstrap
 recipes can use a distribution's frontend without a dependency on the package
@@ -518,7 +519,7 @@ The default requirements use Eternal package names.
 
 `frontend` defaults to `build`. Set `frontend: pip` to use upstream pip's
 wheel builder during a bootstrap. Select the matching tool package with
-`build-package`; for example, use `python-pip` for an Eternal host frontend.
+`build-package`; for example, use `python-3.14-pip` for an Eternal host frontend.
 The pip frontend disables package indexes, dependency resolution and build
 isolation. Declare its backend dependencies in the recipe.
 
@@ -528,7 +529,7 @@ set `frontend: pip`. Select the package that owns the application through
 `build-package` or `pip-package`. Bootstrap profiles and recipes supply seed
 packages; rpmx does not download an implicit seed or choose a bootstrap stage.
 
-`pip-package` defaults to `python-pip`. `pip-python` selects the interpreter
+`pip-package` selects the pip package. `pip-python` selects the interpreter
 that runs pip. If omitted, it uses the target `python` interpreter. pip receives
 the target through `--python`; it installs without dependency resolution,
 network access, build isolation or bytecode compilation.
