@@ -57,8 +57,10 @@ backend, not treat it as the contract.
   x86_64, and any package whose arch is neither the target nor `noarch` is an
   error (`RPMX-ROOT-009`). Without this, dnf pulls the i686 companions of
   multilib-capable packages into an otherwise x86_64 root.
-- `rpmx` generates the dnf configuration, runs the transaction, and captures
-  the result.
+- `rpmx` generates the dnf configuration and uses `dnf install --store` to
+  download one solved transaction without installing it. It captures that
+  package set. Separate dependency downloads can collect incompatible versions
+  and must not define the lock.
 - The lock records repo metadata digests, exact NEVRAs, RPM payload digests and
   the closure digest.
 - A builder image is accepted only when its recorded root digest matches the

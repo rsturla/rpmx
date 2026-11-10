@@ -37,6 +37,9 @@ pub fn resolve_profile(
     };
     let setup = write_repositories(work, &profile.repositories)?;
 
+    // Resolve all requests in one transaction. Downloading each request's
+    // closure can keep a newer dependency beside an exact older request.
+    // Store downloads the solved set without installing it in the resolver.
     run_dnf(
         &image,
         work,
@@ -45,15 +48,14 @@ pub fn resolve_profile(
         dnf_base_args(profile)
             .into_iter()
             .chain([
-                "download".to_string(),
-                "--resolve".to_string(),
-                "--destdir=/work/rpms".to_string(),
+                "install".to_string(),
+                "--store=/work/transaction".to_string(),
             ])
             .chain(profile.packages.install.iter().cloned())
             .collect(),
     )?;
 
-    let downloaded = read_downloaded(&work.join("rpms"), cache)?;
+    let downloaded = read_downloaded(&work.join("transaction/packages"), cache)?;
     if downloaded.is_empty() {
         return Err(Error::new(
             codes::ROOT_008,
@@ -147,7 +149,7 @@ fn prepare_work(work: &Path) -> Result<()> {
     // closure. Repository definitions and credentials are regenerated too, so a
     // stale repository cannot leak into the transaction. The metadata cache is
     // safe to keep: dnf revalidates it.
-    for directory in ["rpms", "root", "repos.d", "keys"] {
+    for directory in ["rpms", "transaction", "root", "repos.d", "keys"] {
         let path = work.join(directory);
         if path.exists() {
             std::fs::remove_dir_all(&path).map_err(|error| {
@@ -946,7 +948,8 @@ fn query_repositories(
 #[cfg(test)]
 mod local_repository_tests {
     use super::{
-        redact, repositories_for_lock, repository_failure, write_repositories, ResolverScratch,
+        prepare_work, redact, repositories_for_lock, repository_failure, write_repositories,
+        ResolverScratch,
     };
     use crate::profile::{Repository, RepositoryAuth};
 
@@ -976,6 +979,17 @@ mod local_repository_tests {
         assert_eq!(setup.mounts[0].1, "/rpmx-repos/0");
         let text = std::fs::read_to_string(work.path().join("repos.d/local.repo")).expect("repo");
         assert!(text.contains("baseurl=file:///rpmx-repos/0"), "{text}");
+    }
+
+    #[test]
+    fn a_reused_work_directory_drops_the_previous_transaction() {
+        let directory = tempfile::tempdir().unwrap();
+        let packages = directory.path().join("transaction/packages");
+        std::fs::create_dir_all(&packages).unwrap();
+        std::fs::write(packages.join("stale.rpm"), "stale payload").unwrap();
+        prepare_work(directory.path()).unwrap();
+        assert!(!directory.path().join("transaction").exists());
+        assert!(directory.path().join("cache").is_dir());
     }
 
     #[test]

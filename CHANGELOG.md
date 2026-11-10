@@ -5,6 +5,10 @@ does not promise a stable schema or CLI yet.
 
 ## Unreleased
 
+- Root resolution stores one solved DNF transaction. Exact lower-version
+  requests no longer collect a newer copy through another package's dependency.
+  Incompatible package requests fail before an unusable lock is written.
+
 - Python wheel steps support interpreter matrices without inline install logic.
   `python/build-wheel` accepts a frontend package and no longer requires
   unrelated backends. `python/install-wheel` accepts a pip interpreter and
