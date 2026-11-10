@@ -108,7 +108,9 @@ rpmx looks in the recipe directory first, then each ancestor up to the
 repository root (the first directory containing `.git`). The recipe wins when
 it sets the field itself. `build.environment` entries are added when the
 recipe does not already set the same variable, so a recipe can still override
-one key without restating the rest. The defaults file joins the recipe bundle,
+one key without restating the rest. An optional `metadata` map stores repository
+policy for other tools; rpmx preserves it without adding recipe variables.
+The defaults file joins the recipe bundle,
 so it is recorded in the package lock and embedded in the SRPM; a rebuild does
 not need the original checkout.
 
@@ -513,6 +515,18 @@ recipes can use a distribution's frontend without a dependency on the package
 under construction. For example, Fedora seeds must explicitly select
 `build-package: python3-build` and `pip-package: python3-pip`.
 The default requirements use Eternal package names.
+
+`frontend` defaults to `build`. Set `frontend: pip` to use upstream pip's
+wheel builder during a bootstrap. Select the matching tool package with
+`build-package`; for example, use `python-pip` for an Eternal host frontend.
+The pip frontend disables package indexes, dependency resolution and build
+isolation. Declare its backend dependencies in the recipe.
+
+Both wheel steps accept an optional `pip-zipapp` path. This selects a standalone
+pip application instead of an installed pip module. For the build step, also
+set `frontend: pip`. Select the package that owns the application through
+`build-package` or `pip-package`. Bootstrap profiles and recipes supply seed
+packages; rpmx does not download an implicit seed or choose a bootstrap stage.
 
 `pip-package` defaults to `python-pip`. `pip-python` selects the interpreter
 that runs pip. If omitted, it uses the target `python` interpreter. pip receives

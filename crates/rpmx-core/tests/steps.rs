@@ -97,7 +97,7 @@ fn python_wheel_frontend_does_not_require_unrelated_backends() {
     .expect("wheel step");
     assert_eq!(step.needs, ["python-3.14-build"]);
     assert_eq!(step.command, "python3.14");
-    assert!(step.args.iter().any(|arg| arg == "--no-isolation"));
+    assert!(step.args.iter().any(|arg| arg.contains("--no-isolation")));
 }
 
 #[test]

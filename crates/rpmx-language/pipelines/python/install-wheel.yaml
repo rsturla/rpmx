@@ -14,6 +14,9 @@ inputs:
   pip-package:
     type: string
     default: python-pip
+  pip-zipapp:
+    type: string
+    default: ""
   script-version:
     type: string
     default: ""
@@ -22,6 +25,7 @@ needs:
 run:
   cwd: "${source.dir}"
   env:
+    RPMX_PIP_ZIPAPP: "${inputs.pip-zipapp}"
     RPMX_PIP_PYTHON: "${inputs.pip-python}"
     RPMX_PYTHON_PREFIX: "${inputs.prefix}"
     RPMX_SCRIPT_VERSION: "${inputs.script-version}"
@@ -46,9 +50,11 @@ run:
       # Resolve directory aliases such as sbin -> bin without leaving a venv.
       executable = Path(sys.executable)
       target = str(executable.parent.resolve() / executable.name)
-      subprocess.run([
-          os.environ["RPMX_PIP_PYTHON"] or sys.executable,
-          "-m", "pip", "--python", target, "install",
+      host = os.environ["RPMX_PIP_PYTHON"] or sys.executable
+      zipapp = os.environ["RPMX_PIP_ZIPAPP"]
+      command = [host, zipapp] if zipapp else [host, "-m", "pip"]
+      subprocess.run(command + [
+          "--python", target, "install",
           "--root", os.environ["STAGE"], "--prefix", prefix,
           "--no-index", "--no-deps", "--no-compile", "--no-build-isolation", "--ignore-installed",
           *wheels,
