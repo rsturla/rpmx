@@ -8,9 +8,62 @@ inputs:
   prefix:
     type: string
     default: "${prefix}"
+  pip-python:
+    type: string
+    default: ""
+  pip-package:
+    type: string
+    default: python-pip
+  script-version:
+    type: string
+    default: ""
 needs:
-  packages: [python3-pip]
+  packages: ["${inputs.pip-package}"]
 run:
   cwd: "${source.dir}"
-  runs: |
-    ${inputs.python} -m pip install --root "$STAGE" --prefix ${inputs.prefix} --no-index --no-deps dist/*.whl
+  env:
+    RPMX_PIP_PYTHON: "${inputs.pip-python}"
+    RPMX_PYTHON_PREFIX: "${inputs.prefix}"
+    RPMX_SCRIPT_VERSION: "${inputs.script-version}"
+  argv:
+    - "${inputs.python}"
+    - -c
+    - |
+      import glob
+      import os
+      from pathlib import Path
+      import re
+      import subprocess
+      import sys
+
+      version = os.environ["RPMX_SCRIPT_VERSION"]
+      if version and not re.fullmatch(r"[0-9]+(?:\.[0-9]+)+", version):
+          raise SystemExit("script-version must be a dotted Python version")
+      wheels = sorted(glob.glob("dist/*.whl"))
+      if not wheels:
+          raise SystemExit("no wheels found in dist/")
+      prefix = os.environ["RPMX_PYTHON_PREFIX"]
+      # Resolve directory aliases such as sbin -> bin without leaving a venv.
+      executable = Path(sys.executable)
+      target = str(executable.parent.resolve() / executable.name)
+      subprocess.run([
+          os.environ["RPMX_PIP_PYTHON"] or sys.executable,
+          "-m", "pip", "--python", target, "install",
+          "--root", os.environ["STAGE"], "--prefix", prefix,
+          "--no-index", "--no-deps", "--no-compile", "--no-build-isolation", "--ignore-installed",
+          *wheels,
+      ], check=True)
+      staged_prefix = Path(os.environ["STAGE"]) / prefix.lstrip("/")
+      if version:
+          scripts = staged_prefix / "bin"
+          for script in sorted(scripts.iterdir()) if scripts.is_dir() else []:
+              if not script.is_file() or script.name.endswith(version):
+                  continue
+              destination = script.with_name(script.name + "-" + version)
+              if destination.exists() or destination.is_symlink():
+                  raise SystemExit(f"versioned command already exists: {destination.name}")
+              script.rename(destination)
+      # RPM owns the inventory. Command renames also invalidate wheel RECORDs.
+      for metadata in staged_prefix.glob("lib*/python*/site-packages/*.dist-info"):
+          (metadata / "RECORD").unlink(missing_ok=True)
+          (metadata / "INSTALLER").write_text("rpm\n")

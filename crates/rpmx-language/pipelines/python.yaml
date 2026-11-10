@@ -5,11 +5,17 @@ inputs:
   python:
     type: string
     default: python3
+  build-package:
+    type: string
+    default: python-build
+  pip-package:
+    type: string
+    default: python-pip
   prefix:
     type: string
     default: "${prefix}"
 needs:
-  packages: [python3-build, python3-setuptools, python3-wheel, python3-pip]
+  packages: ["${inputs.build-package}", "${inputs.pip-package}"]
 run:
   cwd: "${source.dir}"
   runs: |

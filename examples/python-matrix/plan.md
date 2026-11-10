@@ -25,11 +25,13 @@ packages use the Python-specific names.
 
 | Cell | Interpreter | Build deps | Output |
 |---|---|---|---|
-| `python=3.10` | `/usr/bin/python3.10` | `python3.10-devel`, `python3-pip`, plus `python3-build`, `python3-setuptools`, `python3-wheel` from the step's `needs` | `python3.10-foo` |
+| `python=3.10` | `/usr/bin/python3.10` | `python3.10-devel`, `python3-pip`, plus the explicitly selected `python3-build` and `python3-pip` from step requirements | `python3.10-foo` |
 | `python=3.11` | `/usr/bin/python3.11` | same, for 3.11 | `python3.11-foo` |
 | `python=3.12` | `/usr/bin/python3.12` | same, for 3.12 | `python3.12-foo` |
 
-The step's `needs` is why the tools are present: the recipe does not have to list `python3-build` or the backend, and a build root missing them fails at plan time, not mid-build.
+The Fedora example explicitly selects its build and pip packages through step inputs.
+The recipe declares its Setuptools backend in `build.packages`.
+Without overrides, the Python steps require Eternal's `python-build` and `python-pip`.
 
 `rpmx matrix plan` prints this before anything is built.
 
