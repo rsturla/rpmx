@@ -226,6 +226,7 @@ pub(crate) fn filter_tests(
 pub(crate) fn rpms_for_output(
     output: Option<&str>,
     rpms: &[TestRpm],
+    test_packages: &[String],
 ) -> Result<Vec<PathBuf>, Error> {
     let Some(output) = output else {
         return Ok(rpms.iter().map(|rpm| rpm.path.clone()).collect());
@@ -246,6 +247,13 @@ pub(crate) fn rpms_for_output(
         }
     }
     let mut selected = BTreeSet::from([start]);
+    // An explicitly requested sibling is part of the test environment.
+    // Select it by package name, without replacing external virtual providers.
+    for request in test_packages {
+        if let Some(index) = rpms.iter().position(|rpm| rpm.name == *request) {
+            selected.insert(index);
+        }
+    }
     loop {
         let requires = selected
             .iter()
@@ -368,7 +376,7 @@ mod tests {
             rpm("libs", &["libapp.so.1"], &[], &["/usr/lib64/libapp.so.1"]),
             rpm("docs", &["docs"], &[], &["/usr/share/doc/docs"]),
         ];
-        let selected = rpms_for_output(Some("app"), &rpms).expect("selection");
+        let selected = rpms_for_output(Some("app"), &rpms, &[]).expect("selection");
         assert_eq!(
             selected,
             [PathBuf::from("app.rpm"), PathBuf::from("libs.rpm")]
@@ -381,7 +389,7 @@ mod tests {
             rpm("app", &["app"], &[], &["/usr/bin/app"]),
             rpm("docs", &["docs"], &[], &["/usr/share/doc/docs"]),
         ];
-        let selected = rpms_for_output(Some("app"), &rpms).expect("selection");
+        let selected = rpms_for_output(Some("app"), &rpms, &[]).expect("selection");
         assert_eq!(selected, [PathBuf::from("app.rpm")]);
     }
 
@@ -391,7 +399,7 @@ mod tests {
             rpm("app", &["app"], &["/usr/bin/helper"], &["/usr/bin/app"]),
             rpm("helper", &["helper"], &[], &["/usr/bin/helper"]),
         ];
-        let selected = rpms_for_output(Some("app"), &rpms).expect("selection");
+        let selected = rpms_for_output(Some("app"), &rpms, &[]).expect("selection");
         assert_eq!(
             selected,
             [PathBuf::from("app.rpm"), PathBuf::from("helper.rpm")]
@@ -404,10 +412,29 @@ mod tests {
             rpm("app", &["app"], &[], &[]),
             rpm("docs", &["docs"], &[], &[]),
         ];
-        let selected = rpms_for_output(None, &rpms).expect("selection");
+        let selected = rpms_for_output(None, &rpms, &[]).expect("selection");
         assert_eq!(
             selected,
             [PathBuf::from("app.rpm"), PathBuf::from("docs.rpm")]
+        );
+    }
+
+    #[test]
+    fn a_test_can_request_a_sibling_and_its_runtime_dependencies() {
+        let rpms = [
+            rpm("bash", &["bash"], &[], &[]),
+            rpm("bash-binsh", &["bash-binsh"], &["bash"], &[]),
+            rpm("docs", &["docs"], &[], &[]),
+        ];
+        let selected = rpms_for_output(
+            Some("bash"),
+            &rpms,
+            &["bash-binsh".to_string(), "grep".to_string()],
+        )
+        .expect("selection");
+        assert_eq!(
+            selected,
+            [PathBuf::from("bash.rpm"), PathBuf::from("bash-binsh.rpm")]
         );
     }
 }

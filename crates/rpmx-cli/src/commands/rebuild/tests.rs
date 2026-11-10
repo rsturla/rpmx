@@ -86,7 +86,7 @@ pub(super) fn run(options: TestRunOptions<'_>) -> Result<Vec<PathBuf>, Error> {
         let test_rpms = read_rpms(options.written)?;
         for (index, group) in groups.iter().enumerate() {
             let work = options.work.join(format!("test-root-{index}"));
-            let group_rpms = rpms_for_output(group.output.as_deref(), &test_rpms)?;
+            let group_rpms = rpms_for_output(group.output.as_deref(), &test_rpms, &group.packages)?;
             let repo = under_test_repo(&work.join("test-rpms"), &group_rpms)?;
             let prepared = prepare_test_root(TestRootOptions {
                 lock,

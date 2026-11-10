@@ -394,7 +394,7 @@ fn run_installed(
         }
         for (index, group) in groups.iter().enumerate() {
             let group_work = work.path().join(format!("test-root-{index}"));
-            let group_rpms = rpms_for_output(group.output.as_deref(), rpms)?;
+            let group_rpms = rpms_for_output(group.output.as_deref(), rpms, &group.packages)?;
             let repo = under_test_repo(&group_work.join("test-rpms"), &group_rpms)?;
             let prepared = prepare_test_root(TestRootOptions {
                 lock: &lock,
