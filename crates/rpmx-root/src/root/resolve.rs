@@ -40,9 +40,6 @@ pub fn resolve_profile(
     // Resolve all requests in one transaction. Downloading each request's
     // closure can keep a newer dependency beside an exact older request.
     // Store downloads the solved set without installing it in the resolver.
-    // A profile may also request the package under test by its generic name.
-    // Let the exact request constrain that name even when a newer version is
-    // available; DNF still prefers the newest version when there is no conflict.
     run_dnf(
         &image,
         work,
@@ -52,7 +49,6 @@ pub fn resolve_profile(
             .into_iter()
             .chain([
                 "install".to_string(),
-                "--no-best".to_string(),
                 "--store=/work/transaction".to_string(),
             ])
             .chain(profile.packages.install.iter().cloned())
