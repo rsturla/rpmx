@@ -57,9 +57,11 @@ The recipe names two steps:
 pipeline:
   - uses: python/build-wheel
     with:
+      build-package: python3-build
       python: /usr/bin/python${matrix.python.version}
   - uses: python/install-wheel
     with:
+      pip-package: python3-pip
       python: /usr/bin/python${matrix.python.version}
       prefix: /usr
 ```
