@@ -69,6 +69,38 @@ fn local_step_resolves_and_expands_inputs() {
 }
 
 #[test]
+fn local_step_expands_inputs_in_both_dependency_roots() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let source = STRIP_STEP
+        .replace("inputs:\n", "inputs:\n  tool:\n    type: string\n    default: binutils-16\n  headers:\n    type: string\n    default: glibc-2.44-devel\n")
+        .replace("packages: [binutils]", "packages: ['${inputs.tool}']\n  sysroot: ['${inputs.headers}']");
+    write_step(dir.path(), "acme/strip", &source);
+    let plan = plan_with_root(recipe(), dir.path()).expect("step plans");
+    let source = plan.source_assembly.expect("source assembly");
+    assert_eq!(source.steps[0].needs, ["binutils-16", "glibc-2.44-devel"]);
+}
+
+#[test]
+fn python_wheel_frontend_does_not_require_unrelated_backends() {
+    let step = rpmx_core::steps::resolve(
+        "python/build-wheel",
+        None,
+        Some(&std::collections::BTreeMap::from([
+            ("python".into(), serde_json::json!("python3.14")),
+            (
+                "build-package".into(),
+                serde_json::json!("python-3.14-build"),
+            ),
+        ])),
+        false,
+    )
+    .expect("wheel step");
+    assert_eq!(step.needs, ["python-3.14-build"]);
+    assert_eq!(step.command, "python3.14");
+    assert!(step.args.iter().any(|arg| arg == "--no-isolation"));
+}
+
+#[test]
 fn local_step_requires_declared_inputs() {
     let dir = tempfile::tempdir().expect("tempdir");
     write_step(dir.path(), "acme/strip", STRIP_STEP);

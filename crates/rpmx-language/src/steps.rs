@@ -278,8 +278,14 @@ pub fn resolve(
         env.insert(key.clone(), template::expand_inputs(value, &scope)?);
     }
 
-    let needs_packages = file.needs.packages.clone();
-    let needs_sysroot = file.needs.sysroot.clone();
+    let expand_needs = |packages: &[String]| -> Result<Vec<String>> {
+        packages
+            .iter()
+            .map(|package| template::expand_inputs(package, &scope))
+            .collect()
+    };
+    let needs_packages = expand_needs(&file.needs.packages)?;
+    let needs_sysroot = expand_needs(&file.needs.sysroot)?;
     let mut needs = needs_packages.clone();
     needs.extend(needs_sysroot.iter().cloned());
 
@@ -568,6 +574,151 @@ fn kind(value: &Value) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn python_steps_default_to_eternal_packages_and_accept_bootstrap_overrides() {
+        for (name, input, eternal, fedora) in [
+            (
+                "python/build-wheel",
+                "build-package",
+                "python-build",
+                "python3-build",
+            ),
+            (
+                "python/install-wheel",
+                "pip-package",
+                "python-pip",
+                "python3-pip",
+            ),
+        ] {
+            let step = resolve(name, None, None, false).unwrap();
+            assert_eq!(step.needs, [eternal]);
+            assert_eq!(step.command, "python3");
+            let with = BTreeMap::from([(input.into(), serde_json::json!(fedora))]);
+            let step = resolve(name, None, Some(&with), false).unwrap();
+            assert_eq!(step.needs, [fedora]);
+        }
+        let step = resolve("python", None, None, false).unwrap();
+        assert_eq!(step.needs, ["python-build", "python-pip"]);
+    }
+
+    fn wheel_install_fixture(
+        version: &str,
+        pip_exit: i32,
+    ) -> (tempfile::TempDir, std::process::Output) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+        std::fs::create_dir(root.join("dist")).unwrap();
+        std::fs::write(root.join("dist/demo.whl"), "wheel fixture").unwrap();
+        std::fs::write(root.join("pip.py"), format!(
+            "import json, os, sys\nfrom pathlib import Path\nPath('pip-args.json').write_text(json.dumps(sys.argv[1:]))\nraise SystemExit({pip_exit})\n"
+        )).unwrap();
+        let site = root.join("stage/opt/python path/lib/python3.13/site-packages");
+        let metadata = site.join("demo-1.0.dist-info");
+        std::fs::create_dir_all(&metadata).unwrap();
+        std::fs::write(metadata.join("RECORD"), "old command inventory").unwrap();
+        std::fs::write(metadata.join("INSTALLER"), "pip\n").unwrap();
+        let vendor = site.join("demo/_vendor/private.dist-info");
+        std::fs::create_dir_all(&vendor).unwrap();
+        std::fs::write(vendor.join("RECORD"), "private vendor inventory").unwrap();
+        let bin = root.join("stage/opt/python path/bin");
+        std::fs::create_dir(&bin).unwrap();
+        for name in ["demo", "pip3.13"] {
+            std::fs::write(bin.join(name), name).unwrap();
+        }
+        let interpreter = std::process::Command::new("python3")
+            .args(["-c", "import sys; print(sys.executable)"])
+            .output()
+            .unwrap();
+        let interpreter = String::from_utf8(interpreter.stdout).unwrap();
+        std::fs::create_dir_all(root.join("interpreter/bin")).unwrap();
+        std::os::unix::fs::symlink(interpreter.trim(), root.join("interpreter/bin/python3"))
+            .unwrap();
+        std::os::unix::fs::symlink("bin", root.join("interpreter/sbin")).unwrap();
+        let with = BTreeMap::from([
+            (
+                "python".into(),
+                serde_json::json!(root.join("interpreter/sbin/python3")),
+            ),
+            ("prefix".into(), serde_json::json!("/opt/python path")),
+            ("script-version".into(), serde_json::json!(version)),
+            ("pip-python".into(), serde_json::json!("python3")),
+            ("pip-package".into(), serde_json::json!("python-3.14-pip")),
+        ]);
+        let step = resolve("python/install-wheel", None, Some(&with), false).unwrap();
+        assert_eq!(step.needs, ["python-3.14-pip"]);
+        let output = std::process::Command::new(&step.command)
+            .args(&step.args)
+            .envs(&step.env)
+            .env("STAGE", root.join("stage"))
+            .env("PYTHONPATH", root)
+            .current_dir(root)
+            .output()
+            .expect("execute Python wheel step");
+        (dir, output)
+    }
+
+    #[test]
+    fn wheel_install_targets_the_interpreter_and_versions_commands() {
+        let (dir, output) = wheel_install_fixture("3.13", 0);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let root = dir.path();
+        let args: Vec<String> =
+            serde_json::from_str(&std::fs::read_to_string(root.join("pip-args.json")).unwrap())
+                .unwrap();
+        assert_eq!(args[0], "--python");
+        assert!(Path::new(&args[1]).is_absolute());
+        assert_eq!(Path::new(&args[1]), root.join("interpreter/bin/python3"));
+        assert!(args
+            .windows(2)
+            .any(|pair| pair == ["--prefix", "/opt/python path"]));
+        for flag in [
+            "--no-index",
+            "--no-deps",
+            "--no-compile",
+            "--no-build-isolation",
+            "--ignore-installed",
+        ] {
+            assert!(args.iter().any(|arg| arg == flag), "{args:?}");
+        }
+        let prefix = root.join("stage/opt/python path");
+        assert!(!prefix.join("bin/demo").exists());
+        assert!(prefix.join("bin/demo-3.13").is_file());
+        assert!(prefix.join("bin/pip3.13").is_file());
+        let site = prefix.join("lib/python3.13/site-packages");
+        assert!(!site.join("demo-1.0.dist-info/RECORD").exists());
+        assert_eq!(
+            std::fs::read_to_string(site.join("demo-1.0.dist-info/INSTALLER")).unwrap(),
+            "rpm\n"
+        );
+        assert!(site.join("demo/_vendor/private.dist-info/RECORD").is_file());
+    }
+
+    #[test]
+    fn wheel_install_leaves_command_names_unversioned_by_default() {
+        let (dir, output) = wheel_install_fixture("", 0);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(dir.path().join("stage/opt/python path/bin/demo").is_file());
+    }
+
+    #[test]
+    fn failed_wheel_install_does_not_change_staged_metadata_or_commands() {
+        let (dir, output) = wheel_install_fixture("3.13", 7);
+        assert!(!output.status.success());
+        let prefix = dir.path().join("stage/opt/python path");
+        assert!(prefix.join("bin/demo").is_file());
+        assert!(prefix
+            .join("lib/python3.13/site-packages/demo-1.0.dist-info/RECORD")
+            .is_file());
+    }
 
     #[test]
     fn builtin_steps_do_not_hardcode_guest_paths_in_cwd() {

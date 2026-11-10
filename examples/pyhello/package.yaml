@@ -12,12 +12,14 @@ package:
 build:
   root:
     profile: ../fedora-44-build.profile.yaml
-  packages: [python3, bash]
+  packages: [python3, python3-setuptools, bash]
   pipeline:
-    - runs: |
-        python3 -m build --wheel --no-isolation --outdir dist
-        python3 -m pip install --root ${stage} --prefix /usr --no-deps dist/*.whl
-    - uses: strip
+    - uses: python/build-wheel
+      with:
+        build-package: python3-build
+    - uses: python/install-wheel
+      with:
+        pip-package: python3-pip
 source-assembly:
   pipeline:
     - runs: |

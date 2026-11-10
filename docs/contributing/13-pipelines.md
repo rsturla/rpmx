@@ -104,8 +104,6 @@ inputs:
 needs:
   tools:
     - python3-build
-    - python3-setuptools
-    - python3-wheel
 run:
   cwd: "${source.dir}"
   argv:
@@ -134,6 +132,11 @@ Fields:
 | `run.shell` | no | Shell for `run.runs`; defaults to `/bin/sh -euo pipefail`. |
 
 Input types are a closed set: `string`, `integer`, `boolean`, `list<string>`. Unknown inputs, missing required inputs and type mismatches are planner errors.
+
+`needs.packages` and `needs.sysroot` accept scalar input templates. For example,
+`packages: ["${inputs.build-package}"]` lets a recipe select a versioned tool
+package. The planner expands the input before it adds the dependency. Keep each
+entry to one package requirement.
 
 `needs` is the important part. It means a step cannot run in an environment that lacks its tools, and it removes a whole class of broken recipes: `uses: python/build-wheel` brings `python3-build` with it.
 

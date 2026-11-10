@@ -5,9 +5,11 @@ inputs:
   python:
     type: string
     default: python3
+  build-package:
+    type: string
+    default: python-build
 needs:
-  packages: [python3-build, python3-setuptools, python3-wheel]
+  packages: ["${inputs.build-package}"]
 run:
   cwd: "${source.dir}"
-  runs: |
-    ${inputs.python} -m build --wheel --no-isolation --outdir dist
+  argv: ["${inputs.python}", -m, build, --wheel, --no-isolation, --outdir, dist]

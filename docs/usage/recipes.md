@@ -486,6 +486,45 @@ The standard build systems have individual reusable steps:
 | Make | `make/build`, `make/check`, `make/install` |
 | CMake | `cmake/configure`, `cmake/build`, `cmake/check`, `cmake/install` |
 | Meson | `meson/setup`, `meson/compile`, `meson/test`, `meson/install` |
+| Python | `python/build-wheel`, `python/install-wheel` |
+
+The Python steps support a build interpreter and a different installation
+interpreter. This is useful for pure Python wheels in matrix builds:
+
+```yaml
+build:
+  pipeline:
+    - uses: python/build-wheel
+      with:
+        python: python3.14
+        build-package: python-3.14-build
+    - uses: python/install-wheel
+      with:
+        python: python${matrix.python.version}
+        pip-python: python3.14
+        pip-package: python-3.14-pip
+        script-version: ${matrix.python.version}
+```
+
+`build-package` defaults to `python-build`. The step installs only the build
+frontend. Declare the project's backend dependencies in `build.packages`.
+The frontend reads the backend and its paths from `pyproject.toml`. Bootstrap
+recipes can use a distribution's frontend without a dependency on the package
+under construction. For example, Fedora seeds must explicitly select
+`build-package: python3-build` and `pip-package: python3-pip`.
+The default requirements use Eternal package names.
+
+`pip-package` defaults to `python-pip`. `pip-python` selects the interpreter
+that runs pip. If omitted, it uses the target `python` interpreter. pip receives
+the target through `--python`; it installs without dependency resolution,
+network access, build isolation or bytecode compilation.
+It ignores installed distributions so staging cannot uninstall bootstrap tools.
+
+`script-version` is optional. When supplied, the step appends `-<version>` to
+commands that do not already end with that Python version. The step rejects
+command collisions. It removes top-level wheel `RECORD` files and sets
+`INSTALLER` to `rpm`, since RPM owns the installed file inventory. Private
+vendor metadata remains intact.
 
 A step is named after the command it runs, so a command has exactly one step.
 `autotools/configure` only configures; the Makefile it writes is built,

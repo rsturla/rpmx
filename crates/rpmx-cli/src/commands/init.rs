@@ -158,12 +158,18 @@ package:
 build:
   root:
     profile: fedora-44
-  packages: [python3, python3-pip, python3-setuptools, bash]
+  packages: [python3, python3-setuptools, bash]
   pipeline:
-    - runs: |
-        python3 -m pip install . --root "$STAGE" --prefix /usr --no-deps --no-build-isolation
-        install -D -m 0644 LICENSE "$STAGE/usr/share/licenses/{name}/LICENSE"
-    - uses: strip
+    - uses: python/build-wheel
+      with:
+        build-package: python3-build
+    - uses: python/install-wheel
+      with:
+        pip-package: python3-pip
+    - uses: license/copy
+      with:
+        files: [LICENSE]
+        outputs: [{name}]
 
 source-assembly:
   pipeline:

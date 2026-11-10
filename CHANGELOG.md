@@ -5,6 +5,15 @@ does not promise a stable schema or CLI yet.
 
 ## Unreleased
 
+- Python wheel steps support interpreter matrices without inline install logic.
+  `python/build-wheel` accepts a frontend package and no longer requires
+  unrelated backends. `python/install-wheel` accepts a pip interpreter and
+  package, versions commands on request, and removes stale wheel inventories.
+  Python package requirements default to Eternal names. Fedora bootstrap
+  profiles must select their seed packages explicitly. Backends remain
+  explicit recipe dependencies.
+  Step dependencies can use scalar input templates in both root lists.
+
 - Installed tests resolve their own runtime closure. The RPMs under test are
   published to a local repository for the resolver, so a test root satisfies
   their requirements, including shared-library and file requirements, in one
