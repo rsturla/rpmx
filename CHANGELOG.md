@@ -12,6 +12,8 @@ does not promise a stable schema or CLI yet.
   Python package requirements default to Eternal names. Fedora bootstrap
   profiles must select their seed packages explicitly. Backends remain
   explicit recipe dependencies.
+  Pip can build bootstrap wheels, and both wheel steps accept a standalone
+  pip zipapp. Repository policy metadata stays in bundled defaults.
   Step dependencies can use scalar input templates in both root lists.
 
 - Installed tests resolve their own runtime closure. The RPMs under test are

@@ -8,8 +8,36 @@ inputs:
   build-package:
     type: string
     default: python-build
+  frontend:
+    type: string
+    default: build
+  pip-zipapp:
+    type: string
+    default: ""
 needs:
   packages: ["${inputs.build-package}"]
 run:
   cwd: "${source.dir}"
-  argv: ["${inputs.python}", -m, build, --wheel, --no-isolation, --outdir, dist]
+  env:
+    RPMX_WHEEL_FRONTEND: "${inputs.frontend}"
+    RPMX_PIP_ZIPAPP: "${inputs.pip-zipapp}"
+  argv:
+    - "${inputs.python}"
+    - -c
+    - |
+      import os
+      import subprocess
+      import sys
+
+      frontend = os.environ["RPMX_WHEEL_FRONTEND"]
+      zipapp = os.environ["RPMX_PIP_ZIPAPP"]
+      if frontend == "build":
+          if zipapp:
+              raise SystemExit("pip-zipapp requires frontend: pip")
+          command = [sys.executable, "-m", "build", "--wheel", "--no-isolation", "--outdir", "dist"]
+      elif frontend == "pip":
+          command = [sys.executable, zipapp] if zipapp else [sys.executable, "-m", "pip"]
+          command += ["wheel", "--wheel-dir", "dist", "--no-index", "--no-deps", "--no-build-isolation", "."]
+      else:
+          raise SystemExit("frontend must be build or pip")
+      subprocess.run(command, check=True)

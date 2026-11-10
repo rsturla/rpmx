@@ -602,9 +602,111 @@ mod tests {
         assert_eq!(step.needs, ["python-build", "python-pip"]);
     }
 
+    #[test]
+    fn wheel_frontends_run_upstream_tools_with_offline_pip_arguments() {
+        for (frontend, zipapp) in [("build", false), ("pip", false), ("pip", true)] {
+            let directory = tempfile::tempdir().unwrap();
+            let root = directory.path();
+            let recorder = "import json, sys\nfrom pathlib import Path\nPath('args.json').write_text(json.dumps(sys.argv[1:]))\n";
+            for name in ["build.py", "pip.py", "pip-standalone.py"] {
+                std::fs::write(root.join(name), recorder).unwrap();
+            }
+            let with = BTreeMap::from([
+                ("frontend".into(), serde_json::json!(frontend)),
+                (
+                    "build-package".into(),
+                    serde_json::json!(if frontend == "build" {
+                        "python-build"
+                    } else {
+                        "pip-zipapp"
+                    }),
+                ),
+                (
+                    "pip-zipapp".into(),
+                    serde_json::json!(if zipapp {
+                        root.join("pip-standalone.py").display().to_string()
+                    } else {
+                        String::new()
+                    }),
+                ),
+            ]);
+            let step = resolve("python/build-wheel", None, Some(&with), false).unwrap();
+            let output = std::process::Command::new(step.command)
+                .args(step.args)
+                .envs(step.env)
+                .env("PYTHONPATH", root)
+                .current_dir(root)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let args: Vec<String> =
+                serde_json::from_str(&std::fs::read_to_string(root.join("args.json")).unwrap())
+                    .unwrap();
+            if frontend == "pip" {
+                assert_eq!(args[0], "wheel");
+                for flag in ["--no-index", "--no-deps", "--no-build-isolation"] {
+                    assert!(args.iter().any(|arg| arg == flag), "{args:?}");
+                }
+                assert_eq!(args.last().unwrap(), ".");
+            } else {
+                assert_eq!(args, ["--wheel", "--no-isolation", "--outdir", "dist"]);
+            }
+        }
+    }
+
+    #[test]
+    fn invalid_wheel_frontends_fail_before_running_a_tool() {
+        for (frontend, zipapp) in [("unknown", ""), ("build", "/missing/pip.pyz")] {
+            let with = BTreeMap::from([
+                ("frontend".into(), serde_json::json!(frontend)),
+                ("pip-zipapp".into(), serde_json::json!(zipapp)),
+            ]);
+            let step = resolve("python/build-wheel", None, Some(&with), false).unwrap();
+            let output = std::process::Command::new(step.command)
+                .args(step.args)
+                .envs(step.env)
+                .output()
+                .unwrap();
+            assert!(!output.status.success());
+            assert!(String::from_utf8_lossy(&output.stderr).contains("frontend"));
+        }
+    }
+
     fn wheel_install_fixture(
         version: &str,
         pip_exit: i32,
+    ) -> (tempfile::TempDir, std::process::Output) {
+        wheel_install_fixture_with_zipapp(version, pip_exit, false)
+    }
+
+    #[test]
+    fn wheel_install_accepts_a_standalone_pip_with_no_target_pip_requirement() {
+        let (directory, output) = wheel_install_fixture_with_zipapp("3.15", 0, true);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let args: Vec<String> = serde_json::from_str(
+            &std::fs::read_to_string(directory.path().join("pip-args.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(args[0], "--python");
+        assert_eq!(args[2], "install");
+        assert!(directory
+            .path()
+            .join("stage/opt/python path/bin/demo-3.15")
+            .exists());
+    }
+
+    fn wheel_install_fixture_with_zipapp(
+        version: &str,
+        pip_exit: i32,
+        zipapp: bool,
     ) -> (tempfile::TempDir, std::process::Output) {
         let dir = tempfile::tempdir().expect("tempdir");
         let root = dir.path();
@@ -613,6 +715,10 @@ mod tests {
         std::fs::write(root.join("pip.py"), format!(
             "import json, os, sys\nfrom pathlib import Path\nPath('pip-args.json').write_text(json.dumps(sys.argv[1:]))\nraise SystemExit({pip_exit})\n"
         )).unwrap();
+        if zipapp {
+            std::fs::copy(root.join("pip.py"), root.join("pip-standalone.py")).unwrap();
+            std::fs::remove_file(root.join("pip.py")).unwrap();
+        }
         let site = root.join("stage/opt/python path/lib/python3.13/site-packages");
         let metadata = site.join("demo-1.0.dist-info");
         std::fs::create_dir_all(&metadata).unwrap();
@@ -643,10 +749,32 @@ mod tests {
             ("prefix".into(), serde_json::json!("/opt/python path")),
             ("script-version".into(), serde_json::json!(version)),
             ("pip-python".into(), serde_json::json!("python3")),
-            ("pip-package".into(), serde_json::json!("python-3.14-pip")),
+            (
+                "pip-package".into(),
+                serde_json::json!(if zipapp {
+                    "pip-zipapp"
+                } else {
+                    "python-3.14-pip"
+                }),
+            ),
+            (
+                "pip-zipapp".into(),
+                serde_json::json!(if zipapp {
+                    root.join("pip-standalone.py").display().to_string()
+                } else {
+                    String::new()
+                }),
+            ),
         ]);
         let step = resolve("python/install-wheel", None, Some(&with), false).unwrap();
-        assert_eq!(step.needs, ["python-3.14-pip"]);
+        assert_eq!(
+            step.needs,
+            [if zipapp {
+                "pip-zipapp"
+            } else {
+                "python-3.14-pip"
+            }]
+        );
         let output = std::process::Command::new(&step.command)
             .args(&step.args)
             .envs(&step.env)
