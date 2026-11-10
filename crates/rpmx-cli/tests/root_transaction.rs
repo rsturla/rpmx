@@ -69,9 +69,38 @@ fn exact_package_requests_and_dependencies_form_one_installable_transaction() {
             {"id": "published", "baseurl": format!("file://{}", root.join("published").join(arch).display())},
             {"id": "under-test", "baseurl": format!("file://{}", root.join("under-test").join(arch).display()), "priority": 999},
         ],
-        "packages": {"install": ["demo-consumer", "demo-lib-1-1.noarch"]},
+        "packages": {"install": ["demo-consumer", "demo-lib", "demo-lib-1-1.noarch"]},
         "options": {"weak_deps": false},
     });
+    let mut unconstrained = profile.clone();
+    unconstrained["packages"]["install"] = serde_json::json!(["demo-consumer", "demo-lib"]);
+    std::fs::write(
+        root.join("unconstrained.yaml"),
+        serde_yaml_ng::to_string(&unconstrained).unwrap(),
+    )
+    .unwrap();
+    run(
+        root,
+        &[
+            "root",
+            "resolve",
+            "unconstrained.yaml",
+            "--output",
+            "newest.lock.yaml",
+            "--cache",
+            "cache",
+        ],
+    );
+    let newest = rpmx_core::root::load_lock(&root.join("newest.lock.yaml")).unwrap();
+    let library = newest
+        .packages
+        .values()
+        .flatten()
+        .find(|package| package.name == "demo-lib")
+        .unwrap();
+    assert_eq!(library.evr, "2-1");
+    assert_eq!(library.repo_id, "published");
+
     std::fs::write(
         root.join("profile.yaml"),
         serde_yaml_ng::to_string(&profile).unwrap(),
@@ -131,12 +160,23 @@ fn exact_package_requests_and_dependencies_form_one_installable_transaction() {
             published.to_str().unwrap(),
         ],
     );
+    let mut incompatible = profile.clone();
+    incompatible["packages"]["install"] = serde_json::json!([
+        "demo-consumer-2-1.noarch",
+        "demo-lib",
+        "demo-lib-1-1.noarch"
+    ]);
+    std::fs::write(
+        root.join("incompatible.yaml"),
+        serde_yaml_ng::to_string(&incompatible).unwrap(),
+    )
+    .unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_rpmx"))
         .current_dir(root)
         .args([
             "root",
             "resolve",
-            "profile.yaml",
+            "incompatible.yaml",
             "--output",
             "unsatisfiable.lock.yaml",
             "--cache",
