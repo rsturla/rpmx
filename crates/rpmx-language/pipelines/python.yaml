@@ -7,10 +7,10 @@ inputs:
     default: python3
   build-package:
     type: string
-    default: python-build
+    required: true
   pip-package:
     type: string
-    default: python-pip
+    required: true
   prefix:
     type: string
     default: "${prefix}"

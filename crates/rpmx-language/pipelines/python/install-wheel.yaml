@@ -13,7 +13,7 @@ inputs:
     default: ""
   pip-package:
     type: string
-    default: python-pip
+    required: true
   pip-zipapp:
     type: string
     default: ""

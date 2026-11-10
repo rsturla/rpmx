@@ -576,30 +576,40 @@ mod tests {
     use super::*;
 
     #[test]
-    fn python_steps_default_to_eternal_packages_and_accept_bootstrap_overrides() {
+    fn python_steps_require_explicit_tool_packages() {
         for (name, input, eternal, fedora) in [
             (
                 "python/build-wheel",
                 "build-package",
-                "python-build",
+                "python-3.14-build",
                 "python3-build",
             ),
             (
                 "python/install-wheel",
                 "pip-package",
-                "python-pip",
+                "python-3.14-pip",
                 "python3-pip",
             ),
         ] {
-            let step = resolve(name, None, None, false).unwrap();
+            assert!(resolve(name, None, None, false).is_err());
+            let with = BTreeMap::from([(input.into(), serde_json::json!(eternal))]);
+            let step = resolve(name, None, Some(&with), false).unwrap();
             assert_eq!(step.needs, [eternal]);
             assert_eq!(step.command, "python3");
             let with = BTreeMap::from([(input.into(), serde_json::json!(fedora))]);
             let step = resolve(name, None, Some(&with), false).unwrap();
             assert_eq!(step.needs, [fedora]);
         }
-        let step = resolve("python", None, None, false).unwrap();
-        assert_eq!(step.needs, ["python-build", "python-pip"]);
+        assert!(resolve("python", None, None, false).is_err());
+        let with = BTreeMap::from([
+            (
+                "build-package".into(),
+                serde_json::json!("python-3.14-build"),
+            ),
+            ("pip-package".into(), serde_json::json!("python-3.14-pip")),
+        ]);
+        let step = resolve("python", None, Some(&with), false).unwrap();
+        assert_eq!(step.needs, ["python-3.14-build", "python-3.14-pip"]);
     }
 
     #[test]
@@ -664,6 +674,7 @@ mod tests {
             let with = BTreeMap::from([
                 ("frontend".into(), serde_json::json!(frontend)),
                 ("pip-zipapp".into(), serde_json::json!(zipapp)),
+                ("build-package".into(), serde_json::json!("test-tool")),
             ]);
             let step = resolve("python/build-wheel", None, Some(&with), false).unwrap();
             let output = std::process::Command::new(step.command)
