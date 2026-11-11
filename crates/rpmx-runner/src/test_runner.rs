@@ -72,24 +72,24 @@ pub fn run_planned_tests(
             )?;
             let result = run_one_test(sandbox, &test, settings.results);
             sandbox.sync()?;
-            collect_artifacts(
+            let artifacts = collect_artifacts(
                 &test,
                 settings.workspace,
                 &result_dir(settings.results, &test),
-            )?;
+            );
             if rpmx_base::output::keep_workdir() {
                 rpmx_base::output::wrote(&files.keep());
             }
-            result?;
+            finish_test(result, artifacts)?;
         } else {
             let result = run_one_test(sandbox, test, settings.results);
             sandbox.sync()?;
-            collect_artifacts(
+            let artifacts = collect_artifacts(
                 test,
                 settings.workspace,
                 &result_dir(settings.results, test),
-            )?;
-            result?;
+            );
+            finish_test(result, artifacts)?;
         }
     }
     if installed_tests.is_empty() {
@@ -166,11 +166,11 @@ pub fn run_planned_tests(
         })?;
         let result = run_one_test(&test_sandbox, &test, settings.results);
         test_sandbox.sync()?;
-        collect_artifacts(&test, &workspace, &result_dir(settings.results, &test))?;
+        let artifacts = collect_artifacts(&test, &workspace, &result_dir(settings.results, &test));
         if rpmx_base::output::keep_workdir() {
             rpmx_base::output::wrote(&work.keep());
         }
-        result?;
+        finish_test(result, artifacts)?;
     }
     Ok(())
 }
@@ -288,8 +288,9 @@ fn collect_artifacts(
     workspace: &Path,
     results: &Path,
 ) -> Result<()> {
+    let workspace = std::fs::canonicalize(workspace).map_err(file_error)?;
     for artifact in &test.artifacts {
-        let path = std::path::Path::new(artifact);
+        let path = Path::new(artifact);
         if path.components().count() == 0
             || path
                 .components()
@@ -301,11 +302,14 @@ fn collect_artifacts(
             ));
         }
         let source = workspace.join(path);
-        if !source.exists() {
-            continue;
+        match std::fs::symlink_metadata(&source) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            result => {
+                result.map_err(file_error)?;
+            }
         }
-        let mut parent = workspace.to_path_buf();
-        for part in path.components() {
+        let mut parent = workspace.clone();
+        for part in path.parent().into_iter().flat_map(Path::components) {
             parent.push(part);
             if std::fs::symlink_metadata(&parent)
                 .map_err(file_error)?
@@ -314,25 +318,148 @@ fn collect_artifacts(
             {
                 return Err(Error::new(
                     codes::TEST_004,
-                    "test artifacts cannot contain symlinks",
+                    format!("artifact parent {} is a symlink", parent.display()),
                 ));
             }
         }
-        let files = if source.is_dir() {
-            rpmx_language::test_files::entries(workspace, artifact)?
-        } else {
-            vec![source]
-        };
-        for file in files {
-            let target = results
-                .join("artifacts")
-                .join(file.strip_prefix(workspace).expect("artifact in workspace"));
-            std::fs::create_dir_all(target.parent().expect("artifact directory"))
-                .map_err(file_error)?;
-            std::fs::copy(file, target).map_err(file_error)?;
-        }
+        let destination = results.join("artifacts");
+        artifact_directory(&destination)?;
+        copy_artifact(&workspace, &source, &destination)?;
     }
     Ok(())
+}
+
+// Artifact trees may contain test-generated links, unlike input fixtures.
+// Never follow them while copying, and preserve only links that remain inside
+// the copied workspace namespace. Missing targets are useful failure evidence.
+fn copy_artifact(workspace: &Path, source: &Path, destination: &Path) -> Result<()> {
+    let relative = source
+        .strip_prefix(workspace)
+        .expect("artifact in workspace");
+    let target = destination.join(relative);
+    let kind = std::fs::symlink_metadata(source)
+        .map_err(file_error)?
+        .file_type();
+    let mut parent = destination.to_path_buf();
+    for part in relative.parent().into_iter().flat_map(Path::components) {
+        parent.push(part);
+        artifact_directory(&parent)?;
+    }
+    if kind.is_dir() {
+        artifact_directory(&target)?;
+        let mut entries = std::fs::read_dir(source)
+            .map_err(file_error)?
+            .map(|entry| entry.map(|entry| entry.path()))
+            .collect::<std::io::Result<Vec<_>>>()
+            .map_err(file_error)?;
+        entries.sort();
+        for entry in entries {
+            copy_artifact(workspace, &entry, destination)?;
+        }
+    } else if kind.is_symlink() {
+        let link = std::fs::read_link(source).map_err(file_error)?;
+        let mut resolved = relative.parent().unwrap_or(Path::new("")).to_path_buf();
+        for part in link.components() {
+            match part {
+                std::path::Component::Normal(part) => resolved.push(part),
+                std::path::Component::CurDir => {}
+                std::path::Component::ParentDir if resolved.pop() => {}
+                _ => {
+                    return Err(Error::new(
+                        codes::TEST_004,
+                        format!(
+                            "artifact symlink {} escapes the workspace: {}",
+                            source.display(),
+                            link.display()
+                        ),
+                    ))
+                }
+            }
+        }
+        match std::fs::canonicalize(source) {
+            Ok(path) if !path.starts_with(workspace) => {
+                return Err(Error::new(
+                    codes::TEST_004,
+                    format!(
+                        "artifact symlink {} resolves outside the workspace",
+                        source.display()
+                    ),
+                ))
+            }
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+                return Err(file_error(error))
+            }
+            _ => {}
+        }
+        if let Ok(metadata) = std::fs::symlink_metadata(&target) {
+            if metadata.file_type().is_symlink()
+                && std::fs::read_link(&target).map_err(file_error)? == link
+            {
+                return Ok(());
+            }
+            return Err(Error::new(
+                codes::TEST_004,
+                format!("artifact destination {} already exists", target.display()),
+            ));
+        }
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(link, target).map_err(file_error)?;
+        #[cfg(not(unix))]
+        return Err(Error::new(
+            codes::TEST_004,
+            "artifact symlinks require a Unix host",
+        ));
+    } else if kind.is_file() {
+        if std::fs::symlink_metadata(&target).is_ok_and(|metadata| !metadata.is_file()) {
+            return Err(Error::new(
+                codes::TEST_004,
+                format!(
+                    "artifact destination {} is not a regular file",
+                    target.display()
+                ),
+            ));
+        }
+        std::fs::copy(source, target).map_err(file_error)?;
+    } else {
+        return Err(Error::new(
+            codes::TEST_004,
+            format!(
+                "artifact {} is not a regular file, directory, or contained relative symlink",
+                source.display()
+            ),
+        ));
+    }
+    Ok(())
+}
+
+fn artifact_directory(path: &Path) -> Result<()> {
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.is_dir() => Ok(()),
+        Ok(_) => Err(Error::new(
+            codes::TEST_004,
+            format!(
+                "artifact destination {} is not a real directory",
+                path.display()
+            ),
+        )),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            std::fs::create_dir_all(path).map_err(file_error)
+        }
+        Err(error) => Err(file_error(error)),
+    }
+}
+
+fn finish_test(result: Result<()>, artifacts: Result<()>) -> Result<()> {
+    match (result, artifacts) {
+        (Err(mut failure), Err(artifact_failure)) => {
+            failure.message.push_str(&format!(
+                "; artifact collection also failed: {artifact_failure}"
+            ));
+            Err(failure)
+        }
+        (Err(failure), _) | (_, Err(failure)) => Err(failure),
+        _ => Ok(()),
+    }
 }
 
 fn run_one_test(
@@ -435,5 +562,158 @@ mod transaction_tests {
         );
         assert!(copy_transaction_root(Path::new("/"), &directory.path().join("host")).is_err());
         assert!(copy_transaction_root(&source, &source.join("recursive")).is_err());
+    }
+}
+
+#[cfg(all(test, unix))]
+mod artifact_tests {
+    use super::*;
+    use std::os::unix::fs::symlink;
+
+    fn test(artifact: &str) -> rpmx_language::PlannedTest {
+        rpmx_language::PlannedTest {
+            name: "evidence".into(),
+            cell_id: String::new(),
+            files: None,
+            artifacts: vec![artifact.into()],
+            skip: None,
+            output: None,
+            stage: "build".into(),
+            argv: None,
+            pipeline: vec![],
+            packages: vec![],
+            environment: BTreeMap::new(),
+        }
+    }
+
+    #[test]
+    fn preserves_openssl_hashlinks_empty_directories_and_dangling_evidence() {
+        let work = tempfile::tempdir().unwrap();
+        let results = tempfile::tempdir().unwrap();
+        let directory = work.path().join("test-runs/test_x509_store");
+        std::fs::create_dir_all(directory.join("empty")).unwrap();
+        std::fs::write(directory.join("root-cert.pem"), "candidate certificate").unwrap();
+        symlink("root-cert.pem", directory.join("8489a545.0")).unwrap();
+        symlink("missing.log", directory.join("missing-link")).unwrap();
+        symlink("empty", directory.join("directory-link")).unwrap();
+        // Input fixtures stay strict; generated output artifacts have a different contract.
+        assert!(rpmx_language::test_files::entries(work.path(), "test-runs").is_err());
+        collect_artifacts(&test("test-runs"), work.path(), results.path()).unwrap();
+        // Overlapping/repeated artifact declarations must not follow or destroy links.
+        collect_artifacts(
+            &test("test-runs/test_x509_store"),
+            work.path(),
+            results.path(),
+        )
+        .unwrap();
+        let copied = results.path().join("artifacts/test-runs/test_x509_store");
+        assert_eq!(
+            std::fs::read_link(copied.join("8489a545.0")).unwrap(),
+            Path::new("root-cert.pem")
+        );
+        assert_eq!(
+            std::fs::read(copied.join("8489a545.0")).unwrap(),
+            b"candidate certificate"
+        );
+        assert!(std::fs::symlink_metadata(copied.join("missing-link"))
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert!(copied.join("empty").is_dir());
+        assert!(std::fs::symlink_metadata(copied.join("directory-link"))
+            .unwrap()
+            .file_type()
+            .is_symlink());
+    }
+
+    #[test]
+    fn rejects_absolute_escaping_and_indirect_external_links() {
+        for link in ["/etc/passwd", "../../outside", "alias/passwd"] {
+            let work = tempfile::tempdir().unwrap();
+            let results = tempfile::tempdir().unwrap();
+            std::fs::create_dir(work.path().join("logs")).unwrap();
+            if link == "alias/passwd" {
+                symlink("/etc", work.path().join("logs/alias")).unwrap();
+            }
+            symlink(link, work.path().join("logs/result")).unwrap();
+            let error =
+                collect_artifacts(&test("logs/result"), work.path(), results.path()).unwrap_err();
+            assert_eq!(error.code, codes::TEST_004);
+            assert!(
+                error.message.contains("outside") || error.message.contains("escapes"),
+                "{error}"
+            );
+            assert!(!results.path().join("artifacts/logs/result").exists());
+        }
+    }
+
+    #[test]
+    fn rejects_symlink_artifact_parents_and_destination_parents() {
+        let work = tempfile::tempdir().unwrap();
+        let results = tempfile::tempdir().unwrap();
+        let external = tempfile::tempdir().unwrap();
+        std::fs::create_dir(work.path().join("logs")).unwrap();
+        std::fs::write(work.path().join("logs/result"), "test").unwrap();
+        symlink("logs", work.path().join("alias")).unwrap();
+        assert!(collect_artifacts(&test("alias/result"), work.path(), results.path()).is_err());
+        std::fs::create_dir(results.path().join("artifacts")).unwrap();
+        symlink(external.path(), results.path().join("artifacts/logs")).unwrap();
+        assert!(collect_artifacts(&test("logs/result"), work.path(), results.path()).is_err());
+        assert!(!external.path().join("result").exists());
+    }
+
+    #[test]
+    fn rejects_destination_file_symlinks_and_special_artifacts() {
+        let work = tempfile::tempdir().unwrap();
+        let results = tempfile::tempdir().unwrap();
+        let external = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(external.path(), "unchanged").unwrap();
+        std::fs::write(work.path().join("result"), "overwrite").unwrap();
+        std::fs::create_dir(results.path().join("artifacts")).unwrap();
+        symlink(external.path(), results.path().join("artifacts/result")).unwrap();
+        assert!(collect_artifacts(&test("result"), work.path(), results.path()).is_err());
+        assert_eq!(std::fs::read(external.path()).unwrap(), b"unchanged");
+        let _socket = std::os::unix::net::UnixListener::bind(work.path().join("socket")).unwrap();
+        let error = collect_artifacts(&test("socket"), work.path(), results.path()).unwrap_err();
+        assert!(error.message.contains("not a regular file"), "{error}");
+    }
+
+    #[test]
+    fn retains_original_failure_when_artifact_collection_also_fails() {
+        let error = finish_test(
+            Err(Error::new(codes::TEST_003, "OCSP assertion failed, exit 1")),
+            Err(Error::new(codes::TEST_004, "escaping artifact symlink")),
+        )
+        .unwrap_err();
+        assert_eq!(error.code, codes::TEST_003);
+        assert!(error.message.contains("OCSP assertion failed, exit 1"));
+        assert!(error.message.contains("artifact collection also failed"));
+        assert!(error.message.contains("escaping artifact symlink"));
+        assert_eq!(
+            finish_test(Ok(()), Err(Error::new(codes::TEST_004, "bad evidence")))
+                .unwrap_err()
+                .code,
+            codes::TEST_004
+        );
+    }
+
+    #[test]
+    #[ignore = "requires an existing OpenSSL source workspace with test-runs evidence"]
+    fn copies_actual_openssl_test_evidence() {
+        let workspace = std::path::PathBuf::from(
+            std::env::var_os("RPMX_TEST_OPENSSL_WORKSPACE").expect("RPMX_TEST_OPENSSL_WORKSPACE"),
+        );
+        let results = tempfile::tempdir().unwrap();
+        collect_artifacts(&test("test-runs"), &workspace, results.path()).unwrap();
+        let hashlink = results
+            .path()
+            .join("artifacts/test-runs/test_x509_store/60-test_x509_store/8489a545.0");
+        assert!(std::fs::symlink_metadata(&hashlink)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert!(std::fs::read_to_string(hashlink)
+            .unwrap()
+            .contains("BEGIN CERTIFICATE"));
     }
 }

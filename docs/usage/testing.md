@@ -101,7 +101,11 @@ tests:
 ```
 
 rpmx collects artifacts after success or failure. Missing paths are ignored.
-Paths must be relative to the test workspace. Symlinks and parent traversal are errors.
+Paths must be relative to the test workspace, without parent traversal.
+Generated relative symlinks are preserved without following them. Their targets
+must stay within the workspace; absolute links, escaping links and special files
+are errors. Contained dangling links remain available as failure evidence.
+If artifact collection also fails after a test failure, the report keeps both errors.
 Nested upstream reports remain intact in the artifact directory.
 The JUnit report includes the last 64 KiB of each output stream.
 Full output remains in the log files.
