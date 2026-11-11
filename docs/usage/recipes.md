@@ -830,11 +830,15 @@ the configured `cc`, then checks the resulting ELF properties:
 tests:
   - name: compiler
     stage: installed
+    packages: [gcc-13]
     pipeline:
       - uses: test/compiler-hardening-check
         with:
           cc: gcc-13
 ```
+
+`cc` is required. Declare its compiler package in the test's `packages` list.
+The step does not add a default compiler that could conflict with the selected stream.
 
 The shared-object step matters: a wrapper that appends `-pie` to every link
 will fail a `-shared` link, while a wrapper that reads the link mode from a GCC
