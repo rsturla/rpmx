@@ -33,6 +33,9 @@ fn kind(value: &Value) -> &'static str {
 pub struct Recipe {
     pub schema: u32,
     pub package: Package,
+    /// Opaque data for downstream tools. Not part of the template scope.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub metadata: BTreeMap<String, Value>,
     /// A local directory copied into the source workspace before assembly.
     /// Paths are relative to the recipe directory and the contents land at the
     /// workspace root, like melange's `--source-dir`.
@@ -771,6 +774,8 @@ pub struct RecipeFragment {
     pub include: Vec<String>,
     #[serde(default)]
     pub package: Option<Package>,
+    #[serde(default, deserialize_with = "metadata_section")]
+    pub metadata: Option<BTreeMap<String, Value>>,
     #[serde(default)]
     pub context: Option<String>,
     #[serde(default)]
@@ -791,6 +796,15 @@ pub struct RecipeFragment {
     pub tests: Option<Vec<Test>>,
     #[serde(default)]
     pub dependencies: Option<RecipeDependencies>,
+}
+
+// Distinguish an absent section from an explicit empty map for include ownership.
+// An explicit null must fail the same way as in a complete Recipe.
+fn metadata_section<'de, D>(deserializer: D) -> Result<Option<BTreeMap<String, Value>>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    BTreeMap::deserialize(deserializer).map(Some)
 }
 
 #[cfg(test)]

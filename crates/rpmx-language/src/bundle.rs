@@ -66,6 +66,7 @@ impl RecipeBundle {
 #[derive(Default)]
 struct Merged {
     package: Option<crate::model::Package>,
+    metadata: Option<BTreeMap<String, serde_json::Value>>,
     context: Option<String>,
     vars: Option<BTreeMap<String, serde_json::Value>>,
     build: Option<crate::model::Build>,
@@ -141,6 +142,7 @@ pub fn load_recipe_bundle(path: impl AsRef<Path>) -> Result<RecipeBundle> {
     let recipe = Recipe {
         schema,
         package,
+        metadata: merged.metadata.unwrap_or_default(),
         context: merged.context,
         vars: merged.vars.unwrap_or_default(),
         build,
@@ -484,6 +486,7 @@ fn merge(
         };
     }
     set!(package, "package", fragment.package);
+    set!(metadata, "metadata", fragment.metadata);
     set!(context, "context", fragment.context);
     set!(vars, "vars", fragment.vars);
     set!(build, "build", fragment.build);
