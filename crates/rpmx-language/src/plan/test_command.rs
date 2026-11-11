@@ -33,7 +33,7 @@ pub(super) fn command(test: &Test) -> Result<Option<Vec<String>>> {
         if script.trim().is_empty() {
             return Err(invalid("test script must not be empty"));
         }
-        return Ok(Some(bash(script.clone())));
+        return Ok(Some(bash(script.clone(), true)));
     }
     let Some(expect) = &test.expect else {
         return Ok(test.argv.clone());
@@ -66,15 +66,42 @@ pub(super) fn command(test: &Test) -> Result<Option<Vec<String>>> {
             ));
         }
     }
-    Ok(Some(bash(script)))
+    // Expected nonzero statuses and exact stream checks already have their own
+    // diagnostics. Do not add an ERR trap around the command being asserted.
+    Ok(Some(bash(script, false)))
 }
 
-fn bash(script: String) -> Vec<String> {
-    ["bash", "--noprofile", "--norc", "-euo", "pipefail", "-c"]
-        .into_iter()
-        .map(String::from)
-        .chain([script])
-        .collect()
+fn bash(script: String, diagnostics: bool) -> Vec<String> {
+    // Capture the failure before running the handler changes $? or PIPESTATUS.
+    // Printing leaves errexit in control, including its if/&&/||/! exceptions.
+    const PREFIX: &str = r#"rpmx_test_report_error() {
+  local failure_status=$1 failure_line=$2 failure_command=$3 failure_pipeline=$4 failure_source=$5
+  if [[ -z $failure_source || $failure_source == "$0" ]]; then
+    failure_line=$((failure_line - RPMX_PREFIX_LINES))
+    failure_source=script
+  fi
+  printf 'rpmx: test %s line %s failed (exit %s; pipeline statuses: %s); last command: %s\n' "$failure_source" "$failure_line" "$failure_status" "$failure_pipeline" "$failure_command" >&2 || :
+}
+trap 'rpmx_test_report_error "$?" "$LINENO" "$BASH_COMMAND" "${PIPESTATUS[*]}" "${BASH_SOURCE[0]:-}"' ERR
+"#;
+    let script = if diagnostics {
+        let prefix = PREFIX.replace("RPMX_PREFIX_LINES", &PREFIX.lines().count().to_string());
+        format!("{prefix}{script}")
+    } else {
+        script
+    };
+    [
+        "bash",
+        "--noprofile",
+        "--norc",
+        if diagnostics { "-Eeuo" } else { "-euo" },
+        "pipefail",
+        "-c",
+    ]
+    .into_iter()
+    .map(String::from)
+    .chain([script])
+    .collect()
 }
 
 pub(super) fn strict_step(step: &mut super::PlannedStep) {
@@ -82,7 +109,7 @@ pub(super) fn strict_step(step: &mut super::PlannedStep) {
         && step.args.first().map(String::as_str) == Some("-c")
         && step.args.len() == 2
     {
-        let mut argv = bash(step.args[1].clone());
+        let mut argv = bash(step.args[1].clone(), true);
         step.command = Some(argv.remove(0));
         step.args = argv;
     }
@@ -99,6 +126,169 @@ mod tests {
             .args(&argv[1..])
             .output()
             .expect("execute")
+    }
+
+    fn execute_script(script: &str) -> std::process::Output {
+        let mut test: Test =
+            serde_yaml_ng::from_str("name: probe\nstage: build\nscript: placeholder\n")
+                .expect("test");
+        test.script = Some(script.into());
+        let argv = command(&test).expect("command").expect("argv");
+        std::process::Command::new(&argv[0])
+            .args(&argv[1..])
+            .output()
+            .expect("execute")
+    }
+
+    #[test]
+    fn script_failures_report_original_line_command_and_status() {
+        let output = execute_script("printf 'before\\n'\ntest 755 = 777\nprintf 'after\\n'\n");
+        assert_eq!(output.status.code(), Some(1));
+        assert_eq!(output.stdout, b"before\n");
+        let stderr = String::from_utf8(output.stderr).expect("stderr");
+        assert!(stderr.contains("line 2 failed (exit 1"), "{stderr}");
+        assert!(stderr.contains("last command: test 755 = 777"), "{stderr}");
+
+        let output = execute_script("bash -c 'exit 7'\nprintf 'unreachable\\n'\n");
+        assert_eq!(output.status.code(), Some(7));
+        let stderr = String::from_utf8(output.stderr).expect("stderr");
+        assert!(stderr.contains("line 1 failed (exit 7"), "{stderr}");
+        assert!(
+            stderr.contains("last command: bash -c 'exit 7'"),
+            "{stderr}"
+        );
+    }
+
+    #[test]
+    fn failures_inside_nested_functions_keep_the_failing_body_line() {
+        let output =
+            execute_script("inner() {\n  test present = missing\n}\nouter() { inner; }\nouter\n");
+        assert_eq!(output.status.code(), Some(1));
+        let stderr = String::from_utf8(output.stderr).expect("stderr");
+        assert!(stderr.contains("line 2 failed (exit 1"), "{stderr}");
+        assert!(
+            stderr.contains("last command: test present = missing"),
+            "{stderr}"
+        );
+        assert_eq!(stderr.matches("rpmx: test script").count(), 1, "{stderr}");
+    }
+
+    #[test]
+    fn sourced_fixtures_keep_their_own_filename_and_line_numbers() {
+        let fixture = tempfile::NamedTempFile::new().expect("fixture");
+        std::fs::write(
+            fixture.path(),
+            "fixture_assertion() {\n  test present = missing\n}\nfixture_assertion\n",
+        )
+        .expect("write fixture");
+        let output = execute_script(&format!(
+            "source {}\n",
+            quote(fixture.path().to_str().unwrap())
+        ));
+        assert_eq!(output.status.code(), Some(1));
+        let stderr = String::from_utf8(output.stderr).expect("stderr");
+        assert!(
+            stderr.contains(&format!(
+                "{} line 2 failed (exit 1",
+                fixture.path().display()
+            )),
+            "{stderr}"
+        );
+        assert!(
+            stderr.contains("last command: test present = missing"),
+            "{stderr}"
+        );
+        assert_eq!(stderr.matches("rpmx: test ").count(), 1, "{stderr}");
+    }
+
+    #[test]
+    fn pipeline_diagnostics_identify_the_last_command_and_all_statuses() {
+        let output = execute_script("printf 'before\\n'\nbash -c 'exit 7' | true\n");
+        assert_eq!(output.status.code(), Some(7));
+        let stderr = String::from_utf8(output.stderr).expect("stderr");
+        assert!(stderr.contains("line 2 failed (exit 7"), "{stderr}");
+        assert!(stderr.contains("pipeline statuses: 7 0"), "{stderr}");
+        assert!(stderr.contains("last command: true"), "{stderr}");
+    }
+
+    #[test]
+    fn expected_script_failures_do_not_emit_diagnostics() {
+        let output = execute_script(
+            "if false; then exit 11; fi\nfalse || true\n! false\nif false | true; then exit 12; fi\nif value=$(false); then exit 14; fi\nhandled() { false; printf 'handled\\n'; }\nhandled || exit 13\nprintf 'done\\n'\n",
+        );
+        assert!(output.status.success(), "{output:?}");
+        assert_eq!(output.stdout, b"handled\ndone\n");
+        assert!(output.stderr.is_empty(), "{output:?}");
+    }
+
+    #[test]
+    fn command_substitution_reports_inner_failure_and_assignment_without_recursion() {
+        let output = execute_script("printf 'before\\n'\nvalue=$(bash -c 'exit 7')\n");
+        assert_eq!(output.status.code(), Some(7));
+        let stderr = String::from_utf8(output.stderr).expect("stderr");
+        assert!(stderr.contains("line 2 failed (exit 7"), "{stderr}");
+        assert!(
+            stderr.contains("last command: bash -c 'exit 7'"),
+            "{stderr}"
+        );
+        assert!(
+            stderr.contains("last command: value=$(bash -c 'exit 7')"),
+            "{stderr}"
+        );
+        assert_eq!(stderr.matches("rpmx: test script").count(), 2, "{stderr}");
+    }
+
+    #[test]
+    fn temporarily_disabling_errexit_still_preserves_the_command_status() {
+        let output =
+            execute_script("set +e\nbash -c 'exit 7'\nstatus=$?\nset -e\ntest \"$status\" = 7\n");
+        assert!(output.status.success(), "{output:?}");
+        let stderr = String::from_utf8(output.stderr).expect("stderr");
+        assert!(stderr.contains("line 2 failed (exit 7"), "{stderr}");
+        assert_eq!(stderr.matches("rpmx: test script").count(), 1, "{stderr}");
+    }
+
+    #[test]
+    fn planned_test_pipeline_steps_use_diagnostics_without_changing_build_steps() {
+        let recipe = crate::parse_recipe(
+            r#"
+schema: 1
+package:
+  name: probe
+  version: "1"
+  release: 1
+  summary: probe
+  license: MIT
+build:
+  pipeline:
+    - runs: "false"
+outputs:
+  - name: probe
+    metapackage: true
+tests:
+  - name: pipeline
+    stage: build
+    pipeline:
+      - runs: |
+          printf 'before\n'
+          bash -c 'exit 7' | true
+"#,
+        )
+        .expect("recipe");
+        let plan = super::super::plan(&recipe, "x86_64").expect("plan");
+        let cell = &plan.cells[0];
+        assert_eq!(cell.pipeline[0].command.as_deref(), Some("sh"));
+        assert_eq!(cell.pipeline[0].args, ["-c", "false"]);
+        let step = &cell.tests[0].pipeline[0];
+        let output = std::process::Command::new(step.command.as_ref().expect("command"))
+            .args(&step.args)
+            .output()
+            .expect("execute planned test");
+        assert_eq!(output.status.code(), Some(7));
+        assert_eq!(output.stdout, b"before\n");
+        let stderr = String::from_utf8(output.stderr).expect("stderr");
+        assert!(stderr.contains("line 2 failed (exit 7"), "{stderr}");
+        assert!(stderr.contains("pipeline statuses: 7 0"), "{stderr}");
     }
 
     #[test]
@@ -139,11 +329,14 @@ expect:
         ] {
             assert!(!execute(&changed).status.success());
         }
-        assert!(
-            execute("name: probe\nstage: build\nargv: ['false']\nexpect:\n  exit-code: 1\n")
-                .status
-                .success()
-        );
+        assert!(execute(
+            "name: probe\nstage: build\nargv: ['false']\nexpect:\n  exit-code: 1\n  stderr: ''\n"
+        )
+        .status
+        .success());
+        let output = execute("name: probe\nstage: build\nargv: ['false']\n");
+        assert_eq!(output.status.code(), Some(1));
+        assert!(output.stderr.is_empty(), "{output:?}");
     }
 
     #[test]

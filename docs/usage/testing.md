@@ -58,6 +58,15 @@ Use a native prepared root that contains Bash, coreutils and RPM.
 For existing RPMs or saved roots, use `rpmx test --test-output DIR`.
 The default directory for these standalone runs is `./test-results`.
 Each test has separate `stdout.log` and `stderr.log` files. Output still appears while commands run.
+Test `script` bodies and shell steps in test pipelines run with strict Bash.
+An unchecked command failure writes its script line, exit status and last
+command to stderr, including failures inside functions and command substitutions.
+Sourced fixtures report their own filename and line number.
+For a failed pipeline, Bash identifies the last command; the diagnostic also
+lists every pipeline exit status so a successful last command does not hide an
+earlier failure. Failures handled by `if`, `||` or `!` do not emit this diagnostic.
+The command's exit status is preserved. Direct `argv` tests and their `expect`
+assertions retain their own command and stream diagnostics.
 Result directories are keyed by the matrix cell and qualified test name, so
 different cells keep separate logs and artifacts. JSON results identify each
 instance with `cell_id`; it is empty for recipes without a matrix. JUnit

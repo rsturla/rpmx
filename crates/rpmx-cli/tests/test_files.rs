@@ -327,7 +327,7 @@ fn reports_keep_logs_artifacts_and_distinct_outcomes() {
     );
     assert_eq!(
         std::fs::read_to_string(failed.join("stderr.log")).unwrap(),
-        "err\n"
+        "err\nrpmx: test script line 4 failed (exit 1; pipeline statuses: 1); last command: false\n"
     );
     assert!(failed.join("artifacts/upstream.xml").is_file());
     let xml = std::fs::read_to_string(junit).unwrap();
@@ -337,6 +337,7 @@ fn reports_keep_logs_artifacts_and_distinct_outcomes() {
         "skipped=\"1\"",
         "<system-out>out",
         "<system-err>err",
+        "line 4 failed (exit 1; pipeline statuses: 1); last command: false",
     ] {
         assert!(xml.contains(expected), "{xml}");
     }
