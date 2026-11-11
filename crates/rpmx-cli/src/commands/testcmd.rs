@@ -4,7 +4,6 @@
 //! build-stage tests) and the RPMs (for installed-stage tests) in the same
 //! run, so this command drives the shared build pipeline with tests enabled.
 
-use std::num::NonZeroU64;
 use std::path::{Path, PathBuf};
 
 use rpmx_core::error::codes;
@@ -22,6 +21,18 @@ use crate::commands::{
 };
 
 pub fn run(args: TestArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
+    let junit = args.junit.clone();
+    let result = run_inner(args, pipeline_dir);
+    if let (Err(error), Some(path)) = (&result, junit) {
+        if !path.exists() {
+            report::write_junit(&path, &[report::TestOutcome::setup(error)])
+                .map_err(|write| Error::new(codes::TEST_004, write.to_string()))?;
+        }
+    }
+    result
+}
+
+fn run_inner(args: TestArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
     if let Some(path) = args.junit.as_deref() {
         let _ = std::fs::remove_file(path);
     }
@@ -59,6 +70,45 @@ pub fn run(args: TestArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
             codes::TEST_006,
             "this recipe declares no tests; add a tests: block",
         ));
+    }
+    let selected_tests: Vec<_> = all_tests
+        .iter()
+        .filter(|test| {
+            args.selected.is_empty()
+                || args
+                    .selected
+                    .iter()
+                    .any(|selector| test.matches_selector(selector))
+        })
+        .collect();
+    if selected_tests.iter().all(|test| test.skip.is_some()) {
+        let outcomes: Vec<_> = selected_tests
+            .iter()
+            .map(|test| {
+                report::TestOutcome::new(
+                    test,
+                    &Ok(()),
+                    std::time::Duration::ZERO,
+                    &args.test_output,
+                )
+            })
+            .collect();
+        if let Some(path) = &args.junit {
+            report::write_junit(path, &outcomes)
+                .map_err(|error| Error::new(codes::TEST_004, error.to_string()))?;
+        }
+        if rpmx_core::output::json() {
+            println!("{}", report::test_document(&outcomes));
+        } else {
+            for outcome in &outcomes {
+                eprintln!(
+                    "rpmx: test {}: skipped ({})",
+                    outcome.name,
+                    outcome.skipped.as_deref().unwrap_or("")
+                );
+            }
+        }
+        return Ok(());
     }
     if args.save_test_root.is_some()
         && !plan.cells.iter().any(|cell| {
@@ -435,7 +485,7 @@ fn run_installed(
         true,
     )?;
     let source_date_epoch = 0;
-    let timeout = NonZeroU64::new(3600).expect("timeout");
+    let timeout = args.runtime.step_timeout;
     let sandbox = Sandbox::new(SandboxConfig {
         runner,
         host,
@@ -458,6 +508,7 @@ fn run_installed(
         workspace: &workspace,
         stage: &stage,
         fixture_root: args.file.parent().unwrap_or_else(|| Path::new(".")),
+        results: &args.test_output,
         host_arch: host,
         target_arch: target,
         runner,
@@ -470,6 +521,15 @@ fn run_installed(
     };
     let mut outcomes = Vec::new();
     for test in selected {
+        if test.skip.is_some() {
+            outcomes.push(report::TestOutcome::new(
+                test,
+                &Ok(()),
+                std::time::Duration::ZERO,
+                settings.results,
+            ));
+            continue;
+        }
         let test_root = roots
             .get(&key_for(test))
             .map(PathBuf::as_path)
@@ -494,12 +554,12 @@ fn run_installed(
             if error.is_some() { "FAILED" } else { "ok" },
             started.elapsed().as_secs_f64()
         );
-        outcomes.push(report::TestOutcome {
-            name: test.qualified_name(),
-            stage: test.stage.clone(),
-            error,
-            duration: started.elapsed(),
-        });
+        outcomes.push(report::TestOutcome::new(
+            test,
+            &result,
+            started.elapsed(),
+            settings.results,
+        ));
     }
     if let Some(path) = args.junit.as_deref() {
         report::write_junit(path, &outcomes).map_err(|error| {

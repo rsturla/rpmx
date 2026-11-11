@@ -747,6 +747,12 @@ pub struct Test {
     /// Directory of package-local test files, relative to the root recipe.
     #[serde(default)]
     pub files: Option<String>,
+    /// Relative files or directories to preserve after the test.
+    #[serde(default)]
+    pub artifacts: Vec<String>,
+    /// An explicit reason to skip this test.
+    #[serde(default)]
+    pub skip: Option<String>,
     /// Build-test tools or packages for an installed test's root.
     #[serde(default)]
     pub packages: Vec<String>,

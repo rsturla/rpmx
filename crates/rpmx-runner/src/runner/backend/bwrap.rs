@@ -83,7 +83,7 @@ impl Session for BwrapSession {
         args.push(request.command.to_string());
         args.extend(request.args.iter().cloned());
 
-        let completion = spawn("bwrap", &args, self.timeout, request.label)?;
+        let completion = spawn("bwrap", &args, self.timeout, request.label, request.logs)?;
         finish(completion, self.timeout, request.label, "")
     }
 

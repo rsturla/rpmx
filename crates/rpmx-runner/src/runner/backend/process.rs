@@ -4,6 +4,7 @@ use std::process::{Command, ExitStatus, Stdio};
 use std::sync::mpsc::{self, Receiver};
 use std::time::{Duration, Instant};
 
+use crate::runner::OutputLogs;
 use crate::terminal::Sanitizer;
 use rpmx_base::error::{codes, Error, Result};
 
@@ -17,6 +18,7 @@ pub(crate) fn spawn(
     args: &[String],
     timeout: NonZeroU64,
     label: &str,
+    logs: Option<&OutputLogs>,
 ) -> Result<Completion> {
     let mut process = Command::new("timeout");
     process
@@ -36,12 +38,23 @@ pub(crate) fn spawn(
                 format!("cannot start {program} for '{label}': {error}"),
             )
         })?;
+    let stdout_log = logs
+        .map(|logs| logs.stdout.try_clone())
+        .transpose()
+        .map_err(log_error)?;
+    let stderr_log = logs
+        .map(|logs| logs.stderr.try_clone())
+        .transpose()
+        .map_err(log_error)?;
     let arch = rpmx_base::output::current_arch();
     let stdout = child
         .stdout
         .take()
-        .map(|reader| pump(reader, false, arch.clone()));
-    let stderr = child.stderr.take().map(|reader| pump(reader, true, arch));
+        .map(|reader| pump(reader, false, arch.clone(), stdout_log));
+    let stderr = child
+        .stderr
+        .take()
+        .map(|reader| pump(reader, true, arch, stderr_log));
     let status = child.wait().map_err(|error| {
         Error::new(
             codes::SANDBOX_001,
@@ -52,7 +65,9 @@ pub(crate) fn spawn(
     // has already killed the direct child; do not let an orphan defeat it by
     // blocking these joins forever.
     for receiver in [stdout, stderr].into_iter().flatten() {
-        let _ = receiver.recv_timeout(Duration::from_secs(2));
+        if let Ok(result) = receiver.recv_timeout(Duration::from_secs(2)) {
+            result.map_err(log_error)?;
+        }
     }
     Ok(Completion {
         status,
@@ -60,11 +75,19 @@ pub(crate) fn spawn(
     })
 }
 
+fn log_error(error: std::io::Error) -> Error {
+    Error::new(
+        codes::SANDBOX_001,
+        format!("cannot record test output: {error}"),
+    )
+}
+
 fn pump(
     mut reader: impl Read + Send + 'static,
     stderr: bool,
     arch: Option<String>,
-) -> Receiver<()> {
+    mut log: Option<std::fs::File>,
+) -> Receiver<std::io::Result<()>> {
     let (done, finished) = mpsc::channel();
     std::thread::spawn(move || {
         rpmx_base::output::set_arch(arch.as_deref());
@@ -73,12 +96,22 @@ fn pump(
         let mut chunk = [0u8; 8192];
         let mut guest = rpmx_base::output::logs_to_stderr()
             .then(|| rpmx_base::output::GuestWriter::new(stderr));
+        let mut error = None;
         loop {
             match reader.read(&mut chunk) {
-                Ok(0) | Err(_) => break,
+                Ok(0) => break,
+                Err(read) => {
+                    error.get_or_insert(read);
+                    break;
+                }
                 Ok(read) => {
                     clean.clear();
                     sanitizer.push(&chunk[..read], &mut clean);
+                    if let Some(log) = &mut log {
+                        if let Err(write) = log.write_all(&clean) {
+                            error.get_or_insert(write);
+                        }
+                    }
                     match &mut guest {
                         Some(writer) => writer.push(&clean),
                         None if stderr => {
@@ -94,7 +127,7 @@ fn pump(
         if let Some(writer) = &mut guest {
             writer.flush();
         }
-        let _ = done.send(());
+        let _ = done.send(error.map_or(Ok(()), Err));
     });
     finished
 }
@@ -152,6 +185,7 @@ mod tests {
             ],
             NonZeroU64::new(1).expect("timeout"),
             "daemon",
+            None,
         )
         .expect("spawn");
         assert!(

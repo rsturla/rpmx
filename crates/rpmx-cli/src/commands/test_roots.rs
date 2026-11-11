@@ -130,7 +130,10 @@ pub(crate) fn key_for(test: &PlannedTest) -> String {
 
 pub(crate) fn grouped(tests: &[PlannedTest]) -> Vec<TestGroup> {
     let mut groups: BTreeMap<String, TestGroup> = BTreeMap::new();
-    for test in tests.iter().filter(|test| test.stage == "installed") {
+    for test in tests
+        .iter()
+        .filter(|test| test.stage == "installed" && test.skip.is_none())
+    {
         let packages = packages_for(test);
         let key = key_for(test);
         groups
@@ -292,6 +295,8 @@ mod tests {
         PlannedTest {
             name: name.to_string(),
             files: None,
+            artifacts: Vec::new(),
+            skip: None,
             output: output.map(str::to_string),
             stage: "installed".to_string(),
             argv: None,

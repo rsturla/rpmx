@@ -323,6 +323,9 @@ pub struct InitArgs {
 
 #[derive(Debug, clap::Args)]
 pub struct TestArgs {
+    /// Directory for test logs and declared artifacts.
+    #[arg(long, default_value = "test-results")]
+    pub test_output: PathBuf,
     /// Recipe to test (default: ./package.yaml).
     #[arg(default_value = "package.yaml")]
     pub file: PathBuf,

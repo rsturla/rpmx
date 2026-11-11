@@ -121,6 +121,8 @@ pub struct PlannedTest {
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub files: Option<String>,
+    pub artifacts: Vec<String>,
+    pub skip: Option<String>,
     /// Output that owns this test. `None` is a recipe-level test, which sees
     /// every output; `Some` is an output-level test, which sees that output
     /// and its runtime dependencies.

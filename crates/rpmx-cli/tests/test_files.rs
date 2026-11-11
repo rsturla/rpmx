@@ -139,6 +139,8 @@ fn installed_tests_compile_external_files_in_separate_workspaces() {
         path.to_str().unwrap(),
         "--test-root",
         "/",
+        "--test-output",
+        directory.path().join("results").to_str().unwrap(),
         "--test-root-lock",
         lock.to_str().unwrap(),
         "--runner",
@@ -151,4 +153,111 @@ fn installed_tests_compile_external_files_in_separate_workspaces() {
             .unwrap()
             .contains("changed")
     );
+}
+
+#[test]
+fn reports_keep_logs_artifacts_and_distinct_outcomes() {
+    if !Command::new("bwrap")
+        .args(["--unshare-all", "--ro-bind", "/", "/", "--", "true"])
+        .output()
+        .is_ok_and(|output| output.status.success())
+    {
+        return;
+    }
+    let directory = tempfile::tempdir().unwrap();
+    let path = recipe(
+        directory.path(),
+        r#"  - name: assertion
+    stage: installed
+    artifacts: [upstream.xml]
+    script: |
+      printf '<testsuite name="upstream"/>\n' > upstream.xml
+      printf 'out\n'
+      printf 'err\n' >&2
+      false
+  - name: infrastructure
+    stage: installed
+    environment:
+      JOBS: invalid
+    script: 'true'
+  - name: disabled
+    stage: installed
+    skip: Needs a kernel feature
+    script: 'false'
+  - name: success
+    stage: installed
+    script: 'true'
+"#,
+    );
+    let lock = directory.path().join("root.lock.yaml");
+    host_lock(&lock);
+    let results = directory.path().join("results");
+    let junit = directory.path().join("junit.xml");
+    let output = rpmx(&[
+        "test",
+        path.to_str().unwrap(),
+        "--test-root",
+        "/",
+        "--test-root-lock",
+        lock.to_str().unwrap(),
+        "--test-output",
+        results.to_str().unwrap(),
+        "--junit",
+        junit.to_str().unwrap(),
+        "--json",
+        "--offline",
+    ]);
+    assert_eq!(output.status.code(), Some(6), "{output:?}");
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let statuses: Vec<_> = value["tests"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|test| test["status"].as_str().unwrap())
+        .collect();
+    assert_eq!(statuses, ["failed", "error", "skipped", "passed"]);
+    let failed = Path::new(value["tests"][0]["results"].as_str().unwrap());
+    assert_eq!(
+        std::fs::read_to_string(failed.join("stdout.log")).unwrap(),
+        "out\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(failed.join("stderr.log")).unwrap(),
+        "err\n"
+    );
+    assert!(failed.join("artifacts/upstream.xml").is_file());
+    let xml = std::fs::read_to_string(junit).unwrap();
+    for expected in [
+        "failures=\"1\"",
+        "errors=\"1\"",
+        "skipped=\"1\"",
+        "<system-out>out",
+        "<system-err>err",
+    ] {
+        assert!(xml.contains(expected), "{xml}");
+    }
+}
+
+#[test]
+fn an_explicit_skip_needs_no_root_and_setup_errors_get_reports() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = recipe(directory.path(), "  - name: skipped\n    stage: installed\n    skip: Needs a kernel feature\n    script: 'false'");
+    let output = rpmx(&["test", path.to_str().unwrap(), "--json", "--offline"]);
+    assert!(output.status.success(), "{output:?}");
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["tests"][0]["status"], "skipped");
+    let path = recipe(
+        directory.path(),
+        "  - name: missing-root\n    stage: installed\n    script: 'true'",
+    );
+    let report = directory.path().join("setup.xml");
+    let output = rpmx(&[
+        "test",
+        path.to_str().unwrap(),
+        "--offline",
+        "--junit",
+        report.to_str().unwrap(),
+    ]);
+    assert!(!output.status.success());
+    assert!(std::fs::read_to_string(report).unwrap().contains("<error "));
 }

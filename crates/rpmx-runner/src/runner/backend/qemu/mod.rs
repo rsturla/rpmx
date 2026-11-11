@@ -184,21 +184,13 @@ impl QemuSession {
             .map_err(|error| Error::new(codes::RUNNER_003, format!("cannot run ssh: {error}")))
     }
 
-    fn ssh_run(
-        &self,
-        port: u16,
-        command: &[&str],
-        stdin: Option<&[u8]>,
-    ) -> Result<(std::process::ExitStatus, Vec<u8>)> {
-        self.ssh_run_with_timeout(port, command, stdin, self.timeout)
-    }
-
     fn ssh_run_with_timeout(
         &self,
         port: u16,
         command: &[&str],
         stdin: Option<&[u8]>,
         timeout: NonZeroU64,
+        logs: Option<&crate::runner::OutputLogs>,
     ) -> Result<(std::process::ExitStatus, Vec<u8>)> {
         let mut process = self.ssh_command_with_timeout(port, command, timeout);
         process.stdin(if stdin.is_some() {
@@ -211,7 +203,7 @@ impl QemuSession {
         let child = process
             .spawn()
             .map_err(|error| Error::new(codes::RUNNER_003, format!("cannot run ssh: {error}")))?;
-        stream_command_output(child, stdin)
+        stream_command_output(child, stdin, logs)
     }
 
     fn wait_for_ssh(&mut self) -> Result<()> {
@@ -230,11 +222,11 @@ impl QemuSession {
             }
             let probe_timeout = NonZeroU64::new(15).expect("non-zero probe timeout");
             if let Ok((status, _)) =
-                self.ssh_run_with_timeout(self.control_port, &["true"], None, probe_timeout)
+                self.ssh_run_with_timeout(self.control_port, &["true"], None, probe_timeout, None)
             {
                 if status.success()
                     && self
-                        .ssh_run_with_timeout(self.build_port, &["true"], None, probe_timeout)
+                        .ssh_run_with_timeout(self.build_port, &["true"], None, probe_timeout, None)
                         .is_ok_and(|(status, _)| status.success())
                 {
                     return Ok(());
@@ -307,8 +299,13 @@ impl QemuSession {
 impl Session for QemuSession {
     fn run(&mut self, request: &RunnerRequest<'_>) -> Result<()> {
         let script = step_script(request);
-        let (status, stderr) =
-            self.ssh_run(self.build_port, &["sh", "-s"], Some(script.as_bytes()))?;
+        let (status, stderr) = self.ssh_run_with_timeout(
+            self.build_port,
+            &["sh", "-s"],
+            Some(script.as_bytes()),
+            self.timeout,
+            request.logs,
+        )?;
         if !status.success() {
             return Err(Error::new(
                 codes::SANDBOX_002,
