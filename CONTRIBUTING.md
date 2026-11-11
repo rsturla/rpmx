@@ -25,6 +25,16 @@ scripts/replacement-dnf-test.sh
 scripts/systemd-dnf-test.sh <v1-rpm-dir> <v2-rpm-dir>
 ```
 
+On an SELinux enforcing host, test concurrent resolver repository mounts with:
+
+```console
+cargo test -p rpmx-root concurrent_resolvers_can_read_the_same_local_repository -- --ignored
+```
+
+The test uses Fedora 44 by default. Set `RPMX_TEST_IMAGE` to use another image
+with `sh`, `cat`, `touch`, `seq` and `sleep`. Local repositories and cached RPMs
+use shared SELinux labels because concurrent root preparations read the same files.
+
 ## Design rules
 
 - Read the surrounding code and match its structure and naming.
