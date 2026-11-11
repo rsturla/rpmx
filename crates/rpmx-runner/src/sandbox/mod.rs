@@ -127,15 +127,30 @@ impl<'a> Sandbox<'a> {
     }
 
     pub fn run(&self, step: &PlannedStep) -> Result<()> {
-        self.run_at(step, None)
+        self.run_at(step, None, None)
     }
 
     /// Run one step and report its position in a phase, such as `[2/3] make`.
     pub fn run_numbered(&self, step: &PlannedStep, index: usize, total: usize) -> Result<()> {
-        self.run_at(step, Some((index, total)))
+        self.run_at(step, Some((index, total)), None)
     }
 
-    fn run_at(&self, step: &PlannedStep, position: Option<(usize, usize)>) -> Result<()> {
+    pub fn run_recorded(
+        &self,
+        step: &PlannedStep,
+        index: usize,
+        total: usize,
+        logs: &crate::runner::OutputLogs,
+    ) -> Result<()> {
+        self.run_at(step, Some((index, total)), Some(logs))
+    }
+
+    fn run_at(
+        &self,
+        step: &PlannedStep,
+        position: Option<(usize, usize)>,
+        logs: Option<&crate::runner::OutputLogs>,
+    ) -> Result<()> {
         for key in step.env.keys() {
             if RESERVED_ENV.contains(&key.as_str()) {
                 return Err(Error::new(
@@ -194,6 +209,7 @@ impl<'a> Sandbox<'a> {
             cwd: &cwd,
             env: &env,
             label: &label,
+            logs,
         };
 
         let mut session = self.session.borrow_mut();

@@ -104,7 +104,7 @@ impl Session for PodmanSession {
         args.push(request.command.to_string());
         args.extend(request.args.iter().cloned());
 
-        let completion = spawn("podman", &args, self.timeout, request.label)?;
+        let completion = spawn("podman", &args, self.timeout, request.label, request.logs)?;
         if timed_out(&completion, self.timeout) {
             let _ = Command::new("podman")
                 .args(["rm", "-f", &self.name])

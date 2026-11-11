@@ -2,6 +2,36 @@
 
 ## Tests
 
+### Results and failure artifacts
+
+`rpmx build` keeps test logs under its output directory in `test-results/`.
+For existing RPMs or saved roots, use `rpmx test --test-output DIR`.
+The default directory for these standalone runs is `./test-results`.
+Each test has separate `stdout.log` and `stderr.log` files. Output still appears while commands run.
+
+Declare workspace files or directories to preserve, including upstream reports:
+
+```yaml
+tests:
+  - name: upstream
+    stage: build
+    artifacts: [build/meson-logs]
+    pipeline:
+      - uses: meson/test
+```
+
+rpmx collects artifacts after success or failure. Missing paths are ignored.
+Paths must be relative to the test workspace. Symlinks and parent traversal are errors.
+Nested upstream reports remain intact in the artifact directory.
+The JUnit report includes the last 64 KiB of each output stream.
+Full output remains in the log files.
+
+JSON test results use `status` values: `passed`, `failed`, `error` and `skipped`.
+Command failures and timeouts are test failures. Runner and environment failures are errors.
+JUnit uses separate failure, error and skipped elements. Setup failures also produce a JUnit error.
+Add `skip: reason` to record an explicit skip. A run that selects only skipped tests needs no root.
+Remove the skip when the test can run. A skip does not establish coverage.
+
 ### External test files
 
 Keep compiler probes, headers and expected output in a package-local directory:
@@ -168,8 +198,8 @@ rpmx test --install-dir packages/x86_64 --json --junit report.xml
 - `--test-root DIR` runs against a saved test root instead of preparing one.
   The root is self-contained: no build root, no RPMs, no cache, no profile and
   no network. `DIR.lock.yaml` beside it is read automatically.
-- JSON: `{schema, ok, command: "test", tests: [{name, stage, ok, duration_ms,
-  message}]}`. An output-level test uses its qualified name, `output/test`.
+- JSON: `{schema, ok, command: "test", tests: [{name, stage, status, duration_ms,
+  message, skip_reason, results}]}`. An output-level test uses its qualified name, `output/test`.
 - Exit 6 on failure.
 
 Test roots are disposable and use real dependency checking. Tests with the

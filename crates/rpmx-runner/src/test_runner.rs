@@ -13,6 +13,7 @@ pub struct TestSandboxConfig<'a> {
     pub workspace: &'a Path,
     pub stage: &'a Path,
     pub fixture_root: &'a Path,
+    pub results: &'a Path,
     pub host_arch: Arch,
     pub target_arch: Arch,
     pub runner: RunnerKind,
@@ -32,10 +33,13 @@ pub fn run_planned_tests(
     test_root: Option<&Path>,
     settings: TestSandboxConfig<'_>,
 ) -> Result<()> {
-    let build_tests: Vec<_> = tests.iter().filter(|test| test.stage == "build").collect();
+    let build_tests: Vec<_> = tests
+        .iter()
+        .filter(|test| test.stage == "build" && test.skip.is_none())
+        .collect();
     let installed_tests: Vec<_> = tests
         .iter()
-        .filter(|test| test.stage == "installed")
+        .filter(|test| test.stage == "installed" && test.skip.is_none())
         .collect();
     if let Some(test) = tests
         .iter()
@@ -65,14 +69,26 @@ pub fn run_planned_tests(
                 files.path(),
                 settings.workspace,
             )?;
-            let result = run_one_test(sandbox, &test);
+            let result = run_one_test(sandbox, &test, settings.results);
             sandbox.sync()?;
+            collect_artifacts(
+                &test,
+                settings.workspace,
+                &result_dir(settings.results, &test),
+            )?;
             if rpmx_base::output::keep_workdir() {
                 rpmx_base::output::wrote(&files.keep());
             }
             result?;
         } else {
-            run_one_test(sandbox, test)?;
+            let result = run_one_test(sandbox, test, settings.results);
+            sandbox.sync()?;
+            collect_artifacts(
+                test,
+                settings.workspace,
+                &result_dir(settings.results, test),
+            )?;
+            result?;
         }
     }
     if installed_tests.is_empty() {
@@ -115,8 +131,9 @@ pub fn run_planned_tests(
             prefix: settings.prefix,
             libdir: settings.libdir,
         })?;
-        let result = run_one_test(&test_sandbox, &test);
+        let result = run_one_test(&test_sandbox, &test, settings.results);
         test_sandbox.sync()?;
+        collect_artifacts(&test, &workspace, &result_dir(settings.results, &test))?;
         if rpmx_base::output::keep_workdir() {
             rpmx_base::output::wrote(&work.keep());
         }
@@ -163,7 +180,77 @@ fn prepare_files(
     Ok(())
 }
 
-fn run_one_test(sandbox: &Sandbox<'_>, test: &rpmx_language::plan::PlannedTest) -> Result<()> {
+pub fn result_dir(base: &Path, test: &rpmx_language::PlannedTest) -> std::path::PathBuf {
+    let digest = rpmx_base::hash::sha512_hex(test.qualified_name().as_bytes());
+    base.join(&digest.trim_start_matches("sha512:")[..24])
+}
+
+fn collect_artifacts(
+    test: &rpmx_language::PlannedTest,
+    workspace: &Path,
+    results: &Path,
+) -> Result<()> {
+    for artifact in &test.artifacts {
+        let path = std::path::Path::new(artifact);
+        if path.components().count() == 0
+            || path
+                .components()
+                .any(|part| !matches!(part, std::path::Component::Normal(_)))
+        {
+            return Err(Error::new(
+                codes::TEST_004,
+                "test artifacts must be relative workspace paths",
+            ));
+        }
+        let source = workspace.join(path);
+        if !source.exists() {
+            continue;
+        }
+        let mut parent = workspace.to_path_buf();
+        for part in path.components() {
+            parent.push(part);
+            if std::fs::symlink_metadata(&parent)
+                .map_err(file_error)?
+                .file_type()
+                .is_symlink()
+            {
+                return Err(Error::new(
+                    codes::TEST_004,
+                    "test artifacts cannot contain symlinks",
+                ));
+            }
+        }
+        let files = if source.is_dir() {
+            rpmx_language::test_files::entries(workspace, artifact)?
+        } else {
+            vec![source]
+        };
+        for file in files {
+            let target = results
+                .join("artifacts")
+                .join(file.strip_prefix(workspace).expect("artifact in workspace"));
+            std::fs::create_dir_all(target.parent().expect("artifact directory"))
+                .map_err(file_error)?;
+            std::fs::copy(file, target).map_err(file_error)?;
+        }
+    }
+    Ok(())
+}
+
+fn run_one_test(
+    sandbox: &Sandbox<'_>,
+    test: &rpmx_language::plan::PlannedTest,
+    results: &Path,
+) -> Result<()> {
+    let directory = result_dir(results, test);
+    if directory.exists() {
+        std::fs::remove_dir_all(&directory).map_err(file_error)?;
+    }
+    std::fs::create_dir_all(&directory).map_err(file_error)?;
+    let logs = crate::runner::OutputLogs {
+        stdout: std::fs::File::create(directory.join("stdout.log")).map_err(file_error)?,
+        stderr: std::fs::File::create(directory.join("stderr.log")).map_err(file_error)?,
+    };
     let _phase = rpmx_base::output::enter_phase("test");
     rpmx_base::output::phase(
         "test",
@@ -197,7 +284,7 @@ fn run_one_test(sandbox: &Sandbox<'_>, test: &rpmx_language::plan::PlannedTest) 
         };
         position += 1;
         sandbox
-            .run_numbered(&step, position, total)
+            .run_recorded(&step, position, total, &logs)
             .map_err(test_failure)?;
     }
     for step in &test.pipeline {
@@ -207,7 +294,7 @@ fn run_one_test(sandbox: &Sandbox<'_>, test: &rpmx_language::plan::PlannedTest) 
             step.env.entry(key.clone()).or_insert_with(|| value.clone());
         }
         sandbox
-            .run_numbered(&step, position, total)
+            .run_recorded(&step, position, total, &logs)
             .map_err(test_failure)?;
     }
     Ok(())
@@ -215,5 +302,9 @@ fn run_one_test(sandbox: &Sandbox<'_>, test: &rpmx_language::plan::PlannedTest) 
 
 /// A step failure inside a test is a test failure, not a build failure.
 fn test_failure(error: Error) -> Error {
-    error.with_code(codes::TEST_003)
+    if error.code == codes::SANDBOX_002 || error.code == codes::SANDBOX_004 {
+        error.with_code(codes::TEST_003)
+    } else {
+        error
+    }
 }

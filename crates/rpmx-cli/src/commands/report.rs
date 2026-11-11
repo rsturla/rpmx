@@ -90,6 +90,54 @@ pub struct TestOutcome {
     pub stage: String,
     pub error: Option<String>,
     pub duration: std::time::Duration,
+    pub infrastructure: bool,
+    pub skipped: Option<String>,
+    pub results: PathBuf,
+}
+
+impl TestOutcome {
+    pub fn setup(error: &Error) -> Self {
+        Self {
+            name: "environment".into(),
+            stage: "setup".into(),
+            error: Some(error.message.clone()),
+            duration: std::time::Duration::ZERO,
+            infrastructure: true,
+            skipped: None,
+            results: PathBuf::new(),
+        }
+    }
+    pub fn new(
+        test: &rpmx_core::PlannedTest,
+        result: &Result<(), Error>,
+        duration: std::time::Duration,
+        base: &std::path::Path,
+    ) -> Self {
+        Self {
+            name: test.qualified_name(),
+            stage: test.stage.clone(),
+            error: result.as_ref().err().map(|error| error.message.clone()),
+            infrastructure: result
+                .as_ref()
+                .err()
+                .is_some_and(|error| error.code != codes::TEST_003),
+            duration,
+            skipped: test.skip.clone(),
+            results: rpmx_core::test_runner::result_dir(base, test),
+        }
+    }
+
+    fn status(&self) -> &'static str {
+        if self.skipped.is_some() {
+            "skipped"
+        } else if self.infrastructure {
+            "error"
+        } else if self.error.is_some() {
+            "failed"
+        } else {
+            "passed"
+        }
+    }
 }
 
 /// Aggregate one command's test results into JUnit XML.
@@ -97,6 +145,8 @@ pub fn write_junit(path: &std::path::Path, outcomes: &[TestOutcome]) -> std::io:
     let existing = std::fs::read_to_string(path).unwrap_or_default();
     let mut tests = existing.matches("<testcase ").count();
     let mut failures = existing.matches("<failure ").count();
+    let mut errors = existing.matches("<error ").count();
+    let mut skipped = existing.matches("<skipped ").count();
     let mut body = existing;
     if let Some(position) = body.rfind("</testsuite>") {
         body.truncate(position);
@@ -111,8 +161,13 @@ pub fn write_junit(path: &std::path::Path, outcomes: &[TestOutcome]) -> std::io:
     let mut cases = String::new();
     for outcome in outcomes {
         tests += 1;
-        if outcome.error.is_some() {
+        if outcome.infrastructure {
+            errors += 1;
+        } else if outcome.error.is_some() {
             failures += 1;
+        }
+        if outcome.skipped.is_some() {
+            skipped += 1;
         }
         cases.push_str(&format!(
             "  <testcase name=\"{}\" classname=\"{}\" time=\"{:.3}\">",
@@ -121,19 +176,48 @@ pub fn write_junit(path: &std::path::Path, outcomes: &[TestOutcome]) -> std::io:
             outcome.duration.as_secs_f64()
         ));
         if let Some(error) = &outcome.error {
+            let element = if outcome.infrastructure {
+                "error"
+            } else {
+                "failure"
+            };
             cases.push_str(&format!(
-                "<failure message=\"{}\">{}</failure>",
+                "<{element} message=\"{}\">{}</{element}>",
                 xml_escape(error),
                 xml_escape(error)
+            ));
+        }
+        if let Some(reason) = &outcome.skipped {
+            cases.push_str(&format!("<skipped message=\"{}\"/>", xml_escape(reason)));
+        }
+        for (element, file) in [("system-out", "stdout.log"), ("system-err", "stderr.log")] {
+            if outcome.skipped.is_some() || outcome.results.as_os_str().is_empty() {
+                continue;
+            }
+            cases.push_str(&format!(
+                "<{element}>{}</{element}>",
+                xml_escape(&log_tail(&outcome.results.join(file)))
             ));
         }
         cases.push_str("</testcase>\n");
     }
     let xml = format!(
-        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<testsuite name=\"rpmx\" tests=\"{tests}\" failures=\"{failures}\">\n{}{cases}</testsuite>\n",
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<testsuite name=\"rpmx\" tests=\"{tests}\" failures=\"{failures}\" errors=\"{errors}\" skipped=\"{skipped}\">\n{}{cases}</testsuite>\n",
         body.trim_start_matches('\n')
     );
     std::fs::write(path, xml)
+}
+
+fn log_tail(path: &std::path::Path) -> String {
+    use std::io::{Read, Seek, SeekFrom};
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return String::new();
+    };
+    let size = file.metadata().map(|metadata| metadata.len()).unwrap_or(0);
+    let _ = file.seek(SeekFrom::Start(size.saturating_sub(64 * 1024)));
+    let mut bytes = Vec::new();
+    let _ = file.take(64 * 1024).read_to_end(&mut bytes);
+    String::from_utf8_lossy(&bytes).into_owned()
 }
 
 pub fn test_document(outcomes: &[TestOutcome]) -> serde_json::Value {
@@ -144,15 +228,28 @@ pub fn test_document(outcomes: &[TestOutcome]) -> serde_json::Value {
         "tests": outcomes.iter().map(|outcome| serde_json::json!({
             "name": outcome.name,
             "stage": outcome.stage,
-            "ok": outcome.error.is_none(),
+            "status": outcome.status(),
             "duration_ms": outcome.duration.as_millis() as u64,
             "message": outcome.error,
+            "skip_reason": outcome.skipped,
+            "results": if outcome.skipped.is_some() { None } else { Some(&outcome.results) },
         })).collect::<Vec<_>>(),
     })
 }
 
 fn xml_escape(value: &str) -> String {
     value
+        .chars()
+        .map(|ch| {
+            if matches!(ch, '\t' | '\n' | '\r')
+                || (ch >= ' ' && ch != '\u{fffe}' && ch != '\u{ffff}')
+            {
+                ch
+            } else {
+                '\u{fffd}'
+            }
+        })
+        .collect::<String>()
         .replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")

@@ -130,6 +130,12 @@ pub struct RunnerRequest<'a> {
     pub cwd: &'a str,
     pub env: &'a BTreeMap<String, String>,
     pub label: &'a str,
+    pub logs: Option<&'a OutputLogs>,
+}
+
+pub struct OutputLogs {
+    pub stdout: std::fs::File,
+    pub stderr: std::fs::File,
 }
 
 /// Whether the host has an enabled qemu-user binfmt handler for `target`.

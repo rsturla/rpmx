@@ -46,6 +46,18 @@ pub(super) struct TestRunOptions<'a> {
 
 /// Run build- and installed-stage tests and persist the test-root lock.
 pub(super) fn run(options: TestRunOptions<'_>) -> Result<Vec<PathBuf>, Error> {
+    let junit = options.junit.map(Path::to_path_buf);
+    let result = run_inner(options);
+    if let (Err(error), Some(path)) = (&result, junit) {
+        if error.code != codes::TEST_003 {
+            report::write_junit(&path, &[TestOutcome::setup(error)])
+                .map_err(|write| Error::new(codes::TEST_004, write.to_string()))?;
+        }
+    }
+    result
+}
+
+fn run_inner(options: TestRunOptions<'_>) -> Result<Vec<PathBuf>, Error> {
     let candidates: Vec<_> = options
         .cell
         .tests
@@ -123,6 +135,7 @@ pub(super) fn run(options: TestRunOptions<'_>) -> Result<Vec<PathBuf>, Error> {
         workspace: options.build,
         stage: options.stage,
         fixture_root: options.fixture_root,
+        results: &options.output.join("test-results"),
         host_arch: rpmx_core::arch::Arch::current()?,
         target_arch: rpmx_core::arch::Arch::parse(options.arch)?,
         runner: options.runner,
@@ -155,12 +168,12 @@ pub(super) fn run(options: TestRunOptions<'_>) -> Result<Vec<PathBuf>, Error> {
             if error.is_some() { "FAILED" } else { "ok" },
             started.elapsed().as_secs_f64()
         );
-        outcomes.push(TestOutcome {
-            name: test.qualified_name(),
-            stage: test.stage.clone(),
-            error,
-            duration: started.elapsed(),
-        });
+        outcomes.push(TestOutcome::new(
+            test,
+            &result,
+            started.elapsed(),
+            settings.results,
+        ));
     }
     let failed = outcomes
         .iter()

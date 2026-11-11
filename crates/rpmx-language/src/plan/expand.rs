@@ -412,6 +412,8 @@ pub(crate) fn expand_tests(
         let mut planned_test = PlannedTest {
             name,
             files: test.files,
+            artifacts: test.artifacts,
+            skip: test.skip.filter(|reason| !reason.trim().is_empty()),
             output: owner.map(str::to_string),
             stage: test.stage,
             argv,
