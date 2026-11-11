@@ -79,16 +79,39 @@ pub fn generate(options: RepoOptions<'_>) -> Result<RepoReport, Error> {
         let filename = entry.file_name().to_string_lossy().into_owned();
         let target = options.output.join(&filename);
         if source != target && std::fs::hard_link(&source, &target).is_err() {
-            std::fs::copy(&source, &target).map_err(|error| {
+            // A previous generation may have hard-linked these two paths.
+            // Copying onto the same inode would truncate the source RPM.
+            let source_bytes = std::fs::read(&source).map_err(|error| {
                 Error::new(
                     codes::REPO_001,
-                    format!(
-                        "cannot copy {} to {}: {error}",
-                        source.display(),
-                        target.display()
-                    ),
+                    format!("cannot read {}: {error}", source.display()),
                 )
             })?;
+            if std::fs::read(&target).ok().as_deref() != Some(source_bytes.as_slice()) {
+                let temporary =
+                    tempfile::NamedTempFile::new_in(options.output).map_err(|error| {
+                        Error::new(
+                            codes::REPO_001,
+                            format!("cannot create temporary RPM: {error}"),
+                        )
+                    })?;
+                std::fs::copy(&source, temporary.path()).map_err(|error| {
+                    Error::new(
+                        codes::REPO_001,
+                        format!(
+                            "cannot copy {} to {}: {error}",
+                            source.display(),
+                            target.display()
+                        ),
+                    )
+                })?;
+                temporary.persist(&target).map_err(|error| {
+                    Error::new(
+                        codes::REPO_001,
+                        format!("cannot replace {}: {error}", target.display()),
+                    )
+                })?;
+            }
         }
         let bytes = std::fs::read(&target).map_err(|error| {
             Error::new(
@@ -117,10 +140,6 @@ pub fn generate(options: RepoOptions<'_>) -> Result<RepoReport, Error> {
     let (primary_gz, primary_open) = gzip(primary.as_bytes())?;
     let (filelists_gz, filelists_open) = gzip(filelists.as_bytes())?;
     let (other_gz, other_open) = gzip(other.as_bytes())?;
-    write(&repodata.join("primary.xml.gz"), &primary_gz)?;
-    write(&repodata.join("filelists.xml.gz"), &filelists_gz)?;
-    write(&repodata.join("other.xml.gz"), &other_gz)?;
-
     let mut repomd = String::from(
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<repomd xmlns=\"http://linux.duke.edu/metadata/repo\" xmlns:rpm=\"http://linux.duke.edu/metadata/rpm\">\n",
     );
@@ -135,6 +154,8 @@ pub fn generate(options: RepoOptions<'_>) -> Result<RepoReport, Error> {
         ),
         ("other", "other.xml.gz", &other_gz, &other_open),
     ] {
+        let file = format!("{}-{file}", hex(&Sha256::digest(data)));
+        write(&repodata.join(&file), data)?;
         repomd.push_str(&format!(
             "  <data type=\"{kind}\">\n    <checksum type=\"sha256\">{}</checksum>\n    <open-checksum type=\"sha256\">{}</open-checksum>\n    <location href=\"repodata/{file}\"/>\n    <timestamp>{}</timestamp>\n    <size>{}</size>\n    <open-size>{}</open-size>\n  </data>\n",
             hex(&Sha256::digest(data)),

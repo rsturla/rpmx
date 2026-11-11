@@ -5,6 +5,50 @@ use rpmx_core::package_spec::{BinaryPackageFile, BinaryPackageSpec};
 use rpmx_rpm::repo::{generate, RepoOptions};
 use rpmx_rpm::write_binary_rpm;
 
+fn primary_path(output: &std::path::Path) -> std::path::PathBuf {
+    let repomd = std::fs::read_to_string(output.join("repodata/repomd.xml")).expect("read repomd");
+    let primary = repomd
+        .split("<data type=\"primary\">")
+        .nth(1)
+        .expect("primary entry");
+    let href = primary
+        .split("<location href=\"")
+        .nth(1)
+        .expect("primary location")
+        .split('"')
+        .next()
+        .expect("primary href");
+    output.join(href)
+}
+
+#[test]
+fn previous_metadata_remains_available_after_repository_changes() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let rpms = dir.path().join("rpms");
+    let output = dir.path().join("repo");
+    std::fs::create_dir(&rpms).expect("create rpm dir");
+    write_binary_rpm(&spec(), &rpms.join("demo-1.0-1.x86_64.rpm")).expect("write RPM");
+    let options = || RepoOptions {
+        rpms: &rpms,
+        output: &output,
+        signing_key: None,
+        timestamp: 1_700_000_000,
+    };
+    generate(options()).expect("generate first repository");
+    let old_path = primary_path(&output);
+    let old_bytes = std::fs::read(&old_path).expect("read old primary");
+
+    let mut second = spec();
+    second.name = "another".to_string();
+    write_binary_rpm(&second, &rpms.join("another-1.0-1.x86_64.rpm")).expect("write second RPM");
+    generate(options()).expect("generate second repository");
+    assert_ne!(old_path, primary_path(&output));
+    assert_eq!(
+        std::fs::read(old_path).expect("read old primary after update"),
+        old_bytes
+    );
+}
+
 fn spec() -> BinaryPackageSpec {
     BinaryPackageSpec {
         name: "demo".to_string(),
@@ -63,7 +107,7 @@ fn repository_metadata_includes_weak_dependencies() {
     })
     .expect("generate repository");
 
-    let compressed = std::fs::read(output.join("repodata/primary.xml.gz")).expect("read primary");
+    let compressed = std::fs::read(primary_path(&output)).expect("read primary");
     let mut primary = String::new();
     GzDecoder::new(compressed.as_slice())
         .read_to_string(&mut primary)
@@ -102,7 +146,7 @@ fn repository_metadata_splits_dependency_evr() {
     })
     .expect("generate repository");
 
-    let compressed = std::fs::read(output.join("repodata/primary.xml.gz")).expect("read primary");
+    let compressed = std::fs::read(primary_path(&output)).expect("read primary");
     let mut primary = String::new();
     GzDecoder::new(compressed.as_slice())
         .read_to_string(&mut primary)
