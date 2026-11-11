@@ -21,6 +21,9 @@ tests:
 rpmx prepares the package root as for installed tests. The built outputs start installed.
 Each transaction test gets a private writable copy, with an independent RPM database.
 Bubblewrap runs transaction commands as root inside its user namespace.
+That private root permits updates to protected files such as mode-000 account
+databases. Ordinary build and installed tests do not receive that permission.
+Bubblewrap's private `/tmp` has mode `1777` in every stage.
 The prepared root and other tests retain their original files and package state.
 rpmx adds the `rpm` tool to the test dependencies.
 
