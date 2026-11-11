@@ -87,3 +87,19 @@ why `--test-root` needs nothing else. On a machine of the target architecture
 the tests run natively; elsewhere they run under binfmt.
 
 ---
+
+Pipeline steps may set `timeout: 4h` (or `1s`, `30m`): a positive whole number
+followed by `s`, `m`, or `h`. Zero, fractions, missing units, and overflowing
+values are rejected during planning. The step value overrides `--step-timeout`
+for that step; steps without one inherit the command default (3600 seconds).
+Build and test pipelines use the same deadline handling on native and QEMU
+runners. For a test script that needs a custom deadline, use a pipeline:
+
+```yaml
+tests:
+  - name: upstream
+    stage: build
+    pipeline:
+      - timeout: 4h
+        runs: make check
+```

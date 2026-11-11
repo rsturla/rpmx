@@ -125,6 +125,8 @@ pub struct RunnerConfig<'a> {
 }
 
 pub struct RunnerRequest<'a> {
+    /// Effective deadline for this step, including any recipe override.
+    pub timeout: NonZeroU64,
     pub command: &'a str,
     pub args: &'a [String],
     pub cwd: &'a str,

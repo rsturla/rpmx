@@ -467,8 +467,8 @@ A pipeline is an ordered list. Each entry is exactly one of:
     python3 generate.py > generated.h
 ```
 
-Common fields on any entry: `name`, `cwd`, `env`, `timeout` (stored but not yet
-enforced per step; use `--step-timeout`), `reason`.
+Common fields on any entry: `name`, `cwd`, `env`, `timeout` (a positive whole-number duration with `s`, `m`, or `h` suffix,
+for example `1s`, `30m`, or `4h`), `reason`.
 
 `runs` is executed as `sh -c <script>` in the sandbox. It is not `-euo
 pipefail`; add `set -eu` when you need it. `argv` never goes through a shell.

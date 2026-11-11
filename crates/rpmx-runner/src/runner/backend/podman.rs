@@ -1,4 +1,3 @@
-use std::num::NonZeroU64;
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -76,16 +75,12 @@ impl Runner for PodmanBackend<'_> {
                 ),
             ));
         }
-        Ok(Box::new(PodmanSession {
-            name,
-            timeout: config.timeout,
-        }))
+        Ok(Box::new(PodmanSession { name }))
     }
 }
 
 struct PodmanSession {
     name: String,
-    timeout: NonZeroU64,
 }
 
 impl Session for PodmanSession {
@@ -104,15 +99,15 @@ impl Session for PodmanSession {
         args.push(request.command.to_string());
         args.extend(request.args.iter().cloned());
 
-        let completion = spawn("podman", &args, self.timeout, request.label)?;
-        if timed_out(&completion, self.timeout) {
+        let completion = spawn("podman", &args, request.timeout, request.label)?;
+        if timed_out(&completion, request.timeout) {
             let _ = Command::new("podman")
                 .args(["rm", "-f", &self.name])
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
                 .status();
         }
-        finish(completion, self.timeout, request.label, "container ")
+        finish(completion, request.timeout, request.label, "container ")
     }
 
     fn sync_out(&mut self) -> Result<()> {

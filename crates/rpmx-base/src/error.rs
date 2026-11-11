@@ -481,6 +481,8 @@ pub mod codes {
         STEP_018 = "RPMX-STEP-018",
         /// A step definition hardcodes a guest path instead of using a variable or placeholder.
         STEP_019 = "RPMX-STEP-019",
+        /// A step timeout is not a positive whole-number duration with s, m or h suffix.
+        STEP_020 = "RPMX-STEP-020",
         /// Variable definitions form a cycle.
         TEMPLATE_001 = "RPMX-TEMPLATE-001",
         /// A template references an unknown variable.
