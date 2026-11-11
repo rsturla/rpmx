@@ -1949,6 +1949,7 @@ dependencies = [
 name = "rpmx-runner"
 version = "0.0.0"
 dependencies = [
+ "libc",
  "rpmx-base",
  "rpmx-language",
  "rpmx-store",

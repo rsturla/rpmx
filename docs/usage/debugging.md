@@ -44,6 +44,23 @@ rpmx shell --root /path/to/root \
 environment. `--command 'make -j8'` runs one command instead of an interactive
 shell.
 
+Bubblewrap runs commands as UID/GID 65534 inside a full subordinate-ID namespace.
+That identity maps to your host account, so workspace writes remain yours.
+Commands have no capabilities, cannot create nested user namespaces, and
+cannot gain privileges by executing a setuid program. Mapping other IDs
+keeps permission failures meaningful: an unprivileged `setuid(0)` fails with
+`EPERM`, rather than `EINVAL` caused by an unmapped root ID.
+
+If `rpmx doctor --strict` reports a transaction capability failure, check the
+sandbox security label printed with the error and the host kernel audit log
+(`sudo journalctl -k`). Ubuntu's
+[`bwrap-userns-restrict` AppArmor profile](https://gitlab.com/apparmor/apparmor/-/blob/master/profiles/apparmor/profiles/extras/bwrap-userns-restrict)
+stacks child processes with `unpriv_bwrap`, which explicitly denies capabilities.
+This can deny access even when `/proc/self/status` lists `CAP_DAC_OVERRIDE` and
+`kernel.apparmor_restrict_unprivileged_userns=0`. The administrator must provide
+a policy that permits this capability for rpmx transactions. A local allow rule
+cannot override the profile's explicit deny. rpmx does not change host policy.
+
 `--debug` echoes the resolved command and sets `set -x` for `runs:` steps.
 
 ---

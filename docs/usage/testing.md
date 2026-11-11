@@ -44,6 +44,18 @@ The saved root supplies the baseline. This command does not install the supplied
 Transaction tests reject the host root `/` and require supplied RPM files.
 `--skip-installed` skips both installed and transaction tests.
 Root copies use host `unshare` and GNU `cp`, with reflinks where the filesystem supports them.
+The bubblewrap runner requires full subordinate UID/GID allocations; see
+[host requirements](getting-started.md#requirements). Ordinary tests use
+UID/GID 65534, mapped to your host account, and run without capabilities.
+Transaction tests map your
+host identity to namespace root and retain only `CAP_DAC_OVERRIDE` to update
+private protected files. Both modes set no-new-privileges and block nested
+user namespaces. Missing mapping prerequisites fail with a setup diagnostic;
+rpmx does not substitute a single-ID map.
+`rpmx doctor --strict` also checks actual transaction access to a private
+mode-000 file with the host root mounted read-only. This detects host policies
+that deny the capability despite valid ID maps and capability masks; see
+[native sandbox diagnostics](debugging.md).
 
 The lifecycle regression test builds two RPM versions and checks install, upgrade, configuration preservation and erase:
 
