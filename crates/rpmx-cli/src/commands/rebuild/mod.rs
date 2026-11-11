@@ -252,6 +252,7 @@ pub fn execute(request: RebuildRequest<'_>) -> Result<RebuildOutput, Error> {
         // records under the provider's name. Only an explicit root needs the
         // names checked literally.
         let trusted = !request.verify_root;
+        include_resolved_build_requirements(&mut available, &cell.packages, trusted);
         if effective_sysroot.is_some() {
             if let Some(packages) = request.sysroot_packages {
                 available.extend(packages.iter().cloned());
@@ -640,4 +641,38 @@ fn write_replacement_srpm(
         written.push(path);
     }
     Ok(written)
+}
+
+// Automatic resolution already proved these requirements, including virtual
+// capabilities whose names are not executable or installed package names.
+fn include_resolved_build_requirements(
+    available: &mut std::collections::BTreeSet<String>,
+    requirements: &[String],
+    automatic: bool,
+) {
+    if automatic {
+        available.extend(
+            requirements
+                .iter()
+                .map(|requirement| rpmx_core::build_env::dependency_name(requirement).to_string()),
+        );
+    }
+}
+
+#[cfg(test)]
+mod automatic_root_tests {
+    use super::include_resolved_build_requirements;
+    use std::collections::BTreeSet;
+
+    #[test]
+    fn automatic_roots_trust_resolved_virtual_build_capabilities() {
+        let requested = vec!["gcc-c++ >= 16".to_string()];
+        let mut automatic = BTreeSet::from(["gcc-16-default".to_string()]);
+        include_resolved_build_requirements(&mut automatic, &requested, true);
+        assert!(automatic.contains("gcc-c++"));
+
+        let mut explicit = BTreeSet::from(["gcc-16-default".to_string()]);
+        include_resolved_build_requirements(&mut explicit, &requested, false);
+        assert!(!explicit.contains("gcc-c++"));
+    }
 }
