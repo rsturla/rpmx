@@ -7,6 +7,7 @@ use rpmx_base::error::{codes, Error, Result};
 
 mod backend;
 
+pub(crate) use backend::run_bwrap_terminal;
 use backend::{BwrapBackend, PodmanBackend, QemuBackend};
 
 /// Verify delegated ID maps and actual private transaction access on this host.
