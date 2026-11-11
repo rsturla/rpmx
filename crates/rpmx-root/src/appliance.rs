@@ -140,6 +140,7 @@ pub fn profile_from_lock(lock: &RootLock) -> Result<Profile> {
         paths: Paths {
             prefix: lock.prefix.clone(),
             libdir: lock.libdir.clone(),
+            libdir_by_arch: Default::default(),
         },
         sbom: false,
     })

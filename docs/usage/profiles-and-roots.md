@@ -27,6 +27,8 @@ options:
 paths:
   prefix: /usr
   libdir: /usr/lib64
+  libdir-by-arch:
+    aarch64: /usr/lib
 sbom: true
 ```
 
@@ -35,8 +37,10 @@ optional `gpgkey`. `dist-tag` is appended to every release. `sbom` is
 recorded in the root lock and applied at build time. `paths.prefix`
 and `paths.libdir` set the install layout: the executor exports them as
 `PREFIX` and `LIBDIR`, substitutes them for `${prefix}` and `${libdir}`, and
-records them in the root lock. `libdir` must be inside `prefix`. Module streams
-and `reinstall` are rejected today.
+records them in the root lock. `libdir-by-arch` overrides `libdir` for the
+listed target architectures; keys use canonical RPM architecture names. Each
+library directory must be inside `prefix`. Module streams and `reinstall` are
+rejected today.
 
 A profile does not contain compiler or linker flags. Distribution build
 policy belongs in a package in the root: the package installs compiler specs

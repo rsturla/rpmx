@@ -53,6 +53,22 @@ pub struct Paths {
     pub prefix: String,
     #[serde(default = "default_libdir")]
     pub libdir: String,
+    /// Architecture-specific overrides for the library directory.
+    #[serde(
+        default,
+        rename = "libdir-by-arch",
+        skip_serializing_if = "std::collections::BTreeMap::is_empty"
+    )]
+    pub libdir_by_arch: std::collections::BTreeMap<String, String>,
+}
+
+impl Paths {
+    /// Select the target's override, falling back to the common directory.
+    pub fn libdir_for(&self, arch: &str) -> &str {
+        self.libdir_by_arch
+            .get(arch)
+            .map_or(&self.libdir, String::as_str)
+    }
 }
 
 impl Default for Paths {
@@ -60,6 +76,7 @@ impl Default for Paths {
         Self {
             prefix: default_prefix(),
             libdir: default_libdir(),
+            libdir_by_arch: Default::default(),
         }
     }
 }
@@ -408,20 +425,26 @@ impl Profile {
             ));
         }
         validate_install_path("paths.prefix", &self.paths.prefix)?;
-        validate_install_path("paths.libdir", &self.paths.libdir)?;
-        if self.paths.libdir != self.paths.prefix
-            && !self
-                .paths
-                .libdir
-                .starts_with(&format!("{}/", self.paths.prefix))
+        for (arch, libdir) in &self.paths.libdir_by_arch {
+            if normalize_arch(arch).ok() != Some(arch.as_str()) {
+                return Err(Error::new(codes::ROOT_006, format!("paths.libdir-by-arch key '{arch}' must use its canonical architecture name")));
+            }
+            validate_install_path("paths.libdir-by-arch", libdir)?;
+        }
+        for libdir in std::iter::once(&self.paths.libdir).chain(self.paths.libdir_by_arch.values())
         {
-            return Err(Error::new(
-                codes::ROOT_006,
-                format!(
-                    "profile paths.libdir '{}' must be inside paths.prefix '{}'",
-                    self.paths.libdir, self.paths.prefix
-                ),
-            ));
+            validate_install_path("paths.libdir", libdir)?;
+            if libdir != &self.paths.prefix
+                && !libdir.starts_with(&format!("{}/", self.paths.prefix))
+            {
+                return Err(Error::new(
+                    codes::ROOT_006,
+                    format!(
+                        "profile paths.libdir '{libdir}' must be inside paths.prefix '{}'",
+                        self.paths.prefix
+                    ),
+                ));
+            }
         }
         Ok(())
     }
@@ -898,6 +921,32 @@ packages:
         let profile = parse_profile(&text).expect("valid profile");
         assert_eq!(profile.paths.prefix, "/opt");
         assert_eq!(profile.paths.libdir, "/opt/lib");
+    }
+
+    #[test]
+    fn library_directory_can_vary_by_target() {
+        let text = profile("base")
+            .replace("archs: [x86_64]", "archs: [x86_64, aarch64]")
+            .replace(
+                "packages:",
+                "paths:\n  libdir: /usr/lib64\n  libdir-by-arch:\n    aarch64: /usr/lib\npackages:",
+            );
+        let profile = parse_profile(&text).expect("valid profile");
+        for (target, expected) in [("amd64", "/usr/lib64"), ("arm64", "/usr/lib")] {
+            let selected = profile.for_target(target).expect("selected target");
+            assert_eq!(selected.paths.libdir_for(selected.arch()), expected);
+        }
+    }
+
+    #[test]
+    fn architecture_library_directories_are_validated() {
+        for entry in ["aarch64: /opt/lib", "arm64: /usr/lib", "unknown: /usr/lib"] {
+            let text = profile("base").replace(
+                "packages:",
+                &format!("paths:\n  libdir-by-arch:\n    {entry}\npackages:"),
+            );
+            assert_eq!(parse_profile(&text).expect_err(entry).code, codes::ROOT_006);
+        }
     }
 
     #[test]
