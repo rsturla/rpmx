@@ -25,16 +25,52 @@ pub(crate) fn spawn(
     spawn_with_fds(program, args, timeout, label, logs, &[])
 }
 
-// Change descriptor inheritance only after fork. Clearing CLOEXEC in the
-// parent would leak namespace handles into unrelated concurrent commands.
+// Seal descriptor inheritance after fork, allowing only stdio and the explicit
+// handles. Parent flags stay unchanged even during concurrent command startup.
 pub(crate) fn spawn_inheriting_fds(
     mut command: Command,
     descriptors: &[BorrowedFd<'_>],
 ) -> std::io::Result<Child> {
+    // No descriptor can have this unsigned number (FDs are signed ints).
+    // Probe syscall/flag availability without touching the parent's table,
+    // so later spawn/exec errors retain their original meaning.
+    let available = unsafe {
+        libc::syscall(
+            libc::SYS_close_range,
+            u32::MAX,
+            u32::MAX,
+            libc::CLOSE_RANGE_CLOEXEC,
+        )
+    };
+    if available < 0 {
+        let error = std::io::Error::last_os_error();
+        let kind = if matches!(
+            error.raw_os_error(),
+            Some(libc::ENOSYS) | Some(libc::EINVAL)
+        ) {
+            std::io::ErrorKind::Unsupported
+        } else {
+            error.kind()
+        };
+        return Err(std::io::Error::new(kind, format!(
+            "descriptor isolation requires Linux 5.11+ with close_range(CLOSE_RANGE_CLOEXEC) permitted by host policy: {error}"
+        )));
+    }
     let descriptors: Vec<_> = descriptors.iter().map(AsRawFd::as_raw_fd).collect();
-    // SAFETY: the child hook uses only async-signal-safe fcntl and errno access.
+    // SAFETY: the child hook uses only close_range/fcntl syscalls and errno
+    // access. Marking descriptors instead of closing them preserves Rust's
+    // CLOEXEC error pipe until exec can report any startup failure.
     unsafe {
         command.pre_exec(move || {
+            if libc::syscall(
+                libc::SYS_close_range,
+                3_u32,
+                u32::MAX,
+                libc::CLOSE_RANGE_CLOEXEC,
+            ) < 0
+            {
+                return Err(std::io::Error::last_os_error());
+            }
             for descriptor in &descriptors {
                 let flags = libc::fcntl(*descriptor, libc::F_GETFD);
                 if flags < 0
@@ -205,10 +241,181 @@ mod tests {
     use std::fs::File;
     use std::io::{Read, Write};
     use std::num::NonZeroU64;
-    use std::os::fd::{AsFd, AsRawFd};
+    use std::os::fd::{AsFd, AsRawFd, FromRawFd, OwnedFd};
     use std::os::unix::net::UnixStream;
+    use std::os::unix::process::CommandExt;
     use std::process::{Command, Stdio};
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn inherited_pipes_and_files_are_sealed_without_changing_the_parent() {
+        const CHILD: &str = "RPMX_DESCRIPTOR_ISOLATION_TEST_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            // Intentionally inheritable descriptors must not be created in
+            // the multithreaded test parent, where unrelated tests could race.
+            let mut command = Command::new(std::env::current_exe().unwrap());
+            command
+                .args([
+                    "--exact",
+                    "runner::backend::process::tests::inherited_pipes_and_files_are_sealed_without_changing_the_parent",
+                    "--nocapture",
+                ])
+                .env(CHILD, "1")
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
+            let output = spawn_inheriting_fds(command, &[])
+                .unwrap()
+                .wait_with_output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+
+        let mut pipe = [-1; 2];
+        // SAFETY: pipe points to storage for both returned descriptors.
+        assert_eq!(
+            unsafe { libc::pipe2(pipe.as_mut_ptr(), libc::O_CLOEXEC) },
+            0
+        );
+        // SAFETY: a successful pipe2 returned two distinct owned descriptors.
+        let (pipe_a, pipe_b) =
+            unsafe { (OwnedFd::from_raw_fd(pipe[0]), OwnedFd::from_raw_fd(pipe[1])) };
+        let private = tempfile::tempfile().unwrap();
+        let inherited: Vec<OwnedFd> = [
+            (pipe_a.as_raw_fd(), 142),
+            (pipe_b.as_raw_fd(), 145),
+            (private.as_raw_fd(), 151),
+        ]
+        .into_iter()
+        .map(|(source, minimum)| {
+            // SAFETY: F_DUPFD returns a new owned, non-CLOEXEC descriptor.
+            let duplicated = unsafe { libc::fcntl(source, libc::F_DUPFD, minimum) };
+            assert!(duplicated >= minimum);
+            unsafe { OwnedFd::from_raw_fd(duplicated) }
+        })
+        .collect();
+        assert_eq!(inherited[0].as_raw_fd(), 142);
+        assert_eq!(inherited[1].as_raw_fd(), 145);
+        let allowed = File::open("/proc/self/ns/user").unwrap();
+        let target = |fd| std::fs::read_link(format!("/proc/self/fd/{fd}")).unwrap();
+        let initial_targets: Vec<_> = inherited.iter().map(|fd| target(fd.as_raw_fd())).collect();
+        let allowed_target = target(allowed.as_raw_fd());
+        let mut command = Command::new("/bin/sh");
+        command
+            .args([
+                "-ec",
+                r#"
+                for descriptor in 142 145 151; do
+                    if test -e "/proc/$$/fd/$descriptor"; then
+                        echo "unexpected inherited descriptor $descriptor" >&2
+                        exit 1
+                    fi
+                done
+                test "$(readlink /proc/$$/fd/$1)" = "$2"
+                IFS= read -r input
+                test "$input" = inherited-stdin
+                printf 'isolated-stdout\n'
+                printf 'isolated-stderr\n' >&2
+            "#,
+                "descriptor-isolation-test",
+                &allowed.as_raw_fd().to_string(),
+                allowed_target.to_str().unwrap(),
+            ])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let mut child = spawn_inheriting_fds(command, &[allowed.as_fd()]).unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(b"inherited-stdin\n")
+            .unwrap();
+        let output = child.wait_with_output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(output.stdout, b"isolated-stdout\n");
+        assert_eq!(output.stderr, b"isolated-stderr\n");
+        for (descriptor, initial) in inherited.iter().zip(initial_targets) {
+            assert_eq!(target(descriptor.as_raw_fd()), initial);
+            // SAFETY: every descriptor remains owned and open in this parent.
+            assert_eq!(
+                unsafe { libc::fcntl(descriptor.as_raw_fd(), libc::F_GETFD) },
+                0
+            );
+        }
+        // The exec-error pipe must remain usable until an unsuccessful exec.
+        let error =
+            spawn_inheriting_fds(Command::new("/rpmx-no-such-executable"), &[]).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::NotFound);
+
+        let mut invalid = Command::new("/bin/true");
+        // SAFETY: the hook only returns a fixed exec/setup-style error.
+        unsafe {
+            invalid.pre_exec(|| Err(std::io::Error::from_raw_os_error(libc::EINVAL)));
+        }
+        let error = spawn_inheriting_fds(invalid, &[]).unwrap_err();
+        assert_eq!(error.raw_os_error(), Some(libc::EINVAL));
+        assert!(!error.to_string().contains("close_range"), "{error}");
+
+        // Emulate an unavailable syscall only in this dedicated subprocess.
+        // The kernel, rather than a mocked return value, rejects close_range.
+        let filters = [
+            libc::sock_filter {
+                code: (libc::BPF_LD | libc::BPF_W | libc::BPF_ABS) as u16,
+                jt: 0,
+                jf: 0,
+                k: 0,
+            },
+            libc::sock_filter {
+                code: (libc::BPF_JMP | libc::BPF_JEQ | libc::BPF_K) as u16,
+                jt: 0,
+                jf: 1,
+                k: libc::SYS_close_range as u32,
+            },
+            libc::sock_filter {
+                code: (libc::BPF_RET | libc::BPF_K) as u16,
+                jt: 0,
+                jf: 0,
+                k: libc::SECCOMP_RET_ERRNO | libc::ENOSYS as u32,
+            },
+            libc::sock_filter {
+                code: (libc::BPF_RET | libc::BPF_K) as u16,
+                jt: 0,
+                jf: 0,
+                k: libc::SECCOMP_RET_ALLOW,
+            },
+        ];
+        let filter = libc::sock_fprog {
+            len: filters.len() as u16,
+            filter: filters.as_ptr().cast_mut(),
+        };
+        // SAFETY: both prctl arguments match the documented filter ABI and
+        // point to live storage. This subprocess runs no other tests.
+        unsafe {
+            assert_eq!(libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0), 0);
+            assert_eq!(
+                libc::prctl(libc::PR_SET_SECCOMP, libc::SECCOMP_MODE_FILTER, &filter),
+                0
+            );
+        }
+        let error = spawn_inheriting_fds(Command::new("/bin/true"), &[]).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::Unsupported);
+        assert!(error.to_string().contains("Linux 5.11+"), "{error}");
+        assert!(
+            error
+                .to_string()
+                .contains("close_range(CLOSE_RANGE_CLOEXEC)"),
+            "{error}"
+        );
+    }
 
     #[test]
     fn selected_fd_inheritance_does_not_change_parent_or_unrelated_execs() {

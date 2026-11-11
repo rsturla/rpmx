@@ -181,10 +181,9 @@ impl UserNamespace {
         let errors = tempfile::tempfile().map_err(setup_error)?;
         command.stderr(Stdio::from(errors.try_clone().map_err(setup_error)?));
         command.process_group(0);
-        let child = command.spawn().map_err(setup_error)?;
-        // Command owns its configured stdio handles until it is dropped.
-        // Close both parent copies so a failed helper produces immediate EOF.
-        drop(command);
+        let child = super::process::spawn_inheriting_fds(command, &[]).map_err(setup_error)?;
+        // The consumed Command has closed both parent stdio copies, so a
+        // failed helper produces immediate EOF on the control socket.
         let helper = NamespaceHelper::wait_ready(child, control, errors, STARTUP_TIMEOUT)?;
         let process = format!("/proc/{}", helper.child.id());
         let (uid, gid) = if transaction {
@@ -242,8 +241,7 @@ mod tests {
             .process_group(0)
             .stderr(Stdio::from(errors.try_clone().unwrap()));
         control_stdio(&mut command, peer).unwrap();
-        let child = command.spawn().unwrap();
-        drop(command);
+        let child = super::super::process::spawn_inheriting_fds(command, &[]).unwrap();
         (child, control, errors)
     }
 
@@ -287,8 +285,7 @@ mod tests {
             .process_group(0)
             .stderr(Stdio::from(errors.try_clone().unwrap()));
         control_stdio(&mut command, peer).unwrap();
-        let child = command.spawn().unwrap();
-        drop(command);
+        let child = super::super::process::spawn_inheriting_fds(command, &[]).unwrap();
         let mut helper =
             NamespaceHelper::wait_ready(child, control, errors, Duration::from_secs(2)).unwrap();
         helper.control.write_all(b"stop\n").unwrap();

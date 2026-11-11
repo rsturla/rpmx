@@ -45,6 +45,9 @@ environment. `--command 'make -j8'` runs one command instead of an interactive
 shell. The debug shell shares native build-step sandbox construction and
 inherits standard input, output and error, including terminal handles. Debug
 sessions have no build-step deadline or captured build logs.
+Native commands and debug shells inherit only their standard streams and
+explicit runner handles. Other caller descriptors, including jobserver pipes,
+are closed on exec; parent descriptor flags remain unchanged.
 
 Bubblewrap runs commands as UID/GID 65534 inside a full subordinate-ID namespace.
 That identity maps to your host account, so workspace writes remain yours.
