@@ -755,6 +755,10 @@ fn dnf_base_args(profile: &Profile) -> Vec<String> {
         ),
         "--setopt=cachedir=/work/cache".to_string(),
         "--setopt=persistdir=/work/persist".to_string(),
+        // A fresh installroot does not load distribution defaults. Select
+        // the newest compatible closure, including exact selector requires,
+        // rather than forcing an incompatible newest generic candidate.
+        "--setopt=best=False".to_string(),
     ];
     if !profile.options.docs {
         args.push("--setopt=tsflags=nodocs".to_string());
