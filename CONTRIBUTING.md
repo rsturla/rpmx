@@ -25,6 +25,19 @@ scripts/replacement-dnf-test.sh
 scripts/systemd-dnf-test.sh <v1-rpm-dir> <v2-rpm-dir>
 ```
 
+To check builder image pins with Podman and access to the Fedora registry, run:
+
+```console
+cargo test -p rpmx-root an_oci_index_and_its_platform_manifests_resolve_to_the_same_locked_bytes -- --ignored
+cargo test -p rpmx-root a_locked_platform_image_runs_when_its_original_tag_no_longer_exists -- --ignored
+```
+
+These tests check both platform selections, explicit manifest pins, wrong
+architectures and a missing original tag. Image locks record the selected
+platform manifest digest. Podman's image `Digest` field can identify its parent
+index, so resolution uses temporary manifest metadata instead. No image layers
+are downloaded to select a manifest.
+
 ## Design rules
 
 - Read the surrounding code and match its structure and naming.
