@@ -832,11 +832,10 @@ tests:
 The shared-object step matters: a wrapper that appends `-pie` to every link
 will fail a `-shared` link, while a wrapper that reads the link mode from a GCC
 spec can add `-pie` only to executables.
-- `tests[].packages` lists packages installed only for that test's root. This
-  mirrors Wolfi/melange test environments. Tests with the same output and
-  package set share a root; a different set gets a separate root. It is valid
-  only for `stage: installed`; build-stage tests run in the build sandbox and
-  use `build.packages`.
+- `tests[].packages` lists tools for the test. Build-stage packages join the
+  build root, including the host root in cross builds. Installed-stage packages
+  join only the disposable test root. Reusable test steps add their declared
+  tool requirements. Tests with the same output and package set share a root.
 - `tests[].environment` sets variables for every step of that test. A step's
   own `env` entries win.
 - Real dependency checking is performed; the only retry is for a conflict with

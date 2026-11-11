@@ -56,6 +56,29 @@ Update Eternal before changing its pinned rpmx revision:
 Use one package per migration commit. Keep fixtures and test reports in the package review.
 Do not update the pin while recipes still use shell `argv` tests.
 
+### Upstream suites and test dependencies
+
+Declare build-test tools on the test:
+
+```yaml
+tests:
+  - name: upstream
+    stage: build
+    packages: [dejagnu, diffutils]
+    pipeline:
+      - uses: make/check
+        with:
+          dir: build
+```
+
+Build-stage test packages join the build root. In a cross build, these tools
+run on the host. The target sysroot does not receive them.
+The build root includes these packages even with `--no-tests`.
+Installed-stage packages join only the disposable test root.
+They do not change the build root or the target sysroot.
+Reusable steps add their declared tool requirements to the correct root.
+Existing `make/check`, `cmake/check` and `meson/test` steps run upstream suites.
+
 ### Build and test in one run
 
 ```console

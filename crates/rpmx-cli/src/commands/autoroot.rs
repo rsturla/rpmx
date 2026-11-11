@@ -1132,13 +1132,14 @@ pub(crate) fn required_packages(plan: &Plan) -> RequiredPackages {
             split_needs(step, false, &mut build, &mut target);
         }
         for test in &cell.tests {
-            // A build-stage test runs in the build sandbox, so its tools are
-            // build-root packages. An installed-stage test runs in a target
-            // test root; its environment packages belong there too.
-            let installed = test.stage != "build";
-            target.extend(test.packages.iter().cloned());
+            // Installed tests resolve their own roots. Their tools must not
+            // change the build root or the cross sysroot.
+            if test.stage != "build" {
+                continue;
+            }
+            build.extend(test.packages.iter().cloned());
             for step in &test.pipeline {
-                split_needs(step, installed, &mut build, &mut target);
+                split_needs(step, false, &mut build, &mut target);
             }
         }
     }
@@ -1888,6 +1889,11 @@ tests:
     stage: installed
     packages: [pytest]
     argv: ["true"]
+  - name: upstream
+    stage: build
+    packages: [dejagnu]
+    pipeline:
+      - uses: make/check
 "#,
         );
         let plan = rpmx_core::plan_with_options(
@@ -1902,12 +1908,16 @@ tests:
         )
         .expect("plan");
         let packages = required_packages(&plan);
-        // Tools belong to the build root; libraries and a test's own packages
-        // to the target root the test runs in.
+        // Build-test tools run on the host. Installed-test tools have a
+        // separate root and must not enter either build closure.
         assert!(packages.build.contains("gcc"));
         assert!(!packages.target.contains("gcc"));
         assert!(packages.target.contains("zlib-devel"));
-        assert!(packages.target.contains("pytest"));
+        assert!(!packages.target.contains("pytest"));
+        assert!(!packages.build.contains("pytest"));
+        assert!(packages.build.contains("dejagnu"));
+        assert!(packages.build.contains("make"));
+        assert!(!packages.target.contains("dejagnu"));
         // A built-in step contributes its tools to the build root.
         assert!(packages.build.contains("binutils"));
         assert!(packages.build.contains("findutils"));

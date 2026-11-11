@@ -127,7 +127,7 @@ pub struct PlannedTest {
     pub stage: String,
     pub argv: Option<Vec<String>>,
     pub pipeline: Vec<PlannedStep>,
-    /// Packages that are installed only for this test's root.
+    /// Build-test tools or packages for an installed test's root.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub packages: Vec<String>,
     /// Variables applied to every step of this test.
@@ -829,16 +829,22 @@ outputs:
     }
 
     #[test]
-    fn test_packages_are_rejected_on_build_stage() {
+    fn test_packages_are_supported_on_build_stage() {
         let recipe = crate::parse_recipe(&TEST_RECIPE.replace("stage: installed", "stage: build"))
             .expect("recipe");
-        let error = plan(&recipe, "x86_64").expect_err("build-stage packages");
-        assert_eq!(error.code, rpmx_base::error::codes::TEST_004);
-        assert!(
-            error.message.contains("installed-stage"),
-            "{}",
-            error.message
-        );
+        let plan = plan(&recipe, "x86_64").expect("build-stage packages");
+        assert_eq!(plan.cells[0].tests[0].packages, ["python3", "probe-test"]);
+    }
+
+    #[test]
+    fn installed_pipeline_tools_join_the_test_packages() {
+        let recipe =
+            crate::parse_recipe(&TEST_RECIPE.replace("runs: \"true\"", "uses: make/check"))
+                .expect("recipe");
+        let plan = plan(&recipe, "x86_64").expect("plan");
+        assert!(plan.cells[0].tests[0]
+            .packages
+            .contains(&"make".to_string()));
     }
 
     #[test]
