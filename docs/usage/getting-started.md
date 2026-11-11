@@ -32,6 +32,10 @@ The three things to remember:
 - Rust 1.88+ to build rpmx (the vendored rpm crate requires it).
 - `bubblewrap` for native steps, or `podman` for root resolution and
   image-backed rebuilds.
+- Linux 5.11 or newer with `close_range(CLOSE_RANGE_CLOEXEC)` available.
+  Runner commands inherit only their standard streams and explicit handles.
+  A host that blocks this syscall fails command startup; there is no fallback
+  that leaves caller descriptors open in the sandbox.
 - For bubblewrap: util-linux `unshare` with `--map-auto`, `newuidmap` and
   `newgidmap` (the `uidmap` or `shadow-utils` package), and at least 65,536
   subordinate IDs allocated to your user in both `/etc/subuid` and `/etc/subgid`.
