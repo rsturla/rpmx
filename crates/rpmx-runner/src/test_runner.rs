@@ -14,6 +14,7 @@ pub struct TestSandboxConfig<'a> {
     pub stage: &'a Path,
     pub fixture_root: &'a Path,
     pub results: &'a Path,
+    pub rpms: &'a [std::path::PathBuf],
     pub host_arch: Arch,
     pub target_arch: Arch,
     pub runner: RunnerKind,
@@ -39,11 +40,11 @@ pub fn run_planned_tests(
         .collect();
     let installed_tests: Vec<_> = tests
         .iter()
-        .filter(|test| test.stage == "installed" && test.skip.is_none())
+        .filter(|test| test.stage != "build" && test.skip.is_none())
         .collect();
     if let Some(test) = tests
         .iter()
-        .find(|test| test.stage != "build" && test.stage != "installed")
+        .find(|test| !matches!(test.stage.as_str(), "build" | "installed" | "transaction"))
     {
         return Err(Error::new(
             codes::TEST_004,
@@ -106,6 +107,18 @@ pub fn run_planned_tests(
         let stage = work.path().join("stage");
         std::fs::create_dir_all(&workspace).map_err(file_error)?;
         std::fs::create_dir_all(&stage).map_err(file_error)?;
+        let transaction = test.stage == "transaction";
+        let private_root = work.path().join("root");
+        let _cleanup = TransactionRootCleanup(private_root.clone());
+        if transaction {
+            if settings.rpms.is_empty() {
+                return Err(Error::new(
+                    codes::TEST_004,
+                    "transaction tests need RPMs; pass --install-dir with a saved root",
+                ));
+            }
+            copy_transaction_root(root, &private_root)?;
+        }
         let mut test = test.clone();
         prepare_files(
             &mut test,
@@ -113,7 +126,27 @@ pub fn run_planned_tests(
             &workspace.join("files"),
             &workspace,
         )?;
+        if !settings.rpms.is_empty() {
+            let directory = workspace.join("rpms");
+            std::fs::create_dir_all(&directory).map_err(file_error)?;
+            for rpm in settings.rpms {
+                std::fs::copy(
+                    rpm,
+                    directory.join(
+                        rpm.file_name().ok_or_else(|| {
+                            Error::new(codes::TEST_004, "test RPM has no file name")
+                        })?,
+                    ),
+                )
+                .map_err(file_error)?;
+            }
+            test.environment.insert(
+                "TEST_RPMS".into(),
+                format!("{}/rpms", rpmx_base::guest::BUILD),
+            );
+        }
         let test_sandbox = Sandbox::new(SandboxConfig {
+            writable_root: transaction,
             runner: settings.runner,
             host: settings.host_arch,
             exec: settings.target_arch,
@@ -122,7 +155,7 @@ pub fn run_planned_tests(
             cross: None,
             workspace: &workspace,
             stage: &stage,
-            root: Some(root),
+            root: Some(if transaction { &private_root } else { root }),
             assets: settings.assets,
             image: None,
             source_date_epoch: settings.source_date_epoch,
@@ -140,6 +173,63 @@ pub fn run_planned_tests(
         result?;
     }
     Ok(())
+}
+
+fn copy_transaction_root(source: &Path, destination: &Path) -> Result<()> {
+    let source = std::fs::canonicalize(source).map_err(file_error)?;
+    if source == Path::new("/") || destination.starts_with(&source) {
+        return Err(Error::new(
+            codes::TEST_004,
+            "transaction tests need a disposable package root, not the host root",
+        ));
+    }
+    std::fs::create_dir_all(destination).map_err(file_error)?;
+    let output = std::process::Command::new("unshare")
+        .args(["--user", "--map-root-user", "--", "cp"])
+        .args(["--archive", "--reflink=auto", "--no-preserve=ownership"])
+        .arg(source.join("."))
+        .arg(destination)
+        .output()
+        .map_err(file_error)?;
+    if !output.status.success() {
+        return Err(Error::new(
+            codes::TEST_004,
+            format!(
+                "cannot copy transaction root: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ),
+        ));
+    }
+    Ok(())
+}
+
+struct TransactionRootCleanup(std::path::PathBuf);
+
+impl Drop for TransactionRootCleanup {
+    fn drop(&mut self) {
+        fn writable(path: &Path) {
+            let Ok(metadata) = std::fs::symlink_metadata(path) else {
+                return;
+            };
+            if !metadata.is_dir() {
+                return;
+            }
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(
+                    path,
+                    std::fs::Permissions::from_mode(metadata.permissions().mode() | 0o700),
+                );
+            }
+            if let Ok(entries) = std::fs::read_dir(path) {
+                for entry in entries.flatten() {
+                    writable(&entry.path());
+                }
+            }
+        }
+        writable(&self.0);
+    }
 }
 
 fn file_error(error: std::io::Error) -> Error {
@@ -306,5 +396,35 @@ fn test_failure(error: Error) -> Error {
         error.with_code(codes::TEST_003)
     } else {
         error
+    }
+}
+
+#[cfg(test)]
+mod transaction_tests {
+    use super::*;
+
+    #[test]
+    fn private_roots_do_not_share_writable_files() {
+        if !std::process::Command::new("unshare")
+            .args(["--user", "--map-root-user", "--", "true"])
+            .status()
+            .is_ok_and(|status| status.success())
+        {
+            eprintln!("user namespaces are unavailable; skip the root-copy test");
+            return;
+        }
+        let directory = tempfile::tempdir().unwrap();
+        let source = directory.path().join("source");
+        let destination = directory.path().join("copy");
+        std::fs::create_dir_all(source.join("etc")).unwrap();
+        std::fs::write(source.join("etc/probe.conf"), "original").unwrap();
+        copy_transaction_root(&source, &destination).unwrap();
+        std::fs::write(destination.join("etc/probe.conf"), "changed").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(source.join("etc/probe.conf")).unwrap(),
+            "original"
+        );
+        assert!(copy_transaction_root(Path::new("/"), &directory.path().join("host")).is_err());
+        assert!(copy_transaction_root(&source, &source.join("recursive")).is_err());
     }
 }

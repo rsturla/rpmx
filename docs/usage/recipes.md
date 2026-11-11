@@ -763,6 +763,8 @@ outputs:
 ```
 
 - `stage: build` runs in the build sandbox, with the source workspace present.
+- `stage: transaction` uses a private writable package root for real RPM transactions.
+  See [package transactions](testing.md#package-transactions) for lifecycle tests and previous-version fixtures.
 - `stage: installed` installs the built RPMs into a disposable test root and
   runs there.
 - A recipe-level installed test installs every output, so it is an integration

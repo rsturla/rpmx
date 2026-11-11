@@ -114,18 +114,12 @@ fn run_inner(args: TestArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
         && !plan.cells.iter().any(|cell| {
             cell.tests
                 .iter()
-                .any(|test| test.stage == "installed" && !args.skip_installed)
+                .any(|test| test.stage != "build" && !args.skip_installed)
         })
     {
         return Err(Error::new(
             codes::TEST_005,
             "--save-test-root needs an installed-stage test; there is no test root to keep",
-        ));
-    }
-    if args.install_dir.is_some() && args.test_root.is_some() {
-        return Err(Error::new(
-            codes::TEST_004,
-            "--install-dir installs packages into a root; --test-root runs one that is already prepared",
         ));
     }
     if args.test_root.is_some() && args.skip_installed {
@@ -159,7 +153,11 @@ fn run_inner(args: TestArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
     let installed = if args.test_root.is_some() {
         // The package is already installed in the prebuilt root.
         let tests = installed_tests(&plan, &args.selected)?;
-        Some((Vec::<TestRpm>::new(), tests))
+        let rpms = match &args.install_dir {
+            Some(directory) => read_rpms(&rpms_in(directory)?)?,
+            None => Vec::new(),
+        };
+        Some((rpms, tests))
     } else {
         match args.install_dir.as_deref() {
             Some(directory) => {
@@ -341,7 +339,7 @@ fn installed_tests(
     for cell in &plan.cells {
         for test in &cell.tests {
             let wanted = if selected.is_empty() {
-                test.stage == "installed"
+                test.stage != "build"
             } else {
                 selected
                     .iter()
@@ -350,7 +348,7 @@ fn installed_tests(
             if !wanted {
                 continue;
             }
-            if test.stage != "installed" {
+            if test.stage == "build" {
                 return Err(Error::new(
                     codes::TEST_004,
                     format!(
@@ -487,6 +485,7 @@ fn run_installed(
     let source_date_epoch = 0;
     let timeout = args.runtime.step_timeout;
     let sandbox = Sandbox::new(SandboxConfig {
+        writable_root: false,
         runner,
         host,
         exec: target,
@@ -504,11 +503,13 @@ fn run_installed(
         jobs: args.runtime.jobs,
         timeout,
     })?;
+    let test_rpm_paths: Vec<_> = rpms.iter().map(|rpm| rpm.path.clone()).collect();
     let settings = TestSandboxConfig {
         workspace: &workspace,
         stage: &stage,
         fixture_root: args.file.parent().unwrap_or_else(|| Path::new(".")),
         results: &args.test_output,
+        rpms: &test_rpm_paths,
         host_arch: host,
         target_arch: target,
         runner,
@@ -547,6 +548,9 @@ fn run_installed(
             settings,
         );
         let error = result.as_ref().err().map(|error| error.message.clone());
+        if let Err(error) = &result {
+            eprintln!("rpmx: {}: {}", test.qualified_name(), error);
+        }
         eprintln!(
             "rpmx: test {} ({}): {} ({:.1}s)",
             test.qualified_name(),

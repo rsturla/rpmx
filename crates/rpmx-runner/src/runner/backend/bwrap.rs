@@ -29,11 +29,13 @@ impl Runner for BwrapBackend<'_> {
             stage: config.stage.to_path_buf(),
             sysroot: config.sysroot.map(Path::to_path_buf),
             timeout: config.timeout,
+            writable_root: config.writable_root,
         }))
     }
 }
 
 struct BwrapSession {
+    writable_root: bool,
     root: PathBuf,
     sysroot: Option<PathBuf>,
     workspace: PathBuf,
@@ -50,7 +52,12 @@ impl Session for BwrapSession {
             "--die-with-parent".to_string(),
             "--new-session".to_string(),
             "--clearenv".to_string(),
-            "--ro-bind".to_string(),
+            if self.writable_root {
+                "--bind"
+            } else {
+                "--ro-bind"
+            }
+            .to_string(),
             self.root.display().to_string(),
             "/".to_string(),
             "--dev".to_string(),
@@ -68,6 +75,9 @@ impl Session for BwrapSession {
             self.stage.display().to_string(),
             rpmx_base::guest::STAGE.to_string(),
         ];
+        if self.writable_root {
+            args.extend(["--uid", "0", "--gid", "0"].map(String::from));
+        }
         if let Some(sysroot) = &self.sysroot {
             args.push("--ro-bind".to_string());
             args.push(sysroot.display().to_string());

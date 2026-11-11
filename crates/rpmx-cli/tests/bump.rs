@@ -186,3 +186,20 @@ fn bump_refreshes_a_split_source_file_and_keeps_relative_file_sources() {
         rpmx_core::srpm::sha512_hex(b"extra source bytes")
     );
 }
+
+#[test]
+fn bump_preserves_binary_test_fixtures() {
+    let directory = tempfile::tempdir().unwrap();
+    let recipe = directory.path().join("package.yaml");
+    std::fs::create_dir(directory.path().join("fixtures")).unwrap();
+    let bytes = [0xff, 0x00, 0xfe, 0xed];
+    let fixture = directory.path().join("fixtures/previous.rpm");
+    std::fs::write(&fixture, bytes).unwrap();
+    std::fs::write(&recipe, format!("{RECIPE}tests:\n  - name: previous\n    stage: transaction\n    files: fixtures\n    script: 'true'\n")).unwrap();
+    let output = rpmx(&["bump", "1.1", recipe.to_str().unwrap(), "--no-fetch"]);
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(std::fs::read(fixture).unwrap(), bytes);
+    assert!(std::fs::read_to_string(recipe)
+        .unwrap()
+        .contains("version: \"1.1\""));
+}

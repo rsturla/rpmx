@@ -10,6 +10,7 @@ use rpmx_core::sandbox::{Sandbox, SandboxConfig};
 fn config<'a>(workspace: &'a std::path::Path, stage: &'a std::path::Path) -> SandboxConfig<'a> {
     let host = Arch::current().expect("host arch");
     SandboxConfig {
+        writable_root: false,
         runner: RunnerKind::Bwrap,
         host,
         exec: host,
@@ -76,6 +77,7 @@ fn constructing_a_foreign_sandbox_does_not_start_a_runner() {
     let root = tempfile::tempdir().expect("root");
 
     Sandbox::new(SandboxConfig {
+        writable_root: false,
         runner: RunnerKind::Qemu,
         exec: target,
         target,
@@ -182,6 +184,7 @@ fn a_custom_runner_receives_the_arch_contract() {
     let seen = probe.seen.clone();
     Sandbox::with_runner(
         SandboxConfig {
+            writable_root: false,
             host: Arch::X86_64,
             target: Arch::Aarch64,
             jobs: NonZeroU32::new(2).expect("jobs"),
@@ -216,6 +219,7 @@ fn a_custom_runner_receives_the_install_layout() {
     let seen = probe.seen.clone();
     Sandbox::with_runner(
         SandboxConfig {
+            writable_root: false,
             prefix: "/opt",
             libdir: "/opt/lib",
             ..config(work.path(), stage.path())
@@ -377,6 +381,7 @@ fn a_step_that_overruns_is_killed() {
     let stage = tempfile::tempdir().expect("stage");
     let started = std::time::Instant::now();
     let error = Sandbox::new(SandboxConfig {
+        writable_root: false,
         timeout: NonZeroU64::new(1).expect("timeout"),
         ..config(work.path(), stage.path())
     })
@@ -410,6 +415,7 @@ fn podman_session_has_no_network() {
     let work = tempfile::tempdir().expect("work");
     let stage = tempfile::tempdir().expect("stage");
     let sandbox = Sandbox::new(SandboxConfig {
+        writable_root: false,
         runner: RunnerKind::Auto,
         image: Some(image),
         ..config(work.path(), stage.path())
