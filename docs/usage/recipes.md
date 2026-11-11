@@ -118,6 +118,40 @@ Keep repository defaults narrow. License, upstream URL, version, summary and
 CPE describe the upstream component and belong in the recipe. CPE must identify
 the upstream project, not the distribution package name.
 
+#### Custom metadata
+
+A recipe can contain an optional top-level `metadata` map for downstream tools:
+
+```yaml
+metadata:
+  eternal:
+    update:
+      schema: 1
+      provider: github-releases
+      repository: facebook/zstd
+      asset: zstd-${version}.tar.gz
+      prereleases: false
+```
+
+Use a namespace such as your distribution or tool name. Values can contain
+nested maps, lists and JSON-compatible scalar values. Downstream tools own
+validation and interpretation within their namespaces. Unknown fields outside
+`metadata` remain errors.
+
+rpmx preserves metadata without expanding template strings or adding variables
+to the build scope. It does not execute metadata as build or source-assembly
+steps. `metadata` can live in an included fragment, but must have exactly one
+owner across the recipe bundle, even when it is an empty map.
+
+Recipe metadata and `rpmx-defaults.yaml` metadata remain separate. rpmx does not
+merge or inherit these maps. Downstream tools can define their own inheritance
+rules. An omitted recipe map is empty and is omitted during serialization.
+
+`rpmx bump` preserves the metadata text. Locks cover the recipe files that
+contain it, so a metadata edit invalidates the lock. SRPMs embed those files
+and preserve metadata for extraction and rebuild. Metadata is public recipe
+data; keep credentials outside it.
+
 ### 5.2 Build root
 
 The recipe names the root in one of two ways.

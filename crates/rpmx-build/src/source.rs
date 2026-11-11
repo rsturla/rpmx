@@ -821,6 +821,7 @@ mod tests {
     fn recipe(source_date_epoch: Option<u32>) -> Recipe {
         Recipe {
             schema: 2,
+            metadata: BTreeMap::new(),
             package: Package {
                 name: "demo".to_string(),
                 epoch: None,
