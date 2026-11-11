@@ -279,9 +279,9 @@ rpmx test --install-dir packages/x86_64 --json --junit report.xml
 - Skips the build entirely.
 - Runs installed-stage tests only. With no `--test`, build-stage tests are
   skipped; naming one is an error.
-- Needs a root lock, not an assembled `--root`; the test root is prepared from
-  the lock and the supplied RPMs. For a cross package the target sysroot lock
-  is used, so the test root is the target architecture.
+- Uses a root lock or `--test-profile FILE` to prepare a test root from the
+  supplied RPMs. For a cross package the target sysroot lock describes the
+  package target.
 - `--test-root-lock FILE` pins the test root instead of resolving one.
 - `--test-root DIR` runs against a saved test root instead of preparing one.
   The root is self-contained: no build root, no RPMs, no cache, no profile and
@@ -301,6 +301,30 @@ their requirements, including shared-library and file requirements, resolve
 from the root's repositories in one transaction. A test never has to name the
 libraries the package links. `packages` is only for tools the test itself runs,
 such as a shell or `grep`.
+
+Use `--test-profile FILE` on `build`, `rebuild` or `test` to select test
+repositories independently of the build root. The profile supplies repository
+policy, builder image, release version and resolver options. Its architecture,
+prefix and library directory must match the package target; its release
+version can differ. Relative repository paths resolve against the profile
+file. A test profile can omit `packages` entirely. Its `packages.install` and `packages.reinstall` do not seed
+test roots: each environment contains Bash, coreutils, its explicit test tools,
+the selected outputs and their runtime dependencies.
+
+```console
+rpmx build package.yaml --test-profile profiles/runtime.yaml
+rpmx test package.yaml --install-dir packages/x86_64 --test-profile profiles/runtime.yaml
+```
+
+Standalone tests with `--install-dir` and `--test-profile` read the recipe's
+declared build profile for target layout but do not resolve a build root.
+`--root-lock` can supply that target metadata explicitly. A test profile cannot
+be combined with `--test-root`, `--test-root-lock` or `--no-tests`.
+
+Preparing a root can download repository metadata, RPMs and a builder image,
+including when its dependency lock is pinned. `--offline` rejects this step.
+Use an assembled `--test-root` for offline tests, or `--skip-installed` to run
+only build-stage tests while building offline.
 
 The supplied RPM wins when a repository already publishes the same name,
 epoch, version, release and architecture. rpmx excludes that exact package

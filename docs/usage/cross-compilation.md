@@ -199,7 +199,7 @@ block describes the build host and is not used there. To avoid resolving the
 test root again, ship the `*.test-root.lock.json` the build writes and pin it:
 
 ```console
-rpmx test package.yaml --install-dir DIR --test-root-lock DIR/pkg.test-root.lock.json --offline
+rpmx test package.yaml --install-dir DIR --test-root-lock DIR/pkg.test-root.lock.json
 ```
 
 The pinned form still needs the test root's packages in the local cache and the

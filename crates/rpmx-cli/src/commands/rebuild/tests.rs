@@ -30,6 +30,8 @@ pub(super) struct TestRunOptions<'a> {
     pub(super) sysroot_lock: Option<&'a RootLock>,
     pub(super) builder_image: Option<&'a str>,
     pub(super) pinned_lock: Option<&'a Path>,
+    pub(super) profile: Option<&'a rpmx_core::profile::Profile>,
+    pub(super) offline: bool,
     pub(super) arch: &'a str,
     pub(super) runner: RunnerKind,
     pub(super) appliance: Option<&'a Path>,
@@ -103,6 +105,8 @@ fn run_inner(options: TestRunOptions<'_>) -> Result<Vec<PathBuf>, Error> {
             let repo = under_test_repo(&work.join("test-rpms"), &group_rpms)?;
             let prepared = prepare_test_root(TestRootOptions {
                 lock,
+                profile: options.profile,
+                offline: options.offline,
                 destination: if groups.len() == 1 {
                     options.save_test_root
                 } else {

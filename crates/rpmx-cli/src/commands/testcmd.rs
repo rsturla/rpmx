@@ -182,8 +182,9 @@ fn run_inner(args: TestArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
     // Prebuilt RPMs plus a pinned test root are self-contained: a machine that
     // is not the build host (for example the target itself) must not need the
     // build root or the cross profile just to run the tests.
-    let standalone =
-        (args.install_dir.is_some() && args.test_root_lock.is_some()) || args.test_root.is_some();
+    let standalone = (args.install_dir.is_some()
+        && (args.test_root_lock.is_some() || args.test_profile.is_some()))
+        || args.test_root.is_some();
     let automatic = if !standalone && args.root_lock.is_none() && args.root.is_none() {
         crate::commands::autoroot::ensure(
             &bundle.recipe,
@@ -198,10 +199,51 @@ fn run_inner(args: TestArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
     } else {
         None
     };
+    let profile_work =
+        if args.install_dir.is_some() && args.test_profile.is_some() && args.root_lock.is_none() {
+            Some(WorkDir::new("test-profile")?)
+        } else {
+            None
+        };
+    let standalone_lock = if let Some(work) = &profile_work {
+        let profile = rpmx_core::profile::load_test_profile(
+            args.test_profile.as_deref().expect("profile selected"),
+        )?;
+        let declared = crate::commands::autoroot::requirement(
+            &bundle.recipe,
+            &plan,
+            &bundle.root,
+            args.policy.profile.as_deref(),
+            &arch,
+        )?;
+        let layout = declared
+            .as_ref()
+            .map(|requirement| {
+                requirement
+                    .sysroot
+                    .as_ref()
+                    .map(|sysroot| &sysroot.profile.paths)
+                    .unwrap_or(&requirement.profile.paths)
+            })
+            .cloned()
+            .unwrap_or_default();
+        let lock = rpmx_core::test_root::profile_target_lock(
+            &profile,
+            &arch,
+            &layout.prefix,
+            &layout.libdir,
+        )?;
+        let path = work.path().join("target.lock.yaml");
+        rpmx_core::root::write_lock(&path, &lock)?;
+        Some(path)
+    } else {
+        None
+    };
     let root_lock = args
         .root_lock
         .clone()
-        .or_else(|| automatic.as_ref().map(|root| root.lock.clone()));
+        .or_else(|| automatic.as_ref().map(|root| root.lock.clone()))
+        .or(standalone_lock);
     let root = args
         .root
         .clone()
@@ -324,6 +366,7 @@ fn run_inner(args: TestArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
         no_lint: false,
         sbom: None,
         test_root_lock: None,
+        test_profile: args.test_profile.as_deref(),
         signing: &signing,
         pipeline_dir,
     };
@@ -456,6 +499,12 @@ fn run_installed(
     selected: &[rpmx_core::PlannedTest],
 ) -> Result<(), Error> {
     let lock = rpmx_core::root::load_lock(root_lock_path)?;
+    lock.require_target(arch)?;
+    let test_profile = args
+        .test_profile
+        .as_deref()
+        .map(rpmx_core::profile::load_test_profile)
+        .transpose()?;
     let runner = args.runner.parse::<rpmx_core::runner::RunnerKind>()?;
     let host = rpmx_core::arch::Arch::current()?;
     let target = rpmx_core::arch::Arch::parse(arch)?;
@@ -542,6 +591,8 @@ fn run_installed(
                 let repo = under_test_repo(&group_work.join("test-rpms"), &group_rpms)?;
                 prepare_test_root(TestRootOptions {
                     lock: &lock,
+                    profile: test_profile.as_ref(),
+                    offline: args.offline,
                     destination: if groups.len() == 1 {
                         args.save_test_root.as_deref()
                     } else {
@@ -591,8 +642,12 @@ fn run_installed(
             "no installed-stage test selected; pass --test NAME",
         )
     })?;
+    let runtime_lock = prepared_roots
+        .first()
+        .map(|prepared| &prepared.lock)
+        .unwrap_or(&lock);
     let appliance = crate::commands::autoroot::appliance_for(
-        &lock,
+        runtime_lock,
         Some(&cache),
         args.offline,
         runner,

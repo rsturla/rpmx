@@ -397,6 +397,7 @@ fn build_recipes(
             no_lint: false,
             sbom: None,
             test_root_lock: None,
+            test_profile: None,
             signing,
             pipeline_dir: None,
         };

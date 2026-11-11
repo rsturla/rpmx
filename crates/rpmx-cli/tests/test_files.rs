@@ -376,10 +376,14 @@ fn environment_setup_errors_replace_stale_evidence() {
         "--test-output",
         reports.to_str().unwrap(),
         "--json",
-        "--offline",
     ]);
     assert!(!output.status.success(), "{output:?}");
-    let _: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let document: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(document["diagnostics"][0]["code"], "RPMX-BUILD-007");
+    assert!(document["diagnostics"][0]["message"]
+        .as_str()
+        .unwrap()
+        .contains("builder image"));
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("preparing test environment 1/1: output=all outputs; tools=none"));
     assert!(!stale.exists());
