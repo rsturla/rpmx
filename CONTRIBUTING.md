@@ -35,6 +35,16 @@ The test uses Fedora 44 by default. Set `RPMX_TEST_IMAGE` to use another image
 with `sh`, `cat`, `touch`, `seq` and `sleep`. Local repositories and cached RPMs
 use shared SELinux labels because concurrent root preparations read the same files.
 
+To test an RPM that is already published, set `RPMX_TEST_RESOLUTION_LOCK` to a
+native root lock with usable repositories and a builder image, then run:
+
+```console
+cargo test -p rpmx --test published_tests -- --ignored
+```
+
+This regression resolves and installs a supplied RPM whose exact identity also
+exists in a second local repository.
+
 ## Design rules
 
 - Read the surrounding code and match its structure and naming.
