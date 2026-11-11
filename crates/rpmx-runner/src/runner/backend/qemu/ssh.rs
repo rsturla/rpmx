@@ -384,6 +384,17 @@ pub(super) fn stream_command_output(
     Ok((status, stderr))
 }
 
+/// Run the deadline supervisor in the transport appliance, outside the build
+/// chroot. Its coreutils package provides timeout/chroot independently of the
+/// package under test. GNU timeout owns and terminates the child process group.
+pub(super) fn step_command(timeout: std::num::NonZeroU64) -> String {
+    format!(
+        "timeout --signal=TERM --kill-after=5 {} chroot {} sh -s",
+        timeout.get(),
+        shell_quote(super::BUILD_ROOT_MOUNT),
+    )
+}
+
 pub(super) fn step_script(request: &RunnerRequest<'_>) -> String {
     let mut script = String::from("#!/bin/sh\nset +e\n");
     script.push_str(&format!("cd {}\n", shell_quote(request.cwd)));
@@ -417,7 +428,16 @@ pub(super) fn shell_quote(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::stream_command_output;
+    use super::{step_command, stream_command_output};
+
+    #[test]
+    fn step_deadline_runs_in_the_appliance_before_entering_the_build_root() {
+        assert_eq!(
+            step_command(std::num::NonZeroU64::new(17).unwrap()),
+            "timeout --signal=TERM --kill-after=5 17 chroot '/run/rpmx/root' sh -s"
+        );
+    }
+
     use std::process::{Command, Stdio};
 
     fn piped(command: &str) -> std::process::Child {

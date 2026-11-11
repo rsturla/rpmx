@@ -1,4 +1,3 @@
-use std::num::NonZeroU64;
 use std::path::{Path, PathBuf};
 
 use super::process::{finish, spawn};
@@ -28,7 +27,6 @@ impl Runner for BwrapBackend<'_> {
             workspace: config.workspace.to_path_buf(),
             stage: config.stage.to_path_buf(),
             sysroot: config.sysroot.map(Path::to_path_buf),
-            timeout: config.timeout,
             writable_root: config.writable_root,
         }))
     }
@@ -40,7 +38,6 @@ struct BwrapSession {
     sysroot: Option<PathBuf>,
     workspace: PathBuf,
     stage: PathBuf,
-    timeout: NonZeroU64,
 }
 
 impl Session for BwrapSession {
@@ -93,8 +90,8 @@ impl Session for BwrapSession {
         args.push(request.command.to_string());
         args.extend(request.args.iter().cloned());
 
-        let completion = spawn("bwrap", &args, self.timeout, request.label, request.logs)?;
-        finish(completion, self.timeout, request.label, "")
+        let completion = spawn("bwrap", &args, request.timeout, request.label, request.logs)?;
+        finish(completion, request.timeout, request.label, "")
     }
 
     fn sync_out(&mut self) -> Result<()> {

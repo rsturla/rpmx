@@ -227,6 +227,7 @@ pub fn apply_patches(
                 format!("{}/.rpmx-patches/{name}", rpmx_base::guest::BUILD),
             ],
             cwd: None,
+            timeout_seconds: None,
             env: std::collections::BTreeMap::new(),
             needs: Vec::new(),
             needs_packages: Vec::new(),
