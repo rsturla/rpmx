@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::num::NonZeroU64;
 
 use serde::Serialize;
 use serde_json::Value;
@@ -10,6 +11,7 @@ use crate::template;
 use rpmx_base::error::{codes, Error, Result};
 
 mod expand;
+mod timeout;
 
 use expand::{
     base_scope, base_scope_without_cell, expand_dependencies, expand_outputs, expand_pipeline,
@@ -77,6 +79,9 @@ pub struct PlannedStep {
     pub command: Option<String>,
     pub args: Vec<String>,
     pub cwd: Option<String>,
+    /// Per-step wall-clock deadline in seconds; None inherits the runner default.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeout_seconds: Option<NonZeroU64>,
     pub env: BTreeMap<String, String>,
     /// Union of `needs_packages` and `needs_sysroot`, for native builds.
     pub needs: Vec<String>,
@@ -425,6 +430,12 @@ pub(crate) fn plan_steps(
     for (index, step) in steps.iter().enumerate() {
         let at = |field: &str| format!("{context}[{index}].{field}");
         let label = labels[index].clone();
+        let timeout_seconds = step
+            .timeout
+            .as_deref()
+            .map(timeout::parse)
+            .transpose()
+            .map_err(|error| error.at(at("timeout")))?;
 
         if let Some(uses) = &step.uses {
             let resolved =
@@ -435,6 +446,7 @@ pub(crate) fn plan_steps(
                 command: Some(resolved.command),
                 args: resolved.args,
                 cwd: resolved.cwd,
+                timeout_seconds,
                 env: resolved.env,
                 needs: resolved.needs,
                 needs_packages: resolved.needs_packages,
@@ -459,6 +471,7 @@ pub(crate) fn plan_steps(
                 command: Some(command.clone()),
                 args: args.to_vec(),
                 cwd: step.cwd.clone(),
+                timeout_seconds,
                 env: step.env.clone().unwrap_or_default(),
                 needs: Vec::new(),
                 needs_packages: Vec::new(),
@@ -483,6 +496,7 @@ pub(crate) fn plan_steps(
             command: Some("sh".to_string()),
             args: vec!["-c".to_string(), runs.clone()],
             cwd: step.cwd.clone(),
+            timeout_seconds,
             env: step.env.clone().unwrap_or_default(),
             needs: Vec::new(),
             needs_packages: Vec::new(),

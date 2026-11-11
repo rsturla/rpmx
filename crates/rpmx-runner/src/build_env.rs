@@ -68,6 +68,7 @@ pub fn check_build_tools(
         command: Some("sh".to_string()),
         args,
         cwd: None,
+        timeout_seconds: None,
         env: BTreeMap::new(),
         needs: Vec::new(),
         needs_packages: Vec::new(),

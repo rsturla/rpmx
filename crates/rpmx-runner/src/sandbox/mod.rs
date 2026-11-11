@@ -180,6 +180,7 @@ impl<'a> Sandbox<'a> {
         };
         let heading = step_heading(step, position);
         let request = RunnerRequest {
+            timeout: step.timeout_seconds.unwrap_or(self.config.timeout),
             command,
             args: &args,
             cwd: &cwd,
