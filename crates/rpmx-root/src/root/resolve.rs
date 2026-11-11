@@ -127,7 +127,7 @@ pub fn resolve_profile(
         dist_tag: profile.dist_tag()?,
         options: profile.options.clone(),
         prefix: profile.paths.prefix.clone(),
-        libdir: profile.paths.libdir.clone(),
+        libdir: profile.paths.libdir_for(arch).to_string(),
         sbom: profile.sbom,
         repositories,
         packages,

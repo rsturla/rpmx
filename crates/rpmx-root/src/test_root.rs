@@ -177,6 +177,7 @@ pub fn prepare(options: TestRootOptions<'_>) -> Result<PreparedTestRoot> {
         paths: crate::profile::Paths {
             prefix: lock.prefix.clone(),
             libdir: lock.libdir.clone(),
+            libdir_by_arch: Default::default(),
         },
         sbom: false,
     };

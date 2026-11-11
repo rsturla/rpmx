@@ -5,6 +5,9 @@ does not promise a stable schema or CLI yet.
 
 ## Unreleased
 
+- Profiles can override the library directory per target architecture. The
+  selected path is recorded in each root lock and used by build steps.
+
 - Root resolution stores one solved DNF transaction. Exact lower-version
   requests no longer collect a newer copy through another package's dependency.
   Incompatible package requests fail before an unusable lock is written.
