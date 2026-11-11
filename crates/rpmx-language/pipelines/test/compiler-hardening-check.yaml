@@ -4,9 +4,9 @@ summary: Check that a compiler wrapper produces hardened executables
 inputs:
   cc:
     type: string
-    default: cc
+    required: true
 needs:
-  packages: [bash, binutils, coreutils, findutils, gcc, grep, sed]
+  packages: [bash, binutils, coreutils, findutils, grep, sed]
 run:
   runs: |
     set -eu

@@ -577,6 +577,19 @@ fn kind(value: &Value) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn compiler_hardening_requires_a_selected_compiler_without_adding_gcc() {
+        assert!(super::resolve("test/compiler-hardening-check", None, None, false).is_err());
+        for compiler in ["gcc-13", "gcc-16", "clang"] {
+            let inputs =
+                std::collections::BTreeMap::from([("cc".to_string(), serde_json::json!(compiler))]);
+            let step = super::resolve("test/compiler-hardening-check", None, Some(&inputs), false)
+                .unwrap();
+            assert!(!step.needs_packages.iter().any(|package| package == "gcc"));
+            assert!(step.args.iter().any(|argument| argument.contains(compiler)));
+        }
+    }
+
     use super::*;
 
     #[test]
