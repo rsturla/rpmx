@@ -161,6 +161,11 @@ combined with `--profile`; remove one.
 `--offline` never resolves or assembles; it fails with the missing digest.
 `--cache DIR` changes the CAS (roots live beside it).
 
+Root assembly uses the builder's platform manifest digest recorded in the lock.
+A moving image tag does not change an existing lock. The pinned image must
+remain available locally or in its registry, and its architecture must match
+the locked root.
+
 ### Explicit root
 
 For debugging or a prebuilt root:

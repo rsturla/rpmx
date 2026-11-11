@@ -90,6 +90,31 @@ pub(crate) fn image_digest_for_arch(image: &str, arch: &str) -> Result<String> {
     Ok(digest)
 }
 
+/// Address the locked platform manifest, even when the original tag has moved.
+pub(crate) fn locked_image_reference(image: &str, digest: &str) -> String {
+    let repository = image.split('@').next().unwrap_or(image);
+    // Only a colon in the final name component denotes a tag. Registry ports,
+    // IPv6 addresses and the docker:// transport must remain intact.
+    let component = repository.rfind('/').map_or(0, |index| index + 1);
+    let repository = match repository[component..].rfind(':') {
+        Some(index) => &repository[..component + index],
+        None => repository,
+    };
+    format!("{repository}@{digest}")
+}
+
+pub(crate) fn ensure_locked_image(image: &str, digest: &str, arch: &str) -> Result<String> {
+    let pinned = locked_image_reference(image, digest);
+    let actual = image_digest_for_arch(&pinned, arch)?;
+    if actual != digest {
+        return Err(Error::new(
+            codes::ROOT_002,
+            format!("locked builder image '{pinned}' has digest {actual}, expected {digest}"),
+        ));
+    }
+    Ok(pinned)
+}
+
 pub(crate) fn ensure_image(image: &str) -> Result<String> {
     match inspect_image(image, "{{.Digest}}") {
         Ok(digest) if !digest.is_empty() => Ok(digest),
@@ -253,4 +278,82 @@ pub fn run_offline_root(command: OfflineRootCommand<'_>) -> Result<std::process:
             format!("cannot run the offline root container: {error}"),
         )
     })
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn locked_references_replace_tags_without_damaging_repository_names() {
+        for (image, repository) in [
+            ("fedora:44", "fedora"),
+            (
+                "registry.example:5000/team/fedora:44",
+                "registry.example:5000/team/fedora",
+            ),
+            ("[::1]:5000/team/fedora", "[::1]:5000/team/fedora"),
+            (
+                "docker://registry.example:5000/fedora:44",
+                "docker://registry.example:5000/fedora",
+            ),
+            (
+                "registry.example/fedora@sha256:old",
+                "registry.example/fedora",
+            ),
+            (
+                "registry.example/fedora:44@sha256:old",
+                "registry.example/fedora",
+            ),
+        ] {
+            assert_eq!(
+                super::locked_image_reference(image, "sha256:locked"),
+                format!("{repository}@sha256:locked"),
+                "{image}"
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "requires rootless Podman and access to the Fedora image registry"]
+    fn a_locked_platform_image_runs_when_its_original_tag_no_longer_exists() {
+        let arch = rpmx_base::arch::Arch::current().unwrap();
+        let image = "registry.fedoraproject.org/fedora:44";
+        let digest = super::image_digest_for_arch(image, &arch.to_string()).unwrap();
+        // A missing tag is a stronger control than a moved tag: assembly must
+        // obtain its bytes entirely from the recorded platform digest.
+        let missing_tag = "registry.fedoraproject.org/fedora:rpmx-deliberately-absent";
+        let pinned = super::ensure_locked_image(missing_tag, &digest, &arch.to_string()).unwrap();
+        let work = tempfile::tempdir().unwrap();
+        let result = super::podman_run(
+            &pinned,
+            work.path(),
+            &[],
+            &[
+                "sh".to_string(),
+                "-c".to_string(),
+                "printf locked-builder".to_string(),
+            ],
+        )
+        .unwrap();
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        assert_eq!(result.stdout, b"locked-builder");
+        let other_arch = if arch.to_string() == "x86_64" {
+            "aarch64"
+        } else {
+            "x86_64"
+        };
+        let wrong_arch = super::ensure_locked_image(missing_tag, &digest, other_arch).unwrap_err();
+        assert!(
+            wrong_arch.to_string().contains("image is required"),
+            "{wrong_arch}"
+        );
+        let missing_digest = format!("sha256:{}", "0".repeat(64));
+        assert!(
+            super::ensure_locked_image(missing_tag, &missing_digest, &arch.to_string()).is_err()
+        );
+    }
+
 }
