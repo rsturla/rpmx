@@ -5,7 +5,6 @@
 //! temporary directory, so the command is useful without a prior build.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use rpmx_core::error::codes;
 use rpmx_core::Error;
@@ -88,52 +87,23 @@ pub fn run(args: ShellArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
             ));
         }
     }
-    let root = root.display().to_string();
-    let workspace = workspace.display().to_string();
-    let stage = stage.display().to_string();
-    let mut bwrap = Command::new("bwrap");
-    bwrap.args([
-        "--unshare-all",
-        "--unshare-user",
-        "--disable-userns",
-        "--die-with-parent",
-        "--new-session",
-        "--clearenv",
-        "--ro-bind",
-        &root,
-        "/",
-        "--dev",
-        "/dev",
-        "--proc",
-        "/proc",
-        "--tmpfs",
-        "/sys",
-        "--tmpfs",
-        "/tmp",
-        "--bind",
-        &workspace,
-        rpmx_core::guest::BUILD,
-        "--bind",
-        &stage,
-        rpmx_core::guest::STAGE,
-    ]);
-    let sysroot_path = sysroot.as_ref().map(|path| path.display().to_string());
-    if let Some(path) = &sysroot_path {
-        bwrap.args(["--ro-bind", path, rpmx_core::guest::SYSROOT]);
-    }
-    bwrap.args(["--chdir", rpmx_core::guest::BUILD]);
+    // A cross build executes host tools against a separate target sysroot.
+    // A native/emulated build executes the target binaries directly.
+    let host = rpmx_core::Arch::current()?;
+    let target = rpmx_core::Arch::parse(&arch)?;
+    let exec = if sysroot.is_some() { host } else { target };
     // The same environment a build step gets, not a hand-copied subset.
     let config = rpmx_core::sandbox::SandboxConfig {
         writable_root: false,
         runner: rpmx_core::runner::RunnerKind::Auto,
-        host: rpmx_core::Arch::current()?,
-        exec: rpmx_core::Arch::parse(&arch)?,
-        target: rpmx_core::Arch::parse(&arch)?,
+        host,
+        exec,
+        target,
         sysroot: sysroot.as_deref(),
         cross: cross.as_ref(),
-        workspace: std::path::Path::new(&workspace),
-        stage: std::path::Path::new(&stage),
-        root: Some(std::path::Path::new(&root)),
+        workspace: &workspace,
+        stage: &stage,
+        root: Some(&root),
         assets: rpmx_core::runner::RunnerAssets::default(),
         image: None,
         prefix: &prefix,
@@ -142,32 +112,11 @@ pub fn run(args: ShellArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
         jobs: crate::commands::default_jobs(),
         timeout: std::num::NonZeroU64::new(3600).expect("timeout"),
     };
-    for (key, value) in rpmx_core::sandbox::environment(&config) {
-        bwrap.arg("--setenv").arg(key).arg(value);
-    }
-    bwrap.arg("--");
-    match args.command.as_deref() {
-        Some(command) => {
-            bwrap.args(["sh", "-c", command]);
-        }
-        None => {
-            bwrap.args(["sh", "-i"]);
-        }
-    }
-    let status = bwrap.status().map_err(|error| {
-        Error::new(
-            codes::SANDBOX_001,
-            format!("cannot start bubblewrap: {error}"),
-        )
-    })?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(Error::new(
-            codes::SANDBOX_002,
-            format!("shell exited with {status}"),
-        ))
-    }
+    let shell_args = match args.command {
+        Some(command) => vec!["-c".to_string(), command],
+        None => vec!["-i".to_string()],
+    };
+    rpmx_core::sandbox::run_native_terminal(&config, "sh", &shell_args)
 }
 
 fn resolve_root(

@@ -1,11 +1,12 @@
 use std::path::{Path, PathBuf};
 
-use super::process::{finish, spawn_with_fds};
+use super::process::{finish, spawn_inheriting_fds, spawn_with_fds};
 use super::user_namespace::UserNamespace;
 use crate::runner::{Runner, RunnerConfig, RunnerRequest, Session};
 use rpmx_base::arch::Arch;
 use rpmx_base::error::Result;
 use std::os::fd::AsRawFd;
+use std::process::{Command, Stdio};
 
 pub struct BwrapBackend<'a> {
     pub root: Option<&'a Path>,
@@ -21,16 +22,7 @@ impl Runner for BwrapBackend<'_> {
     }
 
     fn start(&self, config: &RunnerConfig<'_>) -> Result<Box<dyn Session>> {
-        Ok(Box::new(BwrapSession {
-            root: self
-                .root
-                .map(Path::to_path_buf)
-                .unwrap_or_else(|| PathBuf::from("/")),
-            workspace: config.workspace.to_path_buf(),
-            stage: config.stage.to_path_buf(),
-            sysroot: config.sysroot.map(Path::to_path_buf),
-            writable_root: config.writable_root,
-        }))
+        Ok(Box::new(BwrapSession::new(self.root, config)))
     }
 }
 
@@ -42,8 +34,23 @@ struct BwrapSession {
     stage: PathBuf,
 }
 
+struct NativeCommand {
+    args: Vec<String>,
+    namespace: UserNamespace,
+}
+
 impl BwrapSession {
-    fn run_with_identity(&mut self, request: &RunnerRequest<'_>, transaction: bool) -> Result<()> {
+    fn new(root: Option<&Path>, config: &RunnerConfig<'_>) -> Self {
+        Self {
+            root: root.unwrap_or(Path::new("/")).to_path_buf(),
+            workspace: config.workspace.to_path_buf(),
+            stage: config.stage.to_path_buf(),
+            sysroot: config.sysroot.map(Path::to_path_buf),
+            writable_root: config.writable_root,
+        }
+    }
+
+    fn command(&self, request: &RunnerRequest<'_>, transaction: bool) -> Result<NativeCommand> {
         let namespace = UserNamespace::new(transaction)?;
         let mut args = vec![
             "--userns".to_string(),
@@ -113,15 +120,53 @@ impl BwrapSession {
         args.push(request.command.to_string());
         args.extend(request.args.iter().cloned());
 
+        Ok(NativeCommand { args, namespace })
+    }
+
+    fn run_with_identity(&mut self, request: &RunnerRequest<'_>, transaction: bool) -> Result<()> {
+        let command = self.command(request, transaction)?;
         let completion = spawn_with_fds(
             "bwrap",
-            &args,
+            &command.args,
             request.timeout,
             request.label,
             request.logs,
-            &[namespace.fd()],
+            &[command.namespace.fd()],
         )?;
         finish(completion, request.timeout, request.label, "")
+    }
+}
+
+/// Share native sandbox construction while inheriting the caller's terminal.
+/// Interactive debug sessions deliberately have no step deadline or log pumps.
+pub(crate) fn run_bwrap_terminal(
+    root: Option<&Path>,
+    config: &RunnerConfig<'_>,
+    request: &RunnerRequest<'_>,
+) -> Result<()> {
+    let session = BwrapSession::new(root, config);
+    let prepared = session.command(request, config.writable_root)?;
+    let mut command = Command::new("bwrap");
+    command
+        .args(&prepared.args)
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit());
+    let status = spawn_inheriting_fds(command, &[prepared.namespace.fd()])
+        .and_then(|mut child| child.wait())
+        .map_err(|error| {
+            rpmx_base::error::Error::new(
+                rpmx_base::error::codes::SANDBOX_001,
+                format!("cannot run native debug shell: {error}"),
+            )
+        })?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(rpmx_base::error::Error::new(
+            rpmx_base::error::codes::SANDBOX_002,
+            format!("shell exited with {status}"),
+        ))
     }
 }
 

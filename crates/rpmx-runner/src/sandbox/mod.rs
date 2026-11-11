@@ -77,6 +77,36 @@ impl<'a> SandboxConfig<'a> {
     }
 }
 
+/// Run a native debug command with the build sandbox and inherited terminal.
+/// Unlike build steps, a debug session has no deadline or captured log streams.
+pub fn run_native_terminal(
+    config: &SandboxConfig<'_>,
+    command: &str,
+    args: &[String],
+) -> Result<()> {
+    // Keep normal native-runner validation, including foreign-architecture
+    // root and binfmt requirements, before constructing a terminal command.
+    drop(RunnerKind::Bwrap.resolve(config.host, config.exec, config.target, config.root, None)?);
+    prepare_cross_files(config)?;
+    let env = environment(config)
+        .into_iter()
+        .map(|(key, value)| (key.to_string(), value))
+        .collect();
+    crate::runner::run_bwrap_terminal(
+        config.root,
+        &config.runner_config(),
+        &RunnerRequest {
+            command,
+            args,
+            cwd: rpmx_base::guest::BUILD,
+            env: &env,
+            timeout: config.timeout,
+            label: "native debug shell",
+            logs: None,
+        },
+    )
+}
+
 pub struct Sandbox<'a> {
     runner: Box<dyn Runner + 'a>,
     config: SandboxConfig<'a>,
