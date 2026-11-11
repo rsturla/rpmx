@@ -23,7 +23,11 @@ impl Fixture {
             &bin.join("readelf"),
             r#"#!/bin/sh
 set -eu
-cat "$HARDENING_FIXTURE/$1"
+option=$1
+for argument in "$@"; do file=$argument; done
+fixture="$HARDENING_FIXTURE/$option.${file##*/}"
+if [ ! -f "$fixture" ]; then fixture="$HARDENING_FIXTURE/$option"; fi
+cat "$fixture"
 "#,
         );
         executable(
@@ -33,7 +37,11 @@ set -eu
 while [ "$#" -gt 0 ]; do
   if [ "$1" = -o ]; then
     shift
-    : > "$1"
+    cat > "$1" <<'PROGRAM'
+#!/bin/sh
+printf 'hardening\n'
+PROGRAM
+    chmod +x "$1"
     exit 0
   fi
   shift
@@ -46,7 +54,7 @@ exit 1
             ("-h", "  Type: DYN (Position-Independent Executable file)\n"),
             ("-lW", "GNU_STACK RW\nGNU_RELRO\n"),
             ("-dW", "FLAGS: BIND_NOW\n"),
-            ("-nW", "IBT SHSTK BTI\nBuild ID: fixture\n"),
+            ("-nW", "IBT SHSTK BTI PAC\nBuild ID: fixture\n"),
             ("-sW", "__stack_chk_fail\n__memcpy_chk@GLIBC_2.3.4\n"),
         ] {
             // Larger than a pipe buffer. Early-exit consumers cause the
@@ -57,6 +65,10 @@ exit 1
     }
 
     fn run(&self, compiler: bool) -> Output {
+        self.run_for_arch(compiler, "x86_64")
+    }
+
+    fn run_for_arch(&self, compiler: bool, arch: &str) -> Output {
         let name = if compiler {
             "test/compiler-hardening-check"
         } else {
@@ -75,7 +87,7 @@ exit 1
             .env("PATH", path)
             .env("HARDENING_FIXTURE", self.directory.path())
             .env("STAGE", self.directory.path().join("stage"))
-            .env("RPMX_TARGET_ARCH", "x86_64")
+            .env("RPMX_TARGET_ARCH", arch)
             .env_remove("CFLAGS")
             .env_remove("LDFLAGS")
             .current_dir(self.directory.path())
@@ -107,6 +119,118 @@ fn compiler_hardening_check_drains_large_readelf_output() {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+#[test]
+fn compiler_branch_checks_use_wrapper_code_instead_of_dependency_startup() {
+    let fixture = Fixture::new();
+    for file in ["hello", "libprobe.so"] {
+        std::fs::write(
+            fixture.directory.path().join(format!("-nW.{file}")),
+            "Build ID: fixture\n",
+        )
+        .unwrap();
+    }
+    for arch in ["x86_64", "aarch64"] {
+        let output = fixture.run_for_arch(true, arch);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+#[test]
+fn missing_branch_protection_in_controlled_final_links_still_fails() {
+    let fixture = Fixture::new();
+    for file in ["branch-probe", "libbranch-probe.so"] {
+        std::fs::write(
+            fixture.directory.path().join(format!("-nW.{file}")),
+            "Build ID: fixture\n",
+        )
+        .unwrap();
+    }
+    for (arch, feature) in [("x86_64", "x86 IBT"), ("aarch64", "aarch64 BTI")] {
+        let output = fixture.run_for_arch(true, arch);
+        assert!(!output.status.success());
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        for file in ["branch-probe", "libbranch-probe.so"] {
+            assert!(
+                stderr.contains(&format!("{file} has no {feature} property")),
+                "{stderr}"
+            );
+        }
+    }
+}
+
+#[test]
+fn aarch64_bti_alone_cannot_satisfy_return_signing_policy() {
+    let fixture = Fixture::new();
+    for file in ["branch-probe", "libbranch-probe.so"] {
+        std::fs::write(
+            fixture.directory.path().join(format!("-nW.{file}")),
+            "BTI\nBuild ID: fixture\n",
+        )
+        .unwrap();
+    }
+    let output = fixture.run_for_arch(true, "aarch64");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    for file in ["branch-probe", "libbranch-probe.so"] {
+        assert!(
+            stderr.contains(&format!("{file} has no aarch64 PAC property")),
+            "{stderr}"
+        );
+    }
+    assert!(!stderr.contains("has no aarch64 BTI property"), "{stderr}");
+}
+
+#[test]
+fn ordinary_startup_link_still_requires_nonexecutable_stack_and_relro() {
+    let fixture = Fixture::new();
+    std::fs::write(
+        fixture.directory.path().join("-lW.hello"),
+        "GNU_STACK RWE\n",
+    )
+    .unwrap();
+    let output = fixture.run(true);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("hello has an executable stack"), "{stderr}");
+    assert!(
+        stderr.contains("hello has no GNU_RELRO segment"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn ordinary_executable_must_produce_expected_runtime_output() {
+    let fixture = Fixture::new();
+    let compiler = fixture.directory.path().join("bin/compiler");
+    let script = std::fs::read_to_string(&compiler)
+        .unwrap()
+        .replace("printf 'hardening", "printf 'unexpected");
+    executable(&compiler, &script);
+    let output = fixture.run(true);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("hello returned unexpected output"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn ordinary_executable_cannot_fail_after_printing_expected_output() {
+    let fixture = Fixture::new();
+    let compiler = fixture.directory.path().join("bin/compiler");
+    let script = std::fs::read_to_string(&compiler)
+        .unwrap()
+        .replace("printf 'hardening\\n'", "printf 'hardening\\n'\nexit 42");
+    executable(&compiler, &script);
+    let output = fixture.run(true);
+    assert_eq!(output.status.code(), Some(42));
 }
 
 #[test]
