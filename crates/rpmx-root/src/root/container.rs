@@ -21,9 +21,11 @@ pub(crate) fn podman_run(
         .arg("-w")
         .arg("/work");
     for (source, target) in local_repositories {
+        // Resolvers can read the same repository concurrently. A private
+        // SELinux label would revoke another resolver's access.
         process
             .arg("-v")
-            .arg(format!("{}:{target}:ro,Z", source.display()));
+            .arg(format!("{}:{target}:ro,z", source.display()));
     }
     for variable in [
         "http_proxy",
@@ -222,7 +224,7 @@ pub fn run_offline_root(command: OfflineRootCommand<'_>) -> Result<std::process:
                     )
                 })?;
                 process.arg("-v").arg(format!(
-                    "{}:/rpms/{}:ro,Z",
+                    "{}:/rpms/{}:ro,z",
                     rpm.display(),
                     name.to_string_lossy()
                 ));
@@ -253,4 +255,70 @@ pub fn run_offline_root(command: OfflineRootCommand<'_>) -> Result<std::process:
             format!("cannot run the offline root container: {error}"),
         )
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::podman_run;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    #[ignore = "requires Podman and an SELinux enforcing host"]
+    fn concurrent_resolvers_can_read_the_same_local_repository() {
+        assert_eq!(
+            std::fs::read_to_string("/sys/fs/selinux/enforce")
+                .unwrap()
+                .trim(),
+            "1",
+            "this regression requires SELinux enforcement"
+        );
+        let image = std::env::var("RPMX_TEST_IMAGE")
+            .unwrap_or_else(|_| "registry.fedoraproject.org/fedora:44".to_string());
+        super::ensure_image(&image).unwrap();
+        let repository = tempfile::tempdir().unwrap();
+        std::fs::write(repository.path().join("value"), b"shared repository\n").unwrap();
+        let first_work = tempfile::tempdir().unwrap();
+        let second_work = tempfile::tempdir().unwrap();
+        let first_path = first_work.path().to_path_buf();
+        let first_repo = repository.path().to_path_buf();
+        let first_image = image.clone();
+        let first = std::thread::spawn(move || {
+            podman_run(
+                &first_image,
+                &first_path,
+                &[(first_repo, "/repository".to_string())],
+                &[
+                    "sh".to_string(),
+                    "-ec".to_string(),
+                    "touch /work/ready; for i in $(seq 1 300); do \
+                     if test -e /work/release; then exec cat /repository/value; fi; \
+                     sleep 0.1; done; exit 2"
+                        .to_string(),
+                ],
+            )
+        });
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while !first_work.path().join("ready").exists() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let ready = first_work.path().join("ready").exists();
+        let second = if ready {
+            Some(podman_run(
+                &image,
+                second_work.path(),
+                &[(repository.path().to_path_buf(), "/repository".to_string())],
+                &["cat".to_string(), "/repository/value".to_string()],
+            ))
+        } else {
+            None
+        };
+        std::fs::write(first_work.path().join("release"), b"").unwrap();
+        let first = first.join().unwrap().unwrap();
+        assert!(ready, "first resolver did not become ready: {first:?}");
+        let second = second.unwrap().unwrap();
+        assert!(second.status.success(), "second resolver: {second:?}");
+        assert!(first.status.success(), "first resolver: {first:?}");
+        assert_eq!(first.stdout, b"shared repository\n");
+        assert_eq!(second.stdout, b"shared repository\n");
+    }
 }
