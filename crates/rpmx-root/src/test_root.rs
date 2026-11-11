@@ -22,6 +22,9 @@ const UNDER_TEST: &str = "test-under-test";
 
 pub struct TestRootOptions<'a> {
     pub lock: &'a RootLock,
+    /// Test repository policy, independent of the package build root.
+    pub profile: Option<&'a Profile>,
+    pub offline: bool,
     /// Assemble here instead of a scratch directory, so the root can be
     /// shipped to the machine that runs the tests.
     pub destination: Option<&'a Path>,
@@ -122,8 +125,72 @@ fn without_under_test(lock: &mut RootLock) {
     );
 }
 
+/// Validate the target layout without seeding the root with profile packages.
+fn selected_test_profile(
+    profile: &Profile,
+    target: &str,
+    prefix: &str,
+    libdir: &str,
+) -> Result<Profile> {
+    profile.validate_for_tests()?;
+    let selected = profile.for_target(target)?;
+    if selected.paths.prefix != prefix || selected.paths.libdir != libdir {
+        return Err(Error::new(
+            codes::TEST_004,
+            format!(
+            "test profile layout ({}, {}) does not match the package target ({prefix}, {libdir})",
+            selected.paths.prefix, selected.paths.libdir
+        ),
+        ));
+    }
+    Ok(selected)
+}
+
+/// Target metadata for standalone RPM tests. This is not an assembled build
+/// closure; the selected test profile resolves each test environment later.
+pub fn profile_target_lock(
+    profile: &Profile,
+    target: &str,
+    prefix: &str,
+    libdir: &str,
+) -> Result<RootLock> {
+    let selected = selected_test_profile(profile, target, prefix, libdir)?;
+    let packages = [(target.to_string(), Vec::new())].into_iter().collect();
+    let archs = vec![target.to_string()];
+    let closure_digest = root::closure_digest(
+        &selected.releasever,
+        &archs,
+        &selected.repositories,
+        &packages,
+    );
+    Ok(RootLock {
+        document: "rpmx-root-lock".into(),
+        version: 1,
+        profile: selected.name("test-profile"),
+        archs,
+        releasever: selected.releasever,
+        dist_tag: selected.dist_tag,
+        options: selected.options,
+        prefix: prefix.into(),
+        libdir: libdir.into(),
+        sbom: false,
+        repositories: selected.repositories,
+        packages,
+        closure_digest,
+        root_digest: None,
+        builder: None,
+        generation: None,
+        requirement: None,
+        seed: None,
+    })
+}
+
 /// Build and install a disposable root for installed-stage tests.
 pub fn prepare(options: TestRootOptions<'_>) -> Result<PreparedTestRoot> {
+    if options.offline {
+        return Err(Error::new(codes::TEST_004,
+            "installed test root preparation is unavailable offline: resolution and assembly may download RPMs or a builder image; use an assembled --test-root, or --skip-installed when building"));
+    }
     let lock = options.lock;
     let target = Arch::parse(
         lock.archs
@@ -140,8 +207,22 @@ pub fn prepare(options: TestRootOptions<'_>) -> Result<PreparedTestRoot> {
             ),
         ));
     }
-    let image = options
-        .image
+    if options.profile.is_some() && options.pinned.is_some() {
+        return Err(Error::new(
+            codes::TEST_004,
+            "a test profile cannot be combined with a pinned test root",
+        ));
+    }
+    let override_profile = options
+        .profile
+        .map(|profile| {
+            selected_test_profile(profile, &target.to_string(), &lock.prefix, &lock.libdir)
+        })
+        .transpose()?;
+    let override_image = override_profile.as_ref().map(Profile::builder_image);
+    let image = override_image
+        .as_deref()
+        .or(options.image)
         .or_else(|| lock.builder.as_ref().map(|builder| builder.image.as_str()))
         .ok_or_else(|| {
             Error::new(
@@ -162,7 +243,10 @@ pub fn prepare(options: TestRootOptions<'_>) -> Result<PreparedTestRoot> {
     // test root's dependency handling identical to an install: sonames, file
     // requirements and virtual provides all resolve from the same transaction,
     // and a packager never has to spell out the libraries a package links.
-    let mut repositories = lock.repositories.clone();
+    let mut repositories = override_profile
+        .as_ref()
+        .map(|profile| profile.repositories.clone())
+        .unwrap_or_else(|| lock.repositories.clone());
     if options.pinned.is_none() {
         let packages = under_test_packages(options.rpms)?;
         exclude_published_test_packages(&mut repositories, &packages);
@@ -174,8 +258,14 @@ pub fn prepare(options: TestRootOptions<'_>) -> Result<PreparedTestRoot> {
         document: crate::profile::DOCUMENT.to_string(),
         version: crate::profile::VERSION,
         name: Some("test-root".to_string()),
-        releasever: lock.releasever.clone(),
-        dist_tag: lock.dist_tag.clone(),
+        releasever: override_profile
+            .as_ref()
+            .map(|profile| profile.releasever.clone())
+            .unwrap_or_else(|| lock.releasever.clone()),
+        dist_tag: override_profile
+            .as_ref()
+            .map(|profile| profile.dist_tag.clone())
+            .unwrap_or_else(|| lock.dist_tag.clone()),
         archs: lock.archs.clone(),
         builder: crate::profile::Builder {
             image: Some(image.to_string()),
@@ -187,7 +277,10 @@ pub fn prepare(options: TestRootOptions<'_>) -> Result<PreparedTestRoot> {
         },
         cross: None,
         modules: Default::default(),
-        options: lock.options.clone(),
+        options: override_profile
+            .as_ref()
+            .map(|profile| profile.options.clone())
+            .unwrap_or_else(|| lock.options.clone()),
         paths: crate::profile::Paths {
             prefix: lock.prefix.clone(),
             libdir: lock.libdir.clone(),
@@ -205,7 +298,11 @@ pub fn prepare(options: TestRootOptions<'_>) -> Result<PreparedTestRoot> {
     let test_lock = match options.pinned {
         Some(path) => {
             let pinned = root::load_lock(path)?;
-            check_lock(path, &pinned, &install, &lock.archs)?;
+            let candidates = under_test_packages(options.rpms)?
+                .into_iter()
+                .map(|(name, _)| name)
+                .collect::<Vec<_>>();
+            check_lock(path, &pinned, &candidates, &lock.archs)?;
             pinned
         }
         None => {
@@ -273,7 +370,9 @@ pub fn prepare(options: TestRootOptions<'_>) -> Result<PreparedTestRoot> {
 /// (`zlib` resolves to `zlib-ng-compat`), which the lock records under the
 /// provider's name. Only the fixed base environment is checked by name, so a
 /// pinned root stays usable without guessing provider names.
-fn check_lock(path: &Path, lock: &RootLock, _required: &[String], archs: &[String]) -> Result<()> {
+/// Candidates can supply Bash or coreutils themselves; those packages were
+/// deliberately removed from the saved dependency lock.
+fn check_lock(path: &Path, lock: &RootLock, candidates: &[String], archs: &[String]) -> Result<()> {
     let arch = archs
         .first()
         .ok_or_else(|| Error::new(codes::BUILD_007, "the test root lock has no architectures"))?;
@@ -286,6 +385,7 @@ fn check_lock(path: &Path, lock: &RootLock, _required: &[String], archs: &[Strin
     let names: BTreeSet<&str> = installed
         .iter()
         .map(|package| package.name.as_str())
+        .chain(candidates.iter().map(String::as_str))
         .collect();
     let missing: Vec<&str> = ["bash", "coreutils"]
         .into_iter()
@@ -306,6 +406,112 @@ fn check_lock(path: &Path, lock: &RootLock, _required: &[String], archs: &[Strin
 
 #[cfg(test)]
 mod tests {
+    fn test_profile() -> crate::profile::Profile {
+        crate::profile::parse_profile(
+            r#"
+document: rpmx-profile
+version: 1
+name: runtime-policy
+releasever: rolling
+archs: [x86_64]
+builder:
+  image: registry.fedoraproject.org/fedora:44
+repositories:
+  - id: production
+    baseurl: https://example.invalid/rolling/$basearch
+packages:
+  install: [must-not-seed-tests]
+paths:
+  prefix: /usr
+  libdir: /usr/lib64
+"#,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn standalone_profile_metadata_has_no_seed_packages_or_build_closure() {
+        let profile = test_profile();
+        let lock = super::profile_target_lock(&profile, "x86_64", "/usr", "/usr/lib64").unwrap();
+        assert_eq!(lock.releasever, "rolling");
+        assert_eq!(lock.repositories[0].id, "production");
+        assert!(lock.packages["x86_64"].is_empty());
+        assert!(lock.builder.is_none());
+        assert_eq!(profile.packages.install, ["must-not-seed-tests"]);
+    }
+
+    #[test]
+    fn pinned_baseline_can_come_from_the_rpms_under_test() {
+        let profile = test_profile();
+        let lock = super::profile_target_lock(&profile, "x86_64", "/usr", "/usr/lib64").unwrap();
+        let path = std::path::Path::new("test-root.lock.yaml");
+        assert!(super::check_lock(
+            path,
+            &lock,
+            &["bash".into(), "coreutils".into()],
+            &lock.archs
+        )
+        .is_ok());
+        let error = super::check_lock(path, &lock, &["bash".into()], &lock.archs).unwrap_err();
+        assert!(error.message.contains("coreutils"));
+    }
+
+    #[test]
+    fn test_profile_loader_allows_omitted_seeds_and_ignores_reinstall() {
+        let profile = test_profile();
+        let mut document = serde_yaml_ng::to_value(&profile).unwrap();
+        document
+            .as_mapping_mut()
+            .unwrap()
+            .remove(serde_yaml_ng::Value::String("packages".into()));
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("test-profile.yaml");
+        std::fs::write(&path, serde_yaml_ng::to_string(&document).unwrap()).unwrap();
+        let loaded = crate::profile::load_test_profile(&path).unwrap();
+        assert!(loaded.packages.install.is_empty());
+        assert!(crate::profile::load_profile(&path).is_err());
+        super::profile_target_lock(&loaded, "x86_64", "/usr", "/usr/lib64").unwrap();
+        let mut loaded = loaded;
+        loaded.packages.reinstall = vec!["ignored-package".into()];
+        std::fs::write(&path, serde_yaml_ng::to_string(&loaded).unwrap()).unwrap();
+        assert!(crate::profile::load_test_profile(&path).is_ok());
+        assert!(crate::profile::load_profile(&path).is_err());
+    }
+
+    #[test]
+    fn offline_root_preparation_fails_before_resolution_or_assembly() {
+        let profile = test_profile();
+        let lock = super::profile_target_lock(&profile, "x86_64", "/usr", "/usr/lib64").unwrap();
+        let absent = std::path::Path::new("/nonexistent-offline-test-root");
+        let result = super::prepare(super::TestRootOptions {
+            lock: &lock,
+            profile: Some(&profile),
+            offline: true,
+            destination: None,
+            pinned: None,
+            tools: &[],
+            rpms: &[],
+            repo: absent,
+            image: None,
+            cache: absent,
+            work: absent,
+        });
+        let error = result.err().expect("offline preparation must fail");
+        assert_eq!(error.code, rpmx_base::error::codes::TEST_004);
+        assert!(error.message.contains("--test-root"));
+        assert!(error.message.contains("--skip-installed"));
+    }
+
+    #[test]
+    fn test_profiles_must_match_the_package_target_architecture_and_layout() {
+        let profile = test_profile();
+        assert!(super::profile_target_lock(&profile, "aarch64", "/usr", "/usr/lib64").is_err());
+        let error =
+            super::profile_target_lock(&profile, "x86_64", "/opt", "/opt/lib64").unwrap_err();
+        assert_eq!(error.code, rpmx_base::error::codes::TEST_004);
+        assert!(error.message.contains("layout"));
+    }
+
     #[test]
     fn exact_test_packages_replace_only_matching_generic_requests() {
         let mut install = vec!["bash".into(), "coreutils".into(), "python3".into()];

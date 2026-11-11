@@ -46,7 +46,7 @@ pub struct BuildArgs {
     #[arg(
         long,
         conflicts_with_all = [
-            "root_lock", "root", "unsafe_host_root", "run_tests", "test_root_lock",
+            "root_lock", "root", "unsafe_host_root", "run_tests", "test_root_lock", "test_profile",
             "cache", "proxy", "offline", "jobs", "step_timeout", "sbom",
         ]
     )]
@@ -124,6 +124,9 @@ pub struct BuildArgs {
     /// Use a pinned test-root lock instead of resolving one.
     #[arg(long, conflicts_with = "no_tests")]
     pub test_root_lock: Option<PathBuf>,
+    /// Resolve installed-test dependencies from this profile instead of build repositories.
+    #[arg(long, value_name = "FILE", conflicts_with_all = ["test_root_lock", "no_tests"])]
+    pub test_profile: Option<PathBuf>,
     #[command(flatten)]
     pub signing: OptionalSigningArgs,
 }
@@ -195,6 +198,9 @@ pub struct RebuildArgs {
     /// Use a pinned test-root lock instead of resolving one.
     #[arg(long, conflicts_with = "no_tests")]
     pub test_root_lock: Option<PathBuf>,
+    /// Resolve installed-test dependencies from this profile instead of build repositories.
+    #[arg(long, value_name = "FILE", conflicts_with_all = ["test_root_lock", "no_tests"])]
+    pub test_profile: Option<PathBuf>,
     #[command(flatten)]
     pub signing: OptionalSigningArgs,
     /// Suppress reporting when this command is used as a pipeline step.
@@ -364,6 +370,9 @@ pub struct TestArgs {
     /// Pin the test environment to this lock instead of resolving one.
     #[arg(long, value_name = "FILE")]
     pub test_root_lock: Option<PathBuf>,
+    /// Resolve installed-test dependencies from this profile instead of build repositories.
+    #[arg(long, value_name = "FILE", conflicts_with_all = ["test_root_lock", "test_root"])]
+    pub test_profile: Option<PathBuf>,
     /// Assembled root for the test environment.
     #[arg(long, requires = "root_lock")]
     pub root: Option<PathBuf>,

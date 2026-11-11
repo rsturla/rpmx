@@ -708,6 +708,7 @@ fn build_one(
         no_lint: args.no_lint,
         sbom: args.sbom.as_deref(),
         test_root_lock: args.test_root_lock.as_deref(),
+        test_profile: args.test_profile.as_deref(),
         signing: &args.signing,
         pipeline_dir,
     };

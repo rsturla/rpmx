@@ -52,6 +52,7 @@ pub struct BuildPipeline<'a> {
     pub no_lint: bool,
     pub sbom: Option<&'a Path>,
     pub test_root_lock: Option<&'a Path>,
+    pub test_profile: Option<&'a Path>,
     pub signing: &'a OptionalSigningArgs,
     pub pipeline_dir: Option<&'a Path>,
 }
@@ -163,6 +164,7 @@ impl BuildPipeline<'_> {
                     junit: self.junit,
                     sbom: self.sbom,
                     test_root_lock: self.test_root_lock,
+                    test_profile: self.test_profile,
                     signing: self.signing,
                     quiet: true,
                     replace_root_lock: false,

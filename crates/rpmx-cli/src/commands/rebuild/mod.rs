@@ -57,6 +57,7 @@ pub struct RebuildRequest<'a> {
     pub junit: Option<&'a Path>,
     pub sbom: Option<&'a Path>,
     pub test_root_lock: Option<&'a Path>,
+    pub test_profile: Option<&'a Path>,
     pub signing: &'a OptionalSigningArgs,
     pub quiet: bool,
     /// Skip the embedded-lock comparison and record the old roots in the new
@@ -129,6 +130,7 @@ pub fn run_with(
         junit: args.junit.as_deref(),
         sbom: args.sbom.as_deref(),
         test_root_lock: args.test_root_lock.as_deref(),
+        test_profile: args.test_profile.as_deref(),
         signing: &args.signing,
         quiet: args.quiet,
         replace_root_lock,
@@ -436,6 +438,10 @@ pub fn execute(request: RebuildRequest<'_>) -> Result<RebuildOutput, Error> {
     }
 
     if run_tests {
+        let test_profile = request
+            .test_profile
+            .map(rpmx_core::profile::load_test_profile)
+            .transpose()?;
         let test_evidence = tests::run(tests::TestRunOptions {
             sandbox: &sandbox,
             cell: &cell,
@@ -449,6 +455,8 @@ pub fn execute(request: RebuildRequest<'_>) -> Result<RebuildOutput, Error> {
             sysroot_lock: sysroot_lock.as_ref(),
             builder_image: builder_image.as_deref(),
             pinned_lock: request.test_root_lock,
+            profile: test_profile.as_ref(),
+            offline: request.offline,
             arch,
             runner: runner_kind,
             appliance: assembled_appliance.as_deref(),
