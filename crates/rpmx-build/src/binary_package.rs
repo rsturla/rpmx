@@ -257,7 +257,7 @@ mod tests {
 
     fn fixture() -> &'static str {
         r#"
-schema: 1
+schema: 2
 package:
   name: demo
   version: "1"
@@ -280,7 +280,7 @@ outputs:
         std::fs::write(stage.path().join("usr/share/doc/demo/README"), b"doc").expect("doc");
 
         let recipe = r#"
-schema: 1
+schema: 2
 package:
   name: demo
   version: "1"
@@ -317,6 +317,89 @@ outputs:
             .files
             .iter()
             .any(|file| file.path == "/usr/share/doc/demo/README"));
+    }
+
+    #[test]
+    fn protected_staged_files_keep_their_bytes_and_mode_without_chmod() {
+        use std::os::unix::fs::PermissionsExt;
+        let stage = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(stage.path().join("usr/bin")).unwrap();
+        let protected = stage.path().join("usr/bin/demo");
+        std::fs::write(&protected, b"protected payload bytes\n").unwrap();
+        std::fs::set_permissions(&protected, std::fs::Permissions::from_mode(0o0)).unwrap();
+        let (recipe, cell) = plan(fixture(), "x86_64");
+        let packages = prepare_binary_packages(BinaryPackageOptions {
+            recipe: &recipe,
+            cell: &cell,
+            stage: stage.path(),
+            arch: "x86_64",
+            source_date_epoch: 1,
+            bundled: &rpmx_components::Inventory::empty(),
+        })
+        .expect("mode000 is a valid RPM payload permission");
+        assert_eq!(packages.len(), 1);
+        let file = &packages[0].files[0];
+        assert_eq!(file.path, "/usr/bin/demo");
+        assert_eq!(file.data, b"protected payload bytes\n");
+        assert_eq!(file.mode & 0o7777, 0o0);
+        assert_eq!(
+            std::fs::metadata(&protected).unwrap().permissions().mode() & 0o7777,
+            0o0,
+            "packaging must not chmod the source stage, even temporarily"
+        );
+    }
+
+    #[test]
+    fn protected_payload_read_does_not_gain_access_to_other_host_owners() {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        let stage = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(stage.path().join("usr/bin")).unwrap();
+        let protected = stage.path().join("usr/bin/demo");
+        std::fs::write(&protected, b"another owner's private bytes").unwrap();
+        std::fs::set_permissions(&protected, std::fs::Permissions::from_mode(0o0)).unwrap();
+        // A subordinate ID is a real, different host owner. The read helper
+        // maps only our caller, so this owner must remain outside its powers.
+        let change = std::process::Command::new("unshare")
+            .args([
+                "--user",
+                "--map-auto",
+                "--map-root-user",
+                "--",
+                "chown",
+                "1:1",
+            ])
+            .arg(&protected)
+            .output()
+            .unwrap();
+        assert!(
+            change.status.success(),
+            "{}",
+            String::from_utf8_lossy(&change.stderr)
+        );
+        assert_ne!(
+            std::fs::metadata(&protected).unwrap().uid(),
+            std::fs::metadata(stage.path()).unwrap().uid()
+        );
+        let (recipe, cell) = plan(fixture(), "x86_64");
+        let error = prepare_binary_packages(BinaryPackageOptions {
+            recipe: &recipe,
+            cell: &cell,
+            stage: stage.path(),
+            arch: "x86_64",
+            source_date_epoch: 1,
+            bundled: &rpmx_components::Inventory::empty(),
+        })
+        .expect_err("mapping our caller must not bypass another host owner's permissions");
+        assert_eq!(error.code, "RPMX-STAGE-006");
+        assert!(
+            error.message.contains("Permission denied"),
+            "{}",
+            error.message
+        );
+        assert_eq!(
+            std::fs::metadata(&protected).unwrap().permissions().mode() & 0o7777,
+            0o0
+        );
     }
 
     #[test]

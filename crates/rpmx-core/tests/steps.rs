@@ -14,7 +14,7 @@ fn write_step(root: &Path, name: &str, body: &str) {
 
 fn recipe() -> &'static str {
     r#"
-schema: 1
+schema: 2
 package:
   name: foo
   version: "1.0"
@@ -155,7 +155,7 @@ fn local_step_works_in_the_build_pipeline() {
     let dir = tempfile::tempdir().expect("tempdir");
     write_step(dir.path(), "acme/strip", STRIP_STEP);
     let yaml = r#"
-schema: 1
+schema: 2
 package:
   name: foo
   version: "1.0"
@@ -213,7 +213,7 @@ fn local_step_is_the_same_in_build_and_test_pipelines() {
     let dir = tempfile::tempdir().expect("tempdir");
     write_step(dir.path(), "acme/strip", STRIP_STEP);
     let yaml = r#"
-schema: 1
+schema: 2
 package:
   name: foo
   version: "1.0"
@@ -227,7 +227,6 @@ build:
         path: /stage/usr/bin/foo
 tests:
   - name: smoke
-    stage: installed
     pipeline:
       - uses: acme/strip
         with:
@@ -251,7 +250,7 @@ outputs:
 fn unknown_build_step_is_rejected() {
     let dir = tempfile::tempdir().expect("tempdir");
     let yaml = r#"
-schema: 1
+schema: 2
 package:
   name: foo
   version: "1.0"
@@ -290,7 +289,7 @@ run:
     );
     let recipe = parse_recipe(
         r#"
-schema: 1
+schema: 2
 package:
   name: foo
   version: "1.0"

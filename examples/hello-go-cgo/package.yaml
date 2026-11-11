@@ -7,7 +7,7 @@
 # The build root gets `go` from the go/build step's needs.packages, so the
 # profile does not have to list it.
 
-schema: 1
+schema: 2
 
 package:
   name: hello-go-cgo

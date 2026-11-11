@@ -4,9 +4,9 @@ use rpmx_core::error::codes;
 use rpmx_core::pkgmanifest::{self, RpmPackageManifest};
 use rpmx_core::profile::load_profile;
 use rpmx_core::root::{
-    assemble as assemble_root, load_lock, resolve_profile, write_lock, AssembleOptions, RootLock,
+    load_lock, resolve_profile, write_lock, AssembleOptions, RootLock, RootSelection,
 };
-use rpmx_core::tree::{digest_root, tree_digest};
+use rpmx_core::tree::tree_digest;
 use rpmx_core::Arch;
 
 use rpmx_core::Error;
@@ -41,7 +41,7 @@ pub fn resolve(args: RootResolveArgs) -> Result<(), Error> {
     let cache = cache_dir(args.cache.cache.as_deref())?;
     let (work, temporary) = scratch(args.work.as_deref())?;
     let result = resolve_profile(&profile, &name, &work, &cache).and_then(|lock| {
-        crate::commands::autoroot::report_root(&lock, &name, "resolved");
+        report_root(&lock, &name, "resolved");
         emit_lock(&lock, output)?;
         if args.output.is_some() {
             if rpmx_core::output::json() {
@@ -64,7 +64,7 @@ pub fn resolve(args: RootResolveArgs) -> Result<(), Error> {
 }
 
 pub fn assemble(args: RootAssembleArgs) -> Result<(), Error> {
-    let mut lock = load_lock(&args.lock)?;
+    let lock = load_lock(&args.lock)?;
     let output = args.output.as_deref();
 
     let root = match args.root.as_deref() {
@@ -83,29 +83,29 @@ pub fn assemble(args: RootAssembleArgs) -> Result<(), Error> {
     let cache = cache_dir(args.cache.cache.as_deref())?;
     let (work, temporary) = scratch(args.work.as_deref())?;
 
-    let result = assemble_root(
-        &lock,
+    let result = RootSelection::assemble(
+        lock,
         AssembleOptions {
             cache: &cache,
             work: &work,
             root: &root,
-            extra_rpms: &[],
         },
     )
-    .and_then(|root| {
-        crate::commands::autoroot::report_root(&lock, &lock.profile, "assembled");
-        let digest = digest_root(&root)?;
-        lock.root_digest = Some(digest.clone());
-        emit_lock(&lock, output)?;
+    .and_then(|selection| {
+        let lock = selection.lock();
+        let root = selection.path();
+        report_root(lock, &lock.profile, "assembled");
+        let digest = selection.digest();
+        emit_lock(lock, output)?;
         if output.is_some() {
             if rpmx_core::output::json() {
-                print_json("root-assemble", &lock)?;
+                print_json("root-assemble", lock)?;
             } else {
                 println!(
                     "{} {} {} packages root={} root_digest={}",
                     lock.profile,
                     lock.archs.join(","),
-                    package_count(&lock),
+                    package_count(lock),
                     root.display(),
                     digest
                 );
@@ -140,7 +140,7 @@ pub fn export(args: RootExportArgs) -> Result<(), Error> {
              importing this manifest will not reproduce the root"
         );
     }
-    let manifest = pkgmanifest::from_lock(&lock);
+    let manifest = pkgmanifest::from_lock(&lock)?;
     let text = serde_yaml_ng::to_string(&manifest)
         .map_err(|error| Error::new(codes::CLI_006, error.to_string()))?;
     match args.output.as_deref() {
@@ -273,4 +273,32 @@ fn write_file(path: &Path, text: &str) -> Result<(), Error> {
             format!("cannot write {}: {error}", path.display()),
         )
     })
+}
+
+fn report_root(lock: &RootLock, profile: &str, source: &str) {
+    let count: usize = lock.packages.values().map(Vec::len).sum();
+    rpmx_core::output::phase(
+        "root",
+        format!(
+            "{profile} · {} · {} · {source}",
+            lock.archs.join(","),
+            rpmx_core::output::count(count, "package", "packages")
+        ),
+    );
+    if let Some(builder) = &lock.builder {
+        rpmx_core::output::phase(
+            "root",
+            format!("builder {}", builder.installer.pinned_reference()),
+        );
+    }
+    if rpmx_core::output::verbose() {
+        for (arch, packages) in &lock.packages {
+            for package in packages {
+                rpmx_core::output::phase(
+                    "root",
+                    format!("{}-{}.{arch}", package.name, package.evr),
+                );
+            }
+        }
+    }
 }

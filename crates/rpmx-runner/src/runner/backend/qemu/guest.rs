@@ -1,6 +1,7 @@
 use std::path::Path;
 use std::process::Command;
 
+use super::budget::Budget;
 use rpmx_base::error::{codes, Error, Result};
 
 /// Where the disposable build-root disk is mounted inside the appliance.
@@ -12,14 +13,13 @@ pub(super) const BUILD_PORT: u16 = 2222;
 pub(super) const APPLIANCE_LABEL: &str = "rpmx-appliance";
 pub(super) const BUILD_LABEL: &str = "rpmx-build";
 
-pub(super) fn generate_ssh_key(key: &Path) -> Result<()> {
-    let output = Command::new("ssh-keygen")
-        .args(["-q", "-t", "ed25519", "-N", "", "-f"])
-        .arg(key)
-        .output()
-        .map_err(|error| {
-            Error::new(codes::RUNNER_003, format!("cannot run ssh-keygen: {error}"))
-        })?;
+pub(super) fn generate_ssh_key(key: &Path, budget: Budget) -> Result<()> {
+    let output = budget.output(
+        Command::new("ssh-keygen")
+            .args(["-q", "-t", "ed25519", "-N", "", "-f"])
+            .arg(key),
+        "generating qemu SSH key",
+    )?;
     if !output.status.success() {
         return Err(Error::new(
             codes::RUNNER_003,
@@ -40,6 +40,7 @@ pub(super) fn inject_ssh(
     client_public_key: &Path,
     host_private_key: &Path,
     scratch: &Path,
+    budget: Budget,
 ) -> Result<()> {
     if !appliance_root.join("usr/sbin/sshd").exists() {
         return Err(Error::new(
@@ -58,49 +59,75 @@ pub(super) fn inject_ssh(
         )
     })?;
 
-    let _ = debugfs_write(appliance_disk, "mkdir /root/.ssh");
+    let _ = debugfs_write(appliance_disk, "mkdir /root/.ssh", budget);
     // `debugfs write` refuses to replace an existing file, so remove the
     // packaged config and any stale keys first.
-    let _ = debugfs_write(appliance_disk, "rm /etc/ssh/sshd_config");
-    let _ = debugfs_write(appliance_disk, "rm /etc/ssh/ssh_host_ed25519_key");
-    let _ = debugfs_write(appliance_disk, "rm /root/.ssh/authorized_keys");
+    let _ = debugfs_write(appliance_disk, "rm /etc/ssh/sshd_config", budget);
+    let _ = debugfs_write(appliance_disk, "rm /etc/ssh/ssh_host_ed25519_key", budget);
+    let _ = debugfs_write(appliance_disk, "rm /root/.ssh/authorized_keys", budget);
     debugfs_write(
         appliance_disk,
         &format!("write {} /etc/ssh/sshd_config", sshd_config.display()),
+        budget,
     )?;
-    debugfs_write(appliance_disk, "sif /etc/ssh/sshd_config mode 0100644")?;
-    debugfs_write(appliance_disk, "sif /etc/ssh/sshd_config uid 0")?;
-    debugfs_write(appliance_disk, "sif /etc/ssh/sshd_config gid 0")?;
+    debugfs_write(
+        appliance_disk,
+        "sif /etc/ssh/sshd_config mode 0100644",
+        budget,
+    )?;
+    debugfs_write(appliance_disk, "sif /etc/ssh/sshd_config uid 0", budget)?;
+    debugfs_write(appliance_disk, "sif /etc/ssh/sshd_config gid 0", budget)?;
     debugfs_write(
         appliance_disk,
         &format!(
             "write {} /root/.ssh/authorized_keys",
             client_public_key.display()
         ),
+        budget,
     )?;
     debugfs_write(
         appliance_disk,
         "sif /root/.ssh/authorized_keys mode 0100600",
+        budget,
     )?;
-    debugfs_write(appliance_disk, "sif /root/.ssh/authorized_keys uid 0")?;
-    debugfs_write(appliance_disk, "sif /root/.ssh/authorized_keys gid 0")?;
-    debugfs_write(appliance_disk, "sif /root/.ssh mode 040700")?;
-    debugfs_write(appliance_disk, "sif /root/.ssh uid 0")?;
-    debugfs_write(appliance_disk, "sif /root/.ssh gid 0")?;
+    debugfs_write(
+        appliance_disk,
+        "sif /root/.ssh/authorized_keys uid 0",
+        budget,
+    )?;
+    debugfs_write(
+        appliance_disk,
+        "sif /root/.ssh/authorized_keys gid 0",
+        budget,
+    )?;
+    debugfs_write(appliance_disk, "sif /root/.ssh mode 040700", budget)?;
+    debugfs_write(appliance_disk, "sif /root/.ssh uid 0", budget)?;
+    debugfs_write(appliance_disk, "sif /root/.ssh gid 0", budget)?;
     debugfs_write(
         appliance_disk,
         &format!(
             "write {} /etc/ssh/ssh_host_ed25519_key",
             host_private_key.display()
         ),
+        budget,
     )?;
     debugfs_write(
         appliance_disk,
         "sif /etc/ssh/ssh_host_ed25519_key mode 0100600",
+        budget,
     )?;
-    debugfs_write(appliance_disk, "sif /etc/ssh/ssh_host_ed25519_key uid 0")?;
-    debugfs_write(appliance_disk, "sif /etc/ssh/ssh_host_ed25519_key gid 0")?;
-    enable_unit(appliance_disk, "sshd.service")?;
+    debugfs_write(
+        appliance_disk,
+        "sif /etc/ssh/ssh_host_ed25519_key uid 0",
+        budget,
+    )?;
+    debugfs_write(
+        appliance_disk,
+        "sif /etc/ssh/ssh_host_ed25519_key gid 0",
+        budget,
+    )?;
+    enable_unit(appliance_disk, "sshd.service", budget)?;
+    enable_unit(appliance_disk, "dbus.socket", budget)?;
     Ok(())
 }
 
@@ -108,6 +135,7 @@ pub(super) fn inject_network(
     appliance_root: &Path,
     appliance_disk: &Path,
     scratch: &Path,
+    budget: Budget,
 ) -> Result<()> {
     let unit = appliance_root.join("usr/lib/systemd/system/systemd-networkd.service");
     if !unit.exists() {
@@ -126,33 +154,41 @@ pub(super) fn inject_network(
             format!("cannot write {}: {error}", config.display()),
         )
     })?;
-    let _ = debugfs_write(appliance_disk, "mkdir /etc/systemd/network");
+    let _ = debugfs_write(appliance_disk, "mkdir /etc/systemd/network", budget);
     debugfs_write(
         appliance_disk,
         &format!(
             "write {} /etc/systemd/network/20-rpmx.network",
             config.display()
         ),
+        budget,
     )?;
     debugfs_write(
         appliance_disk,
         "sif /etc/systemd/network/20-rpmx.network mode 0100644",
+        budget,
     )?;
     debugfs_write(
         appliance_disk,
         "sif /etc/systemd/network/20-rpmx.network uid 0",
+        budget,
     )?;
     debugfs_write(
         appliance_disk,
         "sif /etc/systemd/network/20-rpmx.network gid 0",
+        budget,
     )?;
-    enable_unit(appliance_disk, "systemd-networkd.service")?;
+    enable_unit(appliance_disk, "systemd-networkd.service", budget)?;
     Ok(())
 }
 
 /// Inject and enable the unit that mounts the build-root disk and its virtual
 /// filesystems before sshd starts.
-pub(super) fn inject_build_mount(appliance_disk: &Path, scratch: &Path) -> Result<()> {
+pub(super) fn inject_build_mount(
+    appliance_disk: &Path,
+    scratch: &Path,
+    budget: Budget,
+) -> Result<()> {
     let unit = scratch.join("rpmx-buildroot.service");
     std::fs::write(&unit, BUILD_ROOT_UNIT).map_err(|error| {
         Error::new(
@@ -166,56 +202,67 @@ pub(super) fn inject_build_mount(appliance_disk: &Path, scratch: &Path) -> Resul
             "write {} /etc/systemd/system/rpmx-buildroot.service",
             unit.display()
         ),
+        budget,
     )?;
     debugfs_write(
         appliance_disk,
         "sif /etc/systemd/system/rpmx-buildroot.service mode 0100644",
+        budget,
     )?;
     debugfs_write(
         appliance_disk,
         "sif /etc/systemd/system/rpmx-buildroot.service uid 0",
+        budget,
     )?;
     debugfs_write(
         appliance_disk,
         "sif /etc/systemd/system/rpmx-buildroot.service gid 0",
+        budget,
     )?;
-    enable_unit(appliance_disk, "rpmx-buildroot.service")?;
+    enable_unit(appliance_disk, "rpmx-buildroot.service", budget)?;
     // sshd must not start until the build root is mounted. A .requires
     // directory makes the dependency explicit to systemd.
     let _ = debugfs_write(
         appliance_disk,
         "mkdir /etc/systemd/system/sshd.service.requires",
+        budget,
     );
     let _ = debugfs_write(
         appliance_disk,
         "rm /etc/systemd/system/sshd.service.requires/rpmx-buildroot.service",
+        budget,
     );
     debugfs_write(
         appliance_disk,
-        "symlink /etc/systemd/system/sshd.service.requires/rpmx-buildroot.service /etc/systemd/system/rpmx-buildroot.service",
-    )?;
+        "symlink /etc/systemd/system/sshd.service.requires/rpmx-buildroot.service /etc/systemd/system/rpmx-buildroot.service", budget)?;
     Ok(())
 }
 
-fn enable_unit(disk: &Path, unit: &str) -> Result<()> {
-    let _ = debugfs_write(disk, "mkdir /etc/systemd/system");
-    let _ = debugfs_write(disk, "mkdir /etc/systemd/system/multi-user.target.wants");
+fn enable_unit(disk: &Path, unit: &str, budget: Budget) -> Result<()> {
+    let _ = debugfs_write(disk, "mkdir /etc/systemd/system", budget);
+    let _ = debugfs_write(
+        disk,
+        "mkdir /etc/systemd/system/multi-user.target.wants",
+        budget,
+    );
     let link = format!("/etc/systemd/system/multi-user.target.wants/{unit}");
-    let _ = debugfs_write(disk, &format!("rm {link}"));
+    let _ = debugfs_write(disk, &format!("rm {link}"), budget);
     debugfs_write(
         disk,
         &format!("symlink {link} /usr/lib/systemd/system/{unit}"),
+        budget,
     )
 }
 
-pub(super) fn debugfs_write(disk: &Path, command: &str) -> Result<()> {
-    let output = Command::new("debugfs")
-        .arg("-w")
-        .arg("-R")
-        .arg(command)
-        .arg(disk)
-        .output()
-        .map_err(|error| Error::new(codes::RUNNER_003, format!("cannot run debugfs: {error}")))?;
+pub(super) fn debugfs_write(disk: &Path, command: &str, budget: Budget) -> Result<()> {
+    let output = budget.output(
+        Command::new("debugfs")
+            .arg("-w")
+            .arg("-R")
+            .arg(command)
+            .arg(disk),
+        "injecting qemu configuration",
+    )?;
     let stderr = String::from_utf8_lossy(&output.stderr);
     if !output.status.success() || stderr.contains("already exists") {
         return Err(Error::new(

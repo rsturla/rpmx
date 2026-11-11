@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::profile::{normalize_arch, Repository, ResolveOptions};
-use crate::root::{closure_digest, LockedPackage, RootLock};
+use crate::root::{closure_digest, LockedPackage, PackageOrigin, RootLock};
 use rpmx_base::error::{codes, Error, Result};
 
 pub const DOCUMENT: &str = "rpm-package-manifest";
@@ -59,7 +59,15 @@ pub struct ManifestPackage {
     pub parent_archs: Option<Vec<String>>,
 }
 
-pub fn from_lock(lock: &RootLock) -> RpmPackageManifest {
+pub fn from_lock(lock: &RootLock) -> Result<RpmPackageManifest> {
+    if lock
+        .packages
+        .values()
+        .flatten()
+        .any(|package| matches!(package.origin, PackageOrigin::Candidate))
+    {
+        return Err(Error::new(codes::ROOT_009, "rpm-package-manifest cannot represent candidate CAS origins; export the full rpmx root lock"));
+    }
     let repositories = lock
         .repositories
         .iter()
@@ -80,8 +88,16 @@ pub fn from_lock(lock: &RootLock) -> RpmPackageManifest {
                 .iter()
                 .map(|package| ManifestPackage {
                     name: package.name.clone(),
-                    repo_id: package.repo_id.clone(),
-                    location: package.location.clone(),
+                    repo_id: match &package.origin {
+                        PackageOrigin::Repository { repository, .. } => repository.clone(),
+                        PackageOrigin::Candidate => {
+                            unreachable!("candidate origin rejected before export")
+                        }
+                    },
+                    location: match &package.origin {
+                        PackageOrigin::Repository { location, .. } => location.clone(),
+                        PackageOrigin::Candidate => None,
+                    },
                     checksum: package.checksum.clone(),
                     size: package.size,
                     evr: package.evr.clone(),
@@ -93,14 +109,14 @@ pub fn from_lock(lock: &RootLock) -> RpmPackageManifest {
         );
     }
 
-    RpmPackageManifest {
+    Ok(RpmPackageManifest {
         document: DOCUMENT.to_string(),
         version: VERSION.to_string(),
         data: ManifestData {
             repositories,
             packages,
         },
-    }
+    })
 }
 
 pub fn to_lock(
@@ -154,13 +170,15 @@ pub fn to_lock(
         for package in entries {
             locked.push(LockedPackage {
                 name: package.name.clone(),
-                repo_id: package.repo_id.clone(),
+                origin: PackageOrigin::Repository {
+                    repository: package.repo_id.clone(),
+                    location: package.location.clone(),
+                },
                 evr: package.evr.clone(),
                 checksum: package.checksum.clone(),
                 size: package.size,
                 srpm: package.srpm.clone(),
                 module: package.module.clone(),
-                location: package.location.clone(),
             });
         }
         packages.insert(package_arch.clone(), locked);
@@ -209,6 +227,7 @@ pub fn to_lock(
         packages,
         closure_digest: closure,
         root_digest: None,
+        rpmdb_digest: None,
         builder: None,
         seed: None,
         generation: None,

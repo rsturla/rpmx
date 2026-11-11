@@ -1,0 +1,25 @@
+[package]
+name = "rpmx-application"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Shared production and standalone acceptance lifecycle for rpmx."
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+rpm.workspace = true
+rpmx-payload = { path = "../rpmx-payload" }
+rpmx-base = { path = "../rpmx-base" }
+rpmx-language = { path = "../rpmx-language" }
+rpmx-components = { path = "../rpmx-components" }
+rpmx-store = { path = "../rpmx-store" }
+rpmx-runner = { path = "../rpmx-runner" }
+rpmx-root = { path = "../rpmx-root" }
+rpmx-build = { path = "../rpmx-build" }
+rpmx-rpm = { path = "../rpmx-rpm" }
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml_ng.workspace = true
+tempfile = "3"
+libc = "0.2"

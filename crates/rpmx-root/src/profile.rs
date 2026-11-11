@@ -27,6 +27,7 @@ pub struct Profile {
     #[serde(default)]
     pub builder: Builder,
     pub repositories: Vec<Repository>,
+    #[serde(default)]
     pub packages: Packages,
     /// Cross-compilation toolchain. When present, `packages.install` is the
     /// target sysroot and `cross.packages` is the host build root.
@@ -138,9 +139,10 @@ impl Repository {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Packages {
+    #[serde(default)]
     pub install: Vec<String>,
     #[serde(default)]
     pub reinstall: Vec<String>,
@@ -217,13 +219,26 @@ pub fn parse_profile(text: &str) -> Result<Profile> {
 }
 
 pub fn load_profile(path: &std::path::Path) -> Result<Profile> {
+    load_profile_with(path, Profile::validate)
+}
+
+/// Load runtime repository policy without requiring or validating ignored seeds.
+pub fn load_test_profile(path: &std::path::Path) -> Result<Profile> {
+    load_profile_with(path, Profile::validate_for_tests)
+}
+
+fn load_profile_with(
+    path: &std::path::Path,
+    validate: fn(&Profile) -> Result<()>,
+) -> Result<Profile> {
     let text = std::fs::read_to_string(path).map_err(|error| {
         Error::new(
             codes::ROOT_006,
             format!("cannot read profile {}: {error}", path.display()),
         )
     })?;
-    let mut profile = parse_profile(&text)?;
+    let mut profile: Profile = yaml::parse_strict(&text, codes::ROOT_006)?;
+    validate(&profile)?;
     profile.resolve_local_paths(path)?;
     Ok(profile)
 }
@@ -286,6 +301,33 @@ fn relative_local_path(value: &str) -> Option<&std::path::Path> {
 
 impl Profile {
     pub fn validate(&self) -> Result<()> {
+        self.validate_policy()?;
+        if self.packages.install.is_empty() {
+            return Err(Error::new(
+                codes::ROOT_006,
+                "profile must install at least one package",
+            ));
+        }
+        self.validate_cross()?;
+        if !self.packages.reinstall.is_empty() {
+            return Err(Error::new(
+                codes::ROOT_006,
+                "package reinstall is not supported yet",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Test roots select their own package requests for each environment.
+    pub fn validate_for_tests(&self) -> Result<()> {
+        self.validate_policy()?;
+        if self.cross.is_some() {
+            return Err(Error::new(codes::TEST_004, "a test profile describes the target runtime and cannot contain cross configuration"));
+        }
+        Ok(())
+    }
+
+    fn validate_policy(&self) -> Result<()> {
         if self.document != DOCUMENT {
             return Err(Error::new(
                 codes::ROOT_006,
@@ -404,19 +446,6 @@ impl Profile {
                     validate_config_value(&repository.id, field, value)?;
                 }
             }
-        }
-        if self.packages.install.is_empty() {
-            return Err(Error::new(
-                codes::ROOT_006,
-                "profile must install at least one package",
-            ));
-        }
-        self.validate_cross()?;
-        if !self.packages.reinstall.is_empty() {
-            return Err(Error::new(
-                codes::ROOT_006,
-                "package reinstall is not supported yet",
-            ));
         }
         if !self.modules.enable.is_empty() || !self.modules.disable.is_empty() {
             return Err(Error::new(

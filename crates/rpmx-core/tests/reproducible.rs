@@ -4,7 +4,7 @@ use rpmx_core::load_recipe;
 
 fn recipe(extra: &str) -> String {
     format!(
-        "schema: 1\npackage:\n  name: demo\n  version: \"1.0\"\n  release: 1\n  summary: demo\n  license: MIT\n{extra}"
+        "schema: 2\npackage:\n  name: demo\n  version: \"1.0\"\n  release: 1\n  summary: demo\n  license: MIT\n{extra}"
     )
 }
 

@@ -12,6 +12,11 @@ name = "rpmx"
 path = "src/main.rs"
 
 [dependencies]
+rpmx-base = { path = "../rpmx-base" }
+rpmx-language = { path = "../rpmx-language" }
+rpmx-root = { path = "../rpmx-root" }
+rpmx-build = { path = "../rpmx-build" }
+rpmx-application = { path = "../rpmx-application" }
 rpmx-core = { path = "../rpmx-core" }
 rpmx-rpm = { path = "../rpmx-rpm" }
 serde.workspace = true

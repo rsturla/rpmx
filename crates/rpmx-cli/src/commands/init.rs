@@ -45,7 +45,7 @@ reviewed like code: `rpmx lock` records the resolved sources, steps and root.
 
 const GITIGNORE: &str = "packages/\n.rpmx/\n";
 
-const C_RECIPE: &str = r#"schema: 1
+const C_RECIPE: &str = r#"schema: 2
 
 package:
   name: {name}
@@ -67,6 +67,9 @@ build:
     - runs: |
         install -D -m 0644 LICENSE "$STAGE/usr/share/licenses/{name}/LICENSE"
     - uses: strip
+  tests:
+    - name: upstream
+      argv: ["./hello"]
 
 source-assembly:
   pipeline:
@@ -108,16 +111,12 @@ outputs:
       license:
         - /usr/share/licenses/{name}/LICENSE
 
-tests:
-  - name: smoke
-    stage: build
-    argv: ["./hello"]
-  - name: installed
-    stage: installed
-    argv: ["hello"]
+    tests:
+      - name: installed
+        argv: ["hello"]
 "#;
 
-const METAPACKAGE_RECIPE: &str = r#"schema: 1
+const METAPACKAGE_RECIPE: &str = r#"schema: 2
 
 package:
   name: {name}
@@ -142,7 +141,7 @@ outputs:
     metapackage: true
 "#;
 
-const PYTHON_RECIPE: &str = r#"schema: 1
+const PYTHON_RECIPE: &str = r#"schema: 2
 
 package:
   name: {name}
@@ -211,10 +210,9 @@ outputs:
       license:
         - /usr/share/licenses/{name}/LICENSE
 
-tests:
-  - name: import
-    stage: installed
-    argv: ["python3", "-c", "import {module}"]
+    tests:
+      - name: import
+        argv: ["python3", "-c", "import {module}"]
 "#;
 
 pub fn run(args: InitArgs) -> Result<(), Error> {

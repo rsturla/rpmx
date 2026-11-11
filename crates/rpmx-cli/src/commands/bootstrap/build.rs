@@ -10,8 +10,7 @@ use rpmx_core::root::{
 use rpmx_core::{Arch, Error};
 
 use crate::commands::{
-    autoroot, fetch::default_cache, load_plan, pipeline::BuildPipeline, resolve_policy,
-    BootstrapBuildArgs, PolicyInput,
+    fetch::default_cache, load_plan, resolve_policy, BootstrapBuildArgs, PolicyInput,
 };
 
 pub fn run(args: BootstrapBuildArgs) -> Result<(), Error> {
@@ -169,8 +168,6 @@ struct StageRoots {
     sysroot_root: Option<PathBuf>,
     sysroot_lock: Option<RootLock>,
     cross: Option<rpmx_core::guest::CrossToolchain>,
-    exec: Arch,
-    sysroot_packages: Option<BTreeSet<String>>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -216,7 +213,6 @@ fn build_stage(
             &temp_output,
             arch,
             cache,
-            &profile_path,
             resolved_policy.plan_policy(),
             &roots,
             args,
@@ -265,7 +261,6 @@ fn build_stage(
                 &temp_output,
                 arch,
                 cache,
-                &profile_path,
                 resolved_policy.plan_policy(),
                 &candidate,
                 args,
@@ -348,7 +343,6 @@ fn build_recipes(
     output: &Path,
     arch: &str,
     cache: &Path,
-    profile_path: &Path,
     policy: crate::commands::PlanPolicy<'_>,
     roots: &StageRoots,
     args: &BootstrapBuildArgs,
@@ -367,40 +361,65 @@ fn build_recipes(
                 ),
             ));
         }
-        let pipeline = BuildPipeline {
-            file: Path::new(recipe_path),
-            output,
-            arch,
-            exec: roots.exec,
-            sysroot: roots.sysroot_root.as_deref(),
-            cross: roots.cross.as_ref(),
-            sysroot_packages: roots.sysroot_packages.as_ref(),
-            sysroot_lock: roots.sysroot_lock.as_ref(),
-            runner: &args.runner,
-            policy,
-            profile: Some(profile_path),
-            cache: Some(cache),
-            proxy: args.proxy.as_deref(),
-            offline: args.offline,
-            root_lock: Some(&roots.build_lock_path),
-            root: Some(&roots.build_root),
-            runner_asset_root: None,
-            unsafe_host_root: false,
-            source_date_epoch: stage.source_date_epoch,
-            jobs: args.runtime.jobs,
-            step_timeout: args.runtime.step_timeout,
-            run_tests: !args.no_tests,
-            skip_installed: args.skip_installed,
-            save_test_root: None,
-            test_filter: &[],
-            junit: None,
-            no_lint: false,
-            sbom: None,
-            test_root_lock: None,
-            signing,
-            pipeline_dir: None,
+        let saved_build = rpmx_application::SavedRoot {
+            lock: roots.build_lock_path.clone(),
+            path: roots.build_root.clone(),
         };
-        count += pipeline.execute(&cells)?.rpms.len();
+        let bootstrap = match (&roots.sysroot_root, &roots.cross) {
+            (Some(path), Some(toolchain)) => rpmx_application::BootstrapEnvironment::Cross {
+                build: saved_build,
+                target: rpmx_application::SavedRoot {
+                    lock: sysroot_lock_path(&roots.build_lock_path),
+                    path: path.clone(),
+                },
+                toolchain: Box::new(toolchain.clone()),
+            },
+            (None, None) => rpmx_application::BootstrapEnvironment::Native { build: saved_build },
+            _ => {
+                return Err(Error::new(
+                    codes::ROOT_016,
+                    "bootstrap stage requires both a target sysroot and its toolchain",
+                ))
+            }
+        };
+        let config = rpmx_application::ApplicationConfig {
+            root: rpmx_application::BuildRoot::Bootstrap(bootstrap),
+            cache: Some(cache.into()),
+            runner: args.runner.clone(),
+            offline: args.offline,
+            proxy: args.proxy.clone(),
+            jobs: args.runtime.jobs,
+            timeout: args.runtime.step_timeout,
+            policy: rpmx_application::ProductionPolicy {
+                dist_tag: policy.dist_tag.map(str::to_string),
+                build_release: policy.build_release,
+                source_date_epoch: stage.source_date_epoch,
+            },
+            signing: crate::commands::application::signing(signing),
+            quiet: true,
+            ..Default::default()
+        };
+        let input = rpmx_application::BuildInput {
+            recipe: recipe_path.into(),
+            architectures: vec![arch.into()],
+            layout: rpmx_application::BuildOutputLayout::Flat,
+            arch_jobs: None,
+            cell: None,
+            stage: None,
+            build_tests: !args.no_tests,
+            locked: false,
+            lint: true,
+            index: false,
+            sbom: None,
+        };
+        let report = rpmx_application::Application::new(config).execute(
+            rpmx_application::ApplicationRequest {
+                operation: rpmx_application::Operation::Build(input),
+                output: output.into(),
+            },
+        )?;
+        report.require_success()?;
+        count += report.artifacts.rpms.len();
     }
     Ok(count)
 }
@@ -570,13 +589,6 @@ fn resolve_candidate_roots(
         None => (None, None),
     };
 
-    let sysroot_packages = sysroot_lock.as_ref().map(|lock| {
-        lock.packages
-            .values()
-            .flatten()
-            .map(|package| package.name.clone())
-            .collect()
-    });
     let cross = match &profile.cross {
         Some(cross) => {
             let triple = profile.triple()?;
@@ -600,8 +612,6 @@ fn resolve_candidate_roots(
         sysroot_root,
         sysroot_lock,
         cross,
-        exec: if crossing { Arch::current()? } else { target },
-        sysroot_packages,
     })
 }
 
@@ -850,9 +860,9 @@ fn synthesize_profile(
     for recipe_path in &stage.recipes {
         let recipe = rpmx_core::load_recipe(recipe_path)?;
         let recipe_plan = rpmx_core::plan(&recipe, arch)?;
-        let required = autoroot::required_packages(&recipe_plan);
-        build_extra.extend(required.build);
-        target_extra.extend(required.target);
+        let required = rpmx_core::plan::build_requirements(&recipe_plan);
+        build_extra.extend(required.packages);
+        target_extra.extend(required.sysroot);
     }
 
     if let Some(cross) = profile.cross.as_mut() {
@@ -945,13 +955,6 @@ fn resolve_roots(
         None => (None, None),
     };
 
-    let sysroot_packages = sysroot_lock.as_ref().map(|lock| {
-        lock.packages
-            .values()
-            .flatten()
-            .map(|package| package.name.clone())
-            .collect()
-    });
     let cross = match &effective.cross {
         Some(cross) => {
             let triple = effective.triple()?;
@@ -975,8 +978,6 @@ fn resolve_roots(
         sysroot_root,
         sysroot_lock,
         cross,
-        exec: if crossing { Arch::current()? } else { target },
-        sysroot_packages,
     })
 }
 
@@ -1003,7 +1004,7 @@ fn resolve_one_root(
         if let Ok(lock) = load_lock(lock_path) {
             if lock.requirement.as_deref() == Some(requirement) {
                 if let Ok(selection) = RootSelection::verify(&lock, root, arch) {
-                    return Ok(selection.lock);
+                    return Ok(selection.lock().clone());
                 }
             }
         }
@@ -1038,7 +1039,6 @@ fn resolve_one_root(
         cache,
         work: assemble_work.path(),
         root: &temp_root,
-        extra_rpms: &[],
     };
     let assembled = if sysroot {
         assemble_sysroot(&lock, options)?
@@ -1099,7 +1099,7 @@ fn locked_root(
         ));
     }
     RootSelection::verify(&lock, root, arch)
-        .map(|selection| selection.lock)
+        .map(|selection| selection.lock().clone())
         .map_err(|error| {
             Error::new(
                 codes::BOOTSTRAP_006,
@@ -1287,7 +1287,7 @@ mod tests {
         write(
             &root.join("recipes/gcc/package.yaml"),
             r#"
-schema: 1
+schema: 2
 package:
   name: gcc
   version: "1"

@@ -27,7 +27,7 @@ fn root_assembly_uses_the_locked_image_when_the_original_tag_disappears() {
     std::fs::write(
         directory.join("package.yaml"),
         r#"
-schema: 1
+schema: 2
 package:
   name: builder-image-probe
   version: "1"
@@ -90,9 +90,19 @@ outputs:
         ],
     );
     let mut lock = rpmx_core::root::load_lock(&directory.join("root.lock.yaml")).unwrap();
-    let original_digest = lock.builder.as_ref().unwrap().image_digest.clone();
-    lock.builder.as_mut().unwrap().image =
-        "registry.fedoraproject.org/fedora:rpmx-deliberately-absent".to_string();
+    let original_digest = lock
+        .builder
+        .as_ref()
+        .unwrap()
+        .installer
+        .digest()
+        .to_string();
+    lock.builder.as_mut().unwrap().installer = rpmx_core::root::LockedImage::new(
+        "registry.fedoraproject.org/fedora:rpmx-deliberately-absent".into(),
+        original_digest.clone(),
+        architecture,
+    )
+    .unwrap();
     rpmx_core::root::write_lock(&directory.join("pinned.lock.yaml"), &lock).unwrap();
     run(
         directory,
@@ -110,7 +120,7 @@ outputs:
     );
     let assembled = rpmx_core::root::load_lock(&directory.join("assembled.lock.yaml")).unwrap();
     assert_eq!(
-        assembled.builder.as_ref().unwrap().image_digest,
+        assembled.builder.as_ref().unwrap().installer.digest(),
         original_digest
     );
     assert!(assembled.root_digest.is_some());

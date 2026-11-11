@@ -5,7 +5,7 @@
 # A distro-neutral Autotools recipe with a TLS backend choice. The recipe does
 # not name a distro, a root, or a semantic slot.
 
-schema: 1
+schema: 2
 
 package:
   name: libfoo
@@ -89,5 +89,4 @@ outputs:
 
 tests:
   - name: installed
-    stage: installed
     argv: [pkg-config, --modversion, foo]

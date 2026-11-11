@@ -4,7 +4,7 @@
 # rpmx fetches the module, vendors its dependencies, and puts the snapshot
 # into the SRPM. This file is illustrative and is not a tested build.
 
-schema: 1
+schema: 2
 
 package:
   name: hello-go
@@ -69,5 +69,4 @@ outputs:
 
 tests:
   - name: smoke
-    stage: installed
     argv: [hello]

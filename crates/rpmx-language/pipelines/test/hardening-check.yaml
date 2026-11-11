@@ -1,6 +1,6 @@
 name: test/hardening-check
-version: 1
-summary: Check staged ELF files for the distribution hardening properties
+version: 2
+summary: Check candidate RPM ELF files for the distribution hardening properties
 inputs:
   paths:
     type: list<string>
@@ -23,7 +23,7 @@ run:
     list=$(mktemp)
     trap 'rm -f "$list"' EXIT
     for path in ${inputs.paths}; do
-      tree="$STAGE$path"
+      tree="$TEST_PACKAGE_ROOT$path"
       [ -e "$tree" ] || continue
       find "$tree" -type f >> "$list"
     done
@@ -33,12 +33,13 @@ run:
       echo "hardening-check: $rel: $1" >&2
       failures=$((failures + 1))
     }
+    # Consume readelf output completely so strict pipelines do not see SIGPIPE.
     while IFS= read -r file; do
       if ! readelf -h "$file" >/dev/null 2>&1; then
         continue
       fi
       type=$(readelf -h "$file" | sed -n 's/^[[:space:]]*Type:[[:space:]]*//p')
-      rel=${file#"$STAGE"}
+      rel=${file#"$TEST_PACKAGE_ROOT"}
       case "$type" in
         *DYN*|*EXEC*) ;;
         *) continue ;;
@@ -51,51 +52,51 @@ run:
         esac
       fi
       if enabled nx; then
-        if ! readelf -lW "$file" | grep -q 'GNU_STACK'; then
+        if ! readelf -lW "$file" | grep 'GNU_STACK' >/dev/null; then
           filefail "no GNU_STACK program header"
-        elif readelf -lW "$file" | grep -q 'GNU_STACK.*RWE'; then
+        elif readelf -lW "$file" | grep 'GNU_STACK.*RWE' >/dev/null; then
           filefail "executable stack"
         fi
       fi
       if enabled relro; then
-        if ! readelf -lW "$file" | grep -q 'GNU_RELRO'; then
+        if ! readelf -lW "$file" | grep 'GNU_RELRO' >/dev/null; then
           filefail "no GNU_RELRO segment"
         fi
       fi
       if enabled bind-now; then
-        if ! readelf -dW "$file" | grep -Eq 'BIND_NOW|FLAGS(_1)?[^:]*NOW'; then
+        if ! readelf -dW "$file" | grep -E 'BIND_NOW|FLAGS(_1)?[^:]*NOW' >/dev/null; then
           filefail "not linked with BIND_NOW"
         fi
       fi
       if enabled stack-protector; then
-        if ! readelf -sW "$file" | grep -q '__stack_chk_fail'; then
+        if ! readelf -sW "$file" | grep '__stack_chk_fail' >/dev/null; then
           filefail "no stack-protector reference"
         fi
       fi
       if enabled fortify; then
-        if ! readelf -sW "$file" | grep -Eq '__[[:alnum:]_]+_chk(@|$)'; then
+        if ! readelf -sW "$file" | grep -E '__[[:alnum:]_]+_chk(@|$)' >/dev/null; then
           filefail "no fortified libc reference"
         fi
       fi
       if enabled cf-protection; then
         case "$RPMX_TARGET_ARCH" in
           x86_64)
-            if ! readelf -nW "$file" | grep -q 'IBT'; then
+            if ! readelf -nW "$file" | grep 'IBT' >/dev/null; then
               filefail "no x86 IBT property"
             fi
-            if ! readelf -nW "$file" | grep -q 'SHSTK'; then
+            if ! readelf -nW "$file" | grep 'SHSTK' >/dev/null; then
               filefail "no x86 SHSTK property"
             fi
             ;;
           aarch64)
-            if ! readelf -nW "$file" | grep -q 'BTI'; then
+            if ! readelf -nW "$file" | grep 'BTI' >/dev/null; then
               filefail "no aarch64 BTI property"
             fi
             ;;
         esac
       fi
       if enabled build-id; then
-        if ! readelf -nW "$file" | grep -q 'Build ID:'; then
+        if ! readelf -nW "$file" | grep 'Build ID:' >/dev/null; then
           filefail "no build ID note"
         fi
       fi

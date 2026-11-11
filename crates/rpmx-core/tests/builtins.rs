@@ -4,7 +4,7 @@ use rpmx_core::plan;
 fn plan_with(pipeline: &str) -> rpmx_core::Plan {
     let yaml = format!(
         r#"
-schema: 1
+schema: 2
 package:
   name: demo
   version: "1.0"
@@ -86,7 +86,7 @@ fn go_build_can_disable_cgo() {
 #[test]
 fn build_environment_is_applied_to_steps() {
     let yaml = r#"
-schema: 1
+schema: 2
 package:
   name: demo
   version: "1.0"
@@ -144,7 +144,7 @@ fn compiler_hardening_check_compiles_and_inspects_a_probe() {
     assert!(script.contains("cc=\"gcc-13\""), "{script}");
     assert!(script.contains("-fPIC -shared"), "{script}");
     assert!(script.contains("__stack_chk_fail"), "{script}");
-    assert!(script.contains("compiler_hardening_probe"), "{script}");
+    assert!(script.contains("compiler_hardening_entry"), "{script}");
     assert!(step.builtin);
 }
 

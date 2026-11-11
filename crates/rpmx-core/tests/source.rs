@@ -166,6 +166,7 @@ fn patches_are_applied_and_removed_from_the_workspace() {
     .expect("patch");
 
     let sandbox = Sandbox::new(SandboxConfig {
+        writable_root: false,
         runner: RunnerKind::Bwrap,
         host: rpmx_core::arch::Arch::current().expect("host arch"),
         exec: rpmx_core::arch::Arch::current().expect("exec arch"),

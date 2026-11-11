@@ -1,6 +1,13 @@
 # Examples
 
-Design artifacts, not tested builds.
+This directory contains runnable schema 2 recipes and historical design sketches.
+Runnable recipes were planner-validated after the execution lifecycle change;
+previous build results do not establish current acceptance coverage.
+
+`build-preferences/`, `curl/` and `libfoo/` are historical design proposals,
+not valid current recipes. They use placeholder sources and unsupported features.
+See [current recipes](../docs/usage/recipes.md) and
+[testing](../docs/usage/testing.md) for the supported interface.
 
 Most buildable examples name `../fedora-44-build.profile.yaml` in
 `build.root`, so they resolve their own build root without extra flags. The
@@ -13,11 +20,11 @@ rpmx build examples/jq/package.yaml
 | Example | Demonstrates |
 |---|---|
 | [`build-preferences/`](build-preferences/) | **Design review set.** Three sketches of how distros change preferences: distro-only, package override, and fork. Not buildable. |
-| [`curl/`](curl/) | A conventional C/CMake package with features, subpackages, typed actions, tests, OCI/HTTPS locators, and a side-by-side spec. |
+| [`curl/`](curl/) | **Historical design sketch; not runnable.** A conventional C/CMake package with features, subpackages, typed actions, tests, OCI/HTTPS locators, and a side-by-side spec. |
 | [`eternal-release/`](eternal-release/) | **Built.** A minimal fedora-release replacement with a `context:` directory: `/etc/os-release`, legacy release files, and `.repo` definitions. |
 | [`hello-go/`](hello-go/) | Go module acquisition through a proxy, `go mod vendor`, no hand-made tarball, offline SRPM rebuild. |
 | [`go-bump/`](go-bump/) | Targeted Go module bumps for CVE remediation, using omnibump in source assembly. |
-| [`libfoo/`](libfoo/) | Deterministic generated source in the source-assembly stage, included in the SRPM; generator/version recorded in the manifest. |
+| [`libfoo/`](libfoo/) | **Historical design sketch; not runnable.** Deterministic generated source in the source-assembly stage, included in the SRPM; generator/version recorded in the manifest. |
 | [`python-matrix/`](python-matrix/) | A matrix over Python 3.10–3.12: typed axis, per-cell build dependencies and outputs, one SRPM per cell, templated names. |
 | [`c-hello/`](c-hello/) | **Tested.** A generated C source built with the `make` step (gcc, `make check`, `make install`) and a staged symlink. |
 | [`c-hello-cross/`](c-hello-cross/) | **Tested.** Cross-compiles aarch64 on x86_64 with a native toolchain and a target sysroot; links zlib, and the checks reject a wrong-arch ELF or an unresolved soname. |

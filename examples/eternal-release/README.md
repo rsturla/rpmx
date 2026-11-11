@@ -44,7 +44,7 @@ flags:
 ./target/release/rpmx test examples/eternal-release/package.yaml
 ```
 
-The build-stage test checks the release identity and both repository files in
+The standalone candidate-payload test checks the release identity and both repository files in
 the staged source tree:
 
 ```console

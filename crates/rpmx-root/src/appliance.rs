@@ -64,6 +64,7 @@ impl Policy {
 pub const APPLIANCE_PACKAGES: &[&str] = &[
     "bash",
     "coreutils",
+    "dbus-broker",
     "dracut",
     "kmod",
     "kernel-core",
@@ -127,7 +128,7 @@ pub fn profile_from_lock(lock: &RootLock) -> Result<Profile> {
         dist_tag: lock.dist_tag.clone(),
         archs: lock.archs.clone(),
         builder: Builder {
-            image: Some(builder.image.clone()),
+            image: Some(builder.installer.reference().to_string()),
         },
         repositories: lock.repositories.clone(),
         packages: Packages {
@@ -238,7 +239,6 @@ pub fn ensure_cached(lock: &ApplianceLock, cache: &Path, offline: bool) -> Resul
             cache,
             work: work.path(),
             root: &root,
-            extra_rpms: &[],
         },
     )?;
     std::fs::write(&marker, &identity).map_err(|error| {
@@ -320,13 +320,15 @@ mod tests {
     fn package(name: &str, checksum: &str) -> LockedPackage {
         LockedPackage {
             name: name.to_string(),
-            repo_id: "fedora".to_string(),
+            origin: crate::root::PackageOrigin::Repository {
+                repository: "fedora".to_string(),
+                location: None,
+            },
             evr: "1-1.fc44".to_string(),
             checksum: checksum.to_string(),
             size: 1,
             srpm: None,
             module: None,
-            location: None,
         }
     }
 
@@ -335,7 +337,10 @@ mod tests {
         let mut packages = BTreeMap::new();
         packages.insert(
             "x86_64".to_string(),
-            vec![package("kernel-core", "sha512:aa")],
+            vec![package(
+                "kernel-core",
+                &format!("sha512:{}", "a".repeat(128)),
+            )],
         );
         let repositories = vec![repository()];
         let closure = closure_digest("44", &archs, &repositories, &packages);
@@ -345,8 +350,18 @@ mod tests {
             archs,
             releasever: "44".to_string(),
             builder: LockedBuilder {
-                image: "registry.fedoraproject.org/fedora:44".to_string(),
-                image_digest: "sha256:builder".to_string(),
+                resolver: crate::root::LockedImage::new(
+                    "registry.fedoraproject.org/fedora:44".to_string(),
+                    format!("sha256:{}", "a".repeat(64)),
+                    "x86_64",
+                )
+                .unwrap(),
+                installer: crate::root::LockedImage::new(
+                    "registry.fedoraproject.org/fedora:44".to_string(),
+                    format!("sha256:{}", "a".repeat(64)),
+                    "x86_64",
+                )
+                .unwrap(),
             },
             repositories,
             packages,
@@ -405,7 +420,7 @@ mod tests {
         // contract.
         assert_eq!(
             crate::root::APPLIANCE_SCHEMA,
-            1,
+            3,
             "changing the package list requires bumping APPLIANCE_SCHEMA"
         );
         assert_eq!(
@@ -413,6 +428,7 @@ mod tests {
             &[
                 "bash",
                 "coreutils",
+                "dbus-broker",
                 "dracut",
                 "kmod",
                 "kernel-core",
@@ -433,7 +449,10 @@ mod tests {
         lock.packages
             .get_mut("x86_64")
             .expect("packages")
-            .push(package("openssh-server", "sha512:bb"));
+            .push(package(
+                "openssh-server",
+                &format!("sha512:{}", "b".repeat(128)),
+            ));
         let error = lock.validate().expect_err("tampered closure");
         assert_eq!(error.code, "RPMX-ROOT-021");
         assert!(error.message.contains("closure digest"));
@@ -459,7 +478,12 @@ mod tests {
         assert_ne!(changed.identity(), identity);
 
         let mut changed = lock.clone();
-        changed.builder.image_digest = "sha256:other".to_string();
+        changed.builder.installer = crate::root::LockedImage::new(
+            "registry.fedoraproject.org/fedora:44".to_string(),
+            format!("sha256:{}", "b".repeat(64)),
+            "x86_64",
+        )
+        .unwrap();
         assert_ne!(changed.identity(), identity);
 
         let mut changed = lock.clone();
@@ -477,7 +501,9 @@ mod tests {
         assert_eq!(profile.paths.libdir, lock.libdir);
         assert_eq!(
             profile.builder.image.as_deref(),
-            lock.builder.as_ref().map(|builder| builder.image.as_str())
+            lock.builder
+                .as_ref()
+                .map(|builder| builder.installer.reference())
         );
         assert_eq!(profile.repositories.len(), lock.repositories.len());
     }

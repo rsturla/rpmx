@@ -5,7 +5,8 @@ use std::path::Path;
 use rpmx_core::error::codes;
 use rpmx_core::Error;
 
-use crate::commands::{autoroot, load_plan, resolve_policy, ExplainArgs, PolicyInput};
+use crate::commands::{load_plan, resolve_policy, ExplainArgs, PolicyInput};
+use rpmx_root::recipe as autoroot;
 
 pub fn run(args: ExplainArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
     let resolved = resolve_policy(PolicyInput {
@@ -56,10 +57,12 @@ pub fn run(args: ExplainArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> 
             "cells": plan.cells.iter().map(|cell| serde_json::json!({
                 "id": cell.id,
                 "steps": cell.pipeline.iter().map(step).collect::<Vec<_>>(),
+                "build_tests": cell.build_tests,
                 "tests": cell.tests.iter().map(|test| serde_json::json!({
                     "name": test.name,
                     "output": test.output,
-                    "stage": test.stage,
+                    "mode": test.mode,
+                    "network": test.network,
                     "packages": test.packages,
                     "environment": test.environment,
                     "steps": test.pipeline.iter().map(step).collect::<Vec<_>>(),

@@ -1,8 +1,9 @@
 use std::path::{Path, PathBuf};
 
-use rpmx_core::{load_recipe_bundle, plan_with_options, Error, Plan, PlanOptions, RecipeBundle};
+use rpmx_base::Error;
+use rpmx_language::{load_recipe_bundle, plan_with_options, Plan, PlanOptions, RecipeBundle};
 
-use crate::commands::PlanPolicy;
+use rpmx_language::plan::PlanPolicy;
 
 pub fn step_root(pipeline_dir: Option<&Path>, recipe: &Path) -> Option<PathBuf> {
     pipeline_dir
@@ -23,17 +24,12 @@ pub fn load_plan(
 ) -> Result<(RecipeBundle, Plan), Error> {
     let bundle = load_recipe_bundle(file)?;
     let root = step_root(pipeline_dir, &bundle.root);
-    // A named root profile carries the distribution tag even when the caller
-    // did not pass --profile. Leaking one short string per plan keeps
-    // `PlanPolicy` borrowed while making every command agree on the release.
-    let dist_tag = match policy.dist_tag {
-        Some(tag) => Some(tag),
-        None if discover_profile => {
-            crate::commands::autoroot::profile_dist_tag(&bundle.recipe, &bundle.root)?
-                .map(|tag| &*Box::leak(tag.into_boxed_str()))
-        }
-        None => None,
+    let discovered_tag = if policy.dist_tag.is_none() && discover_profile {
+        super::profile_dist_tag(&bundle.recipe, &bundle.root)?
+    } else {
+        None
     };
+    let dist_tag = policy.dist_tag.or(discovered_tag.as_deref());
     let plan = plan_with_options(
         &bundle.recipe,
         PlanOptions {
@@ -50,10 +46,10 @@ pub fn load_plan(
 #[cfg(test)]
 mod tests {
     use super::load_plan;
-    use crate::commands::PlanPolicy;
+    use rpmx_language::plan::PlanPolicy;
 
     const RECIPE: &str = r#"
-schema: 1
+schema: 2
 package:
   name: demo
   version: "1"

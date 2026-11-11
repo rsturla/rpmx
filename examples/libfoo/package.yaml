@@ -4,7 +4,10 @@
 # The generated files are part of the source snapshot and the SRPM; the build
 # does not run the generator. This file is illustrative and is not tested.
 
-schema: 1
+# HISTORICAL DESIGN PROPOSAL, not valid schema 2 input. Unsupported features
+# are retained only to explain the original design. See examples/README.md.
+
+schema: 2
 
 package:
   name: libfoo
@@ -35,6 +38,9 @@ build:
     - ninja
     - python3
   sysroot: []
+  tests:
+    - name: unit
+      argv: [meson, test, -C, build, --print-errorlogs]
 
 sources:
   - name: libfoo
@@ -81,11 +87,6 @@ outputs:
         - "libfoo = ${version}-${release}"
 
 tests:
-  - name: unit
-    stage: build
-    argv: [meson, test, -C, build, --print-errorlogs]
-
   - name: installed
-    stage: installed
     packages: [pkg-config]
     argv: [pkg-config, --modversion, foo]

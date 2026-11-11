@@ -1,5 +1,9 @@
 # QEMU transport appliance: separating the runner from the build root
 
+> Historical design record. Some schema and execution examples describe earlier
+> proposals. Use [current recipes](../usage/recipes.md) and
+> [testing](../usage/testing.md) for the supported schema 2 interface.
+
 Status: implemented, 2026-11-01. The lock, resolution, assembly, cache,
 `rpmx runner` prebuild/inspect command, `--runner-asset-root` overrides,
 two-disk boot and two-channel session are in place. A QEMU build and an offline

@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 
 use crate::profile::normalize_arch;
@@ -11,11 +11,6 @@ pub struct AssembleOptions<'a> {
     pub cache: &'a Path,
     pub work: &'a Path,
     pub root: &'a Path,
-    /// RPMs installed in the same transaction as the lock, from their own
-    /// files rather than the cache. A test root uses it for the packages under
-    /// test: they are not in any repository, and another locked package may
-    /// require a capability only they provide.
-    pub extra_rpms: &'a [PathBuf],
 }
 
 /// Install a locked closure into an empty root, offline, and verify that the
@@ -24,6 +19,8 @@ pub struct AssembleOptions<'a> {
 /// The root is left in `options.work/root`; the caller computes its digest and
 /// records it in the lock.
 pub fn assemble(lock: &RootLock, options: AssembleOptions<'_>) -> Result<std::path::PathBuf> {
+    lock.validate()?;
+    verify_payloads(lock, options.cache)?;
     let lock_arch = lock
         .archs
         .first()
@@ -34,7 +31,17 @@ pub fn assemble(lock: &RootLock, options: AssembleOptions<'_>) -> Result<std::pa
             "this lock has no builder image, so it cannot be assembled",
         )
     })?;
-    let image = ensure_locked_image(&builder.image, &builder.image_digest, lock_arch)?;
+    if builder.installer.architecture() != lock_arch {
+        return Err(Error::new(
+            codes::ROOT_015,
+            "installer image platform differs from root target",
+        ));
+    }
+    let image = ensure_locked_image(
+        builder.installer.reference(),
+        builder.installer.digest(),
+        lock_arch,
+    )?;
     let arch = lock
         .archs
         .first()
@@ -56,7 +63,6 @@ pub fn assemble(lock: &RootLock, options: AssembleOptions<'_>) -> Result<std::pa
     let rpms = options.work.join("rpms");
 
     let mut files = Vec::new();
-    let mut staged_closure = Vec::new();
     for (package_arch, entries) in &lock.packages {
         for package in entries {
             if !safe_staging_component(package_arch)
@@ -84,54 +90,10 @@ pub fn assemble(lock: &RootLock, options: AssembleOptions<'_>) -> Result<std::pa
                 "{}-{}.{package_arch}",
                 package.name, package.evr
             ));
-            staged_closure.push(rpms.join(&filename));
             files.push(format!("/work/rpms/{filename}"));
         }
     }
-    let locked_files = files.clone();
-    let mut extra_files = Vec::new();
-    let mut staged_extras = Vec::new();
-    let mut extra_keys = Vec::new();
-    for rpm in options.extra_rpms {
-        let metadata = rpmx_payload::metadata::package_metadata(rpm)?;
-        let filename = format!(
-            "{}-{}.{}.rpm",
-            metadata.name,
-            metadata.evr().replace(':', "_"),
-            metadata.arch
-        );
-        if !safe_staging_component(&metadata.name)
-            || !safe_staging_component(&metadata.evr())
-            || !safe_staging_component(&metadata.arch)
-        {
-            return Err(Error::new(
-                codes::ROOT_012,
-                format!("cannot stage {}: unsafe package name", rpm.display()),
-            ));
-        }
-        std::fs::copy(rpm, rpms.join(&filename)).map_err(|error| {
-            Error::new(
-                codes::ROOT_012,
-                format!("cannot stage {}: {error}", rpm.display()),
-            )
-        })?;
-        rpmx_base::output::installing(format!(
-            "{}-{}.{}",
-            metadata.name,
-            metadata.evr(),
-            metadata.arch
-        ));
-        staged_extras.push(rpms.join(&filename));
-        extra_files.push(format!("/work/rpms/{filename}"));
-        extra_keys.push((
-            metadata.name.clone(),
-            metadata.epoch,
-            metadata.version.clone(),
-            metadata.release.clone(),
-            metadata.arch.clone(),
-        ));
-    }
-    if locked_files.is_empty() {
+    if files.is_empty() {
         return Err(Error::new(
             codes::ROOT_015,
             "the lock contains no packages to install",
@@ -160,98 +122,36 @@ pub fn assemble(lock: &RootLock, options: AssembleOptions<'_>) -> Result<std::pa
     }
     args.push(format!("--setopt=tsflags={}", tsflags.join(",")));
     args.push("install".to_string());
-    let base = args;
-    let locked = locked_files;
-
-    let run = |args: &[String]| -> Result<std::process::Output> {
-        podman_run_assembly(&image, options.work, options.root, target, args)
-    };
-    let combined = |erase: bool, files: &[String]| -> Vec<String> {
-        let mut args = base.clone();
-        if erase {
-            // dnf5 only takes the option after the command.
-            let command = args
-                .iter()
-                .position(|argument| argument == "install")
-                .expect("the install command is part of the arguments");
-            args.insert(command + 1, "--allowerasing".to_string());
-        }
-        args.extend(files.iter().cloned());
-        args
-    };
-    let all_files = {
-        let mut files = locked.clone();
-        files.extend(extra_files.iter().cloned());
-        files
-    };
-
-    let install_extras = |nodeps: bool| -> Result<std::process::Output> {
-        crate::root::container::run_offline_root(crate::root::container::OfflineRootCommand {
-            root: options.root,
-            image: &image,
-            target,
-            nodeps,
-            mode: crate::root::container::OfflineRootMode::Install {
-                rpms: options.extra_rpms,
-            },
-        })
-    };
-
-    // The lock is the distribution's own closure, so it installs first. The
-    // packages under test come next, replacing files where the distribution
-    // splits the same library differently. A package under test may also
-    // replace what the lock holds outright; rpm reports that as a conflict and
-    // the retry installs the packages under test without dependency checking.
-    let mut replaced = false;
-    let mut output = run(&combined(false, &locked))?;
-    if output.status.success() && !extra_files.is_empty() {
-        output = install_extras(false)?;
-        if !output.status.success()
-            && is_replacement_conflict(&String::from_utf8_lossy(&output.stderr))
-        {
-            replaced = true;
-            output = install_extras(true)?;
-        }
-    }
-    if !output.status.success() {
-        // The closure alone did not install, because one of its packages needs
-        // a capability only the build provides. Install everything in one
-        // transaction, erasing what the packages under test replace.
-        rpmx_base::output::warning(
-            "test-root",
-            "the packages under test fill a gap in the test root or replace \
-             what it already has; installing both in one transaction",
-        );
-        reset_root(options.root)?;
-        output = run(&combined(true, &all_files))?;
-        replaced = true;
-    }
-    if !output.status.success() && !extra_files.is_empty() {
-        // A file that both the distribution's package and the package under
-        // test ship cannot be resolved by erasing: the distribution's package
-        // stays required. Install everything with rpm instead, which replaces
-        // the file the way an upgrade does, and skip dependency checking,
-        // because the packages under test are the only providers of some of
-        // what the closure requires.
-        reset_root(options.root)?;
-        let mut staged = staged_closure.clone();
-        staged.extend(staged_extras.iter().cloned());
-        output =
-            crate::root::container::run_offline_root(crate::root::container::OfflineRootCommand {
-                root: options.root,
-                image: &image,
-                target,
-                nodeps: true,
-                mode: crate::root::container::OfflineRootMode::Install { rpms: &staged },
-            })?;
-        replaced = true;
-    }
+    args.extend(files);
+    let output = podman_run_assembly(&image, options.work, options.root, target, &args)?;
     if !output.status.success() {
         return Err(offline_failure(&output));
     }
-
-    verify_installed(lock, options.root, &image, target, &extra_keys, replaced)?;
+    verify_installed(lock, options.root, &image, target)?;
     Ok(options.root.to_path_buf())
+}
+
+fn verify_payloads(lock: &RootLock, cache: &Path) -> Result<()> {
+    for (arch, packages) in &lock.packages {
+        for package in packages {
+            cas::load(cache, &package.checksum)?;
+            let metadata =
+                rpmx_payload::metadata::package_metadata(&cas::path(cache, &package.checksum)?)?;
+            if metadata.name != package.name
+                || metadata.evr() != package.evr
+                || metadata.arch != *arch
+            {
+                return Err(Error::new(
+                    codes::ROOT_012,
+                    format!(
+                        "locked identity does not match RPM payload {}",
+                        package.checksum
+                    ),
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Unpack a locked closure into a link-time sysroot.
@@ -265,6 +165,8 @@ pub fn assemble_sysroot(
     lock: &RootLock,
     options: AssembleOptions<'_>,
 ) -> Result<std::path::PathBuf> {
+    lock.validate()?;
+    verify_payloads(lock, options.cache)?;
     prepare_assembly(options.work, options.root)?;
     let rpms = options.work.join("rpms");
     std::fs::create_dir_all(options.root).map_err(|error| {
@@ -441,19 +343,8 @@ pub(crate) fn verify_installed(
     root: &Path,
     image: &str,
     target: rpmx_base::arch::Arch,
-    extra_keys: &[(String, u32, String, String, String)],
-    allow_missing: bool,
 ) -> Result<()> {
     let mut expected = std::collections::BTreeSet::new();
-    for (name, epoch, version, release, arch) in extra_keys {
-        expected.insert(PackageKey::new(
-            name,
-            &epoch.to_string(),
-            version,
-            release,
-            arch,
-        ));
-    }
     for (package_arch, entries) in &lock.packages {
         for package in entries {
             let (epoch, version, release) = evr_parts(&package.evr)?;
@@ -467,13 +358,7 @@ pub(crate) fn verify_installed(
         }
     }
 
-    let output = super::container::run_offline_root(super::container::OfflineRootCommand {
-        root,
-        image,
-        target,
-        nodeps: false,
-        mode: super::container::OfflineRootMode::Query,
-    })?;
+    let output = super::container::query_root(root, image, target)?;
     if !output.status.success() {
         return Err(Error::new(
             codes::ROOT_013,
@@ -495,9 +380,6 @@ pub(crate) fn verify_installed(
         ));
     }
 
-    if allow_missing && expected.is_subset(&installed) {
-        return Ok(());
-    }
     if installed != expected {
         let missing = expected
             .difference(&installed)
@@ -572,20 +454,6 @@ fn evr_parts(evr: &str) -> Result<(String, String, String)> {
     Ok((epoch.to_string(), version.to_string(), release.to_string()))
 }
 
-/// Whether an install failure is a replacement conflict rather than a missing
-/// requirement.
-///
-/// A package under test may deliberately replace what the test root already
-/// has, for example a package that provides the same library as the
-/// distribution's default implementation. A genuine missing requirement must
-/// stay an error, so a failure that mentions one never takes the retry.
-fn is_replacement_conflict(stderr: &str) -> bool {
-    let conflict = stderr.contains("conflicts with")
-        || stderr.contains("conflicts between attempted installs");
-    let missing = stderr.contains("is needed by") || stderr.contains("Requires:");
-    conflict && !missing
-}
-
 /// Report a failed offline install with the tail of what dnf or rpm said.
 fn offline_failure(output: &std::process::Output) -> Error {
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -599,14 +467,6 @@ fn offline_failure(output: &std::process::Output) -> Error {
         .collect::<Vec<_>>()
         .join("\n");
     Error::new(codes::ROOT_012, format!("offline install failed:\n{tail}"))
-}
-
-/// Start the transaction from an empty root again.
-///
-/// The staged RPMs stay in the work directory: only the root is discarded.
-fn reset_root(root: &Path) -> Result<()> {
-    remove_tree(root)?;
-    prepare_root_dir(root)
 }
 
 /// Create the empty root and the directories a first transaction needs.
@@ -633,29 +493,33 @@ fn prepare_root_dir(root: &Path) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::is_replacement_conflict;
+    use super::*;
 
     #[test]
-    fn a_replacement_conflict_takes_the_retry_but_a_missing_requirement_does_not() {
-        // The zlib example: the test root's gcc pulls zlib-ng-compat, which
-        // the package under test replaces.
-        assert!(is_replacement_conflict(
-            "error: Failed dependencies:\n\
-             \tzlib(x86-64) conflicts with (installed) zlib-ng-compat-2.3.3-3.fc44.x86_64"
-        ));
-
-        assert!(!is_replacement_conflict(
-            "error: Failed dependencies:\n\
-             \tlibc.so.6()(64bit) is needed by zlib-1.3.1-1.fc44.x86_64"
-        ));
-
-        // Both in one report: the missing dependency is the real problem.
-        assert!(!is_replacement_conflict(
-            "error: Failed dependencies:\n\
-             \tzlib(x86-64) conflicts with (installed) zlib-ng-compat\n\
-             \tlibc.so.6()(64bit) is needed by zlib-1.3.1-1.fc44.x86_64"
-        ));
-
-        assert!(!is_replacement_conflict(""));
+    fn missing_corrupt_and_substituted_payloads_fail_before_container_startup() {
+        let work = tempfile::tempdir().unwrap();
+        let cache = work.path().join("cas");
+        let original =
+            super::super::candidate::tests::rpm(work.path(), "fixture", "1", "noarch", None);
+        let candidates = super::super::CandidateSet::import(&cache, &[original]).unwrap();
+        let mut lock = super::super::lock::model_tests::candidate_lock(&candidates.packages()[0]);
+        let payload = cas::path(&cache, candidates.packages()[0].checksum()).unwrap();
+        let original = std::fs::read(&payload).unwrap();
+        std::fs::remove_file(&payload).unwrap();
+        assert!(verify_payloads(&lock, &cache)
+            .unwrap_err()
+            .message
+            .contains("not in the cache"));
+        std::fs::write(&payload, b"corrupt").unwrap();
+        assert!(verify_payloads(&lock, &cache)
+            .unwrap_err()
+            .message
+            .contains("corrupt"));
+        std::fs::write(&payload, original).unwrap();
+        lock.packages.get_mut("noarch").unwrap()[0].name = "substituted".to_string();
+        assert!(verify_payloads(&lock, &cache)
+            .unwrap_err()
+            .message
+            .contains("identity does not match"));
     }
 }

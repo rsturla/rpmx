@@ -9,7 +9,7 @@
 # This file builds with the current prototype. The installed test requires a
 # test root; the package content is checked by the build and by `rpm -qpl`.
 
-schema: 1
+schema: 2
 
 package:
   name: eternal-release
@@ -90,19 +90,6 @@ outputs:
 
 tests:
   - name: release-files
-    stage: build
-    argv:
-      - sh
-      - -c
-      - |
-        grep -q '^ID=eternal$' os-release
-        grep -q '^VERSION_ID="1"$' os-release
-        grep -q '^PRETTY_NAME="Eternal Linux 1"$' os-release
-        test -f system-release
-        test -f redhat-release
-        test -f eternal.repo
-        test -f eternal-updates.repo
-        grep -q 'baseurl=https://repo.eternal.example.org/eternal/$releasever/$basearch' \
-            eternal.repo
-        grep -q 'baseurl=https://repo.eternal.example.org/eternal/updates/$releasever/$basearch' \
-            eternal-updates.repo
+    script: "payload=\"$TEST_PACKAGE_ROOT\"\ngrep -Fx 'ID=eternal' \"$payload/etc/os-release\"\ngrep -Fx 'VERSION_ID=\"1\"' \"$payload/etc/os-release\"\ngrep -Fx 'PRETTY_NAME=\"Eternal Linux 1\"' \"$payload/etc/os-release\"\ntest -f \"$payload/etc/system-release\"\ntest -f \"$payload/etc/redhat-release\"\ngrep -F 'baseurl=https://repo.eternal.example.org/eternal/$releasever/$basearch' \"$payload/etc/yum.repos.d/eternal.repo\"\ngrep -F 'baseurl=https://repo.eternal.example.org/eternal/updates/$releasever/$basearch' \"$payload/etc/yum.repos.d/eternal-updates.repo\"\n"
+    packages:
+      - grep
