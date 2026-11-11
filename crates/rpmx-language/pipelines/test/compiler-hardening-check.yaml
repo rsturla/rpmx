@@ -36,39 +36,40 @@ run:
     }
 
     check_common() {
+      # Consume readelf output completely so strict pipelines do not see SIGPIPE.
       file=$1
       type=$(readelf -h "$file" | sed -n 's/^[[:space:]]*Type:[[:space:]]*//p')
       case "$type" in
         *DYN*) ;;
         *) fail "$file is not position-independent ($type)" ;;
       esac
-      if ! readelf -lW "$file" | grep -q 'GNU_STACK'; then
+      if ! readelf -lW "$file" | grep 'GNU_STACK' >/dev/null; then
         fail "$file has no GNU_STACK program header"
-      elif readelf -lW "$file" | grep -q 'GNU_STACK.*RWE'; then
+      elif readelf -lW "$file" | grep 'GNU_STACK.*RWE' >/dev/null; then
         fail "$file has an executable stack"
       fi
-      if ! readelf -lW "$file" | grep -q 'GNU_RELRO'; then
+      if ! readelf -lW "$file" | grep 'GNU_RELRO' >/dev/null; then
         fail "$file has no GNU_RELRO segment"
       fi
-      if ! readelf -dW "$file" | grep -Eq 'BIND_NOW|FLAGS(_1)?[^:]*NOW'; then
+      if ! readelf -dW "$file" | grep -E 'BIND_NOW|FLAGS(_1)?[^:]*NOW' >/dev/null; then
         fail "$file is not linked with BIND_NOW"
       fi
       case "$RPMX_TARGET_ARCH" in
         x86_64)
-          if ! readelf -nW "$file" | grep -q 'IBT'; then
+          if ! readelf -nW "$file" | grep 'IBT' >/dev/null; then
             fail "$file has no x86 IBT property"
           fi
-          if ! readelf -nW "$file" | grep -q 'SHSTK'; then
+          if ! readelf -nW "$file" | grep 'SHSTK' >/dev/null; then
             fail "$file has no x86 SHSTK property"
           fi
           ;;
         aarch64)
-          if ! readelf -nW "$file" | grep -q 'BTI'; then
+          if ! readelf -nW "$file" | grep 'BTI' >/dev/null; then
             fail "$file has no aarch64 BTI property"
           fi
           ;;
       esac
-      if ! readelf -nW "$file" | grep -q 'Build ID:'; then
+      if ! readelf -nW "$file" | grep 'Build ID:' >/dev/null; then
         fail "$file has no build ID note"
       fi
     }
@@ -77,10 +78,10 @@ run:
     # strcpy call make both the stack protector and fortify observable.
     $cc $CFLAGS -O2 -o hello hello.c $LDFLAGS
     check_common hello
-    if ! readelf -sW hello | grep -q '__stack_chk_fail'; then
+    if ! readelf -sW hello | grep '__stack_chk_fail' >/dev/null; then
       fail "hello has no stack-protector reference"
     fi
-    if ! readelf -sW hello | grep -Eq '__[[:alnum:]_]+_chk(@|$)'; then
+    if ! readelf -sW hello | grep -E '__[[:alnum:]_]+_chk(@|$)' >/dev/null; then
       fail "hello has no fortified libc reference"
     fi
 
