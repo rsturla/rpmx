@@ -54,6 +54,13 @@ run:
       if ! readelf -dW "$file" | grep -E 'BIND_NOW|FLAGS(_1)?[^:]*NOW' >/dev/null; then
         fail "$file is not linked with BIND_NOW"
       fi
+      if ! readelf -nW "$file" | grep 'Build ID:' >/dev/null; then
+        fail "$file has no build ID note"
+      fi
+    }
+
+    check_branch_protection() {
+      file=$1
       case "$RPMX_TARGET_ARCH" in
         x86_64)
           if ! readelf -nW "$file" | grep 'IBT' >/dev/null; then
@@ -67,17 +74,21 @@ run:
           if ! readelf -nW "$file" | grep 'BTI' >/dev/null; then
             fail "$file has no aarch64 BTI property"
           fi
+          if ! readelf -nW "$file" | grep -E '(^|[[:space:],])PAC([[:space:],]|$)' >/dev/null; then
+            fail "$file has no aarch64 PAC property"
+          fi
           ;;
       esac
-      if ! readelf -nW "$file" | grep 'Build ID:' >/dev/null; then
-        fail "$file has no build ID note"
-      fi
     }
 
     # The wrapper must harden a normal executable. The stack buffer and the
     # strcpy call make both the stack protector and fortify observable.
     $cc $CFLAGS -O2 -o hello hello.c $LDFLAGS
     check_common hello
+    hello_output=$(./hello)
+    if [ "$hello_output" != hardening ]; then
+      fail "hello returned unexpected output"
+    fi
     if ! readelf -sW hello | grep '__stack_chk_fail' >/dev/null; then
       fail "hello has no stack-protector reference"
     fi
@@ -87,9 +98,31 @@ run:
 
     # A shared library must still link. This catches an unconditional -pie in
     # LDFLAGS, which turns a -shared link into an executable link.
-    printf 'int compiler_hardening_probe;\n' > shared.c
-    $cc $CFLAGS -fPIC -shared -o libprobe.so shared.c $LDFLAGS
+    cat > branch.c <<'EOF'
+    __attribute__((noinline)) int compiler_hardening_callee(int value) {
+        return value + 1;
+    }
+    int compiler_hardening_entry(int value) {
+        volatile int result = compiler_hardening_callee(value);
+        return result + 1;
+    }
+    EOF
+    $cc $CFLAGS -fPIC -shared -o libprobe.so branch.c $LDFLAGS
     check_common libprobe.so
+
+    # Branch-protection notes merge all relocatable inputs, including CRT
+    # objects supplied by compiler/libc dependencies. Test this wrapper's code
+    # in both final link modes without those startup objects. GCC/package tests
+    # must check their own CRT protection separately. The non-leaf call prevents
+    # return-signing coverage from being optimized into a leaf or tail call.
+    $cc $CFLAGS -O2 -nostartfiles -Wl,-e,compiler_hardening_entry -o branch-probe branch.c $LDFLAGS
+    $cc $CFLAGS -O2 -fPIC -shared -nostartfiles -o libbranch-probe.so branch.c $LDFLAGS
+    for file in branch-probe libbranch-probe.so; do
+      check_common "$file"
+      check_branch_protection "$file"
+    done
+    # The custom ELF entry is for inspection only, not a process-startup ABI.
+    # Execute the ordinary hello above to verify its real libc/startup closure.
 
     if [ "$failures" -ne 0 ]; then
       echo "compiler-hardening-check: $failures failure(s) for $cc" >&2

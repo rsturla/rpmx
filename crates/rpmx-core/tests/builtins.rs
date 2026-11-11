@@ -144,7 +144,7 @@ fn compiler_hardening_check_compiles_and_inspects_a_probe() {
     assert!(script.contains("cc=\"gcc-13\""), "{script}");
     assert!(script.contains("-fPIC -shared"), "{script}");
     assert!(script.contains("__stack_chk_fail"), "{script}");
-    assert!(script.contains("compiler_hardening_probe"), "{script}");
+    assert!(script.contains("compiler_hardening_entry"), "{script}");
     assert!(step.builtin);
 }
 

@@ -823,8 +823,9 @@ language runtimes may legitimately need a skip, and a noarch package has no ELF
 to check.
 
 `test/compiler-hardening-check` is the companion for a package that supplies a
-compiler wrapper or spec. It compiles an executable and a shared object through
-the configured `cc`, then checks the resulting ELF properties:
+compiler wrapper or spec. It builds an ordinary executable and shared object
+through the configured `cc`, checks their linker protections, and runs the
+executable to verify its output and exit status:
 
 ```yaml
 tests:
@@ -843,6 +844,15 @@ The step does not add a default compiler that could conflict with the selected s
 The shared-object step matters: a wrapper that appends `-pie` to every link
 will fail a `-shared` link, while a wrapper that reads the link mode from a GCC
 spec can add `-pie` only to executables.
+
+The step also links an executable and shared library without startup objects.
+Both contain callable, non-leaf code from the wrapper under test and must carry
+the final ELF branch-protection properties: BTI and PAC on AArch64, or IBT and
+SHSTK on x86-64. The custom-entry executable is inspected, not run. This separates
+the wrapper's code-generation policy from compiler and libc startup dependencies,
+whose CRT objects can otherwise remove branch-protection notes during linking.
+Compiler and libc packages must test their own startup objects separately.
+
 - `tests[].packages` lists tools for the test. Build-stage packages join the
   build root, including the host root in cross builds. Installed-stage packages
   join only the disposable test root. Reusable test steps add their declared
