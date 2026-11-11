@@ -122,6 +122,7 @@ pub fn assemble_fetched(
     let host_arch = rpmx_base::arch::Arch::current()?;
     let target_arch = rpmx_base::arch::Arch::parse(&options.plan.arch)?;
     let sandbox = Sandbox::new(SandboxConfig {
+        writable_root: false,
         runner: options.runner.parse::<RunnerKind>()?,
         host: host_arch,
         exec: options.exec,

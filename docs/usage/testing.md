@@ -2,6 +2,56 @@
 
 ## Tests
 
+### Package transactions
+
+Use `stage: transaction` for tests that change the installed package set:
+
+```yaml
+tests:
+  - name: reinstall
+    stage: transaction
+    script: |
+      rpm -q example
+      rpm -e example
+      if rpm -q example; then exit 1; fi
+      rpm -i "$TEST_RPMS"/example-*.rpm
+      example --version
+```
+
+rpmx prepares the package root as for installed tests. The built outputs start installed.
+Each transaction test gets a private writable copy, with an independent RPM database.
+Bubblewrap runs transaction commands as root inside its user namespace.
+The prepared root and other tests retain their original files and package state.
+rpmx adds the `rpm` tool to the test dependencies.
+
+`TEST_RPMS` points to copies of the supplied build outputs inside the test workspace.
+Installed tests can also inspect these RPM files when they are available.
+Use pinned previous-version RPMs in `files` to establish an upgrade baseline.
+Then change a configuration file, install the new RPM and assert the preserved value.
+Check `.rpmnew`, `.rpmsave` and scriptlet effects where the package requires them.
+Declare any additional tools used by these checks in `packages`.
+
+For a saved root, supply the RPM directory with the root:
+
+```console
+rpmx test package.yaml --test-root ./test-root --install-dir ./rpms --test reinstall
+```
+
+The saved root supplies the baseline. This command does not install the supplied RPMs before the test.
+Transaction tests reject the host root `/` and require supplied RPM files.
+`--skip-installed` skips both installed and transaction tests.
+Root copies use host `unshare` and GNU `cp`, with reflinks where the filesystem supports them.
+
+The lifecycle regression test builds two RPM versions and checks install, upgrade, configuration preservation and erase:
+
+```console
+RPMX_TRANSACTION_TEST_ROOT=/path/to/root \
+RPMX_TRANSACTION_TEST_LOCK=/path/to/root.lock.yaml \
+cargo test -p rpmx --test transactions -- --ignored
+```
+
+Use a native prepared root that contains Bash, coreutils and RPM.
+
 ### Results and failure artifacts
 
 `rpmx build` keeps test logs under its output directory in `test-results/`.

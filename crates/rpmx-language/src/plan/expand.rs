@@ -390,7 +390,7 @@ pub(crate) fn expand_tests(
         let argv = super::test_command::command(&test).map_err(|error| error.at(&at))?;
         let name = test.name;
         let packages = expand_values(&test.packages, scope, &format!("{path}[{index}].packages"))?;
-        if !matches!(test.stage.as_str(), "build" | "installed") {
+        if !matches!(test.stage.as_str(), "build" | "installed" | "transaction") {
             return Err(Error::new(
                 codes::TEST_004,
                 format!("test '{name}' uses unsupported stage '{}'", test.stage),
@@ -448,7 +448,12 @@ pub(crate) fn expand_tests(
                 }
             }
         }
-        if planned_test.stage == "installed" {
+        if planned_test.stage == "transaction"
+            && !planned_test.packages.iter().any(|package| package == "rpm")
+        {
+            planned_test.packages.push("rpm".into());
+        }
+        if planned_test.stage != "build" {
             for dependency in planned_test.pipeline.iter().flat_map(|step| &step.needs) {
                 if !planned_test.packages.contains(dependency) {
                     planned_test.packages.push(dependency.clone());

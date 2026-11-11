@@ -107,6 +107,7 @@ pub const RUNNER_DESCRIPTORS: &[RunnerDescriptor] = &[
 /// source date and debuginfo stay in `SandboxConfig`; the runner never sees
 /// them.
 pub struct RunnerConfig<'a> {
+    pub writable_root: bool,
     /// The machine rpmx runs on.
     pub host: Arch,
     /// The architecture the steps execute as. It differs from `target` for a

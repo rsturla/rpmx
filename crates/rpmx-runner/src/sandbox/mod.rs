@@ -31,6 +31,8 @@ const RESERVED_ENV: &[&str] = &[
 /// use, where the build root comes from, and the deterministic policy fields.
 #[derive(Clone, Copy)]
 pub struct SandboxConfig<'a> {
+    /// Permit package transactions only in a private test root.
+    pub writable_root: bool,
     pub runner: RunnerKind,
     /// The machine rpmx runs on.
     pub host: Arch,
@@ -61,6 +63,7 @@ pub struct SandboxConfig<'a> {
 impl<'a> SandboxConfig<'a> {
     fn runner_config(&self) -> RunnerConfig<'a> {
         RunnerConfig {
+            writable_root: self.writable_root,
             host: self.host,
             exec: self.exec,
             target: self.target,
@@ -630,6 +633,7 @@ mod tests {
         toolchain.cxxflags = vec!["-mcxx".to_string()];
         toolchain.ldflags = vec!["-Wl,-z,now".to_string()];
         let config = SandboxConfig {
+            writable_root: false,
             runner: RunnerKind::Auto,
             host: Arch::X86_64,
             exec: Arch::X86_64,
@@ -683,6 +687,7 @@ mod tests {
         let toolchain = CrossToolchain::new("aarch64-linux-gnu");
         let workspace = tempfile::tempdir().expect("workspace");
         let config = SandboxConfig {
+            writable_root: false,
             runner: RunnerKind::Auto,
             host: Arch::X86_64,
             exec: Arch::X86_64,
@@ -724,6 +729,7 @@ mod tests {
     #[test]
     fn a_root_and_an_image_cannot_both_be_configured() {
         let config = SandboxConfig {
+            writable_root: false,
             runner: RunnerKind::Auto,
             host: Arch::X86_64,
             exec: Arch::X86_64,

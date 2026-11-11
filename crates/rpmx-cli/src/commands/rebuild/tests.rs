@@ -62,7 +62,7 @@ fn run_inner(options: TestRunOptions<'_>) -> Result<Vec<PathBuf>, Error> {
         .cell
         .tests
         .iter()
-        .filter(|test| !options.skip_installed || test.stage != "installed")
+        .filter(|test| !options.skip_installed || test.stage == "build")
         .cloned()
         .collect();
     let tests = filter_tests(&candidates, options.filter)?;
@@ -136,6 +136,7 @@ fn run_inner(options: TestRunOptions<'_>) -> Result<Vec<PathBuf>, Error> {
         stage: options.stage,
         fixture_root: options.fixture_root,
         results: &options.output.join("test-results"),
+        rpms: options.written,
         host_arch: rpmx_core::arch::Arch::current()?,
         target_arch: rpmx_core::arch::Arch::parse(options.arch)?,
         runner: options.runner,
@@ -148,7 +149,7 @@ fn run_inner(options: TestRunOptions<'_>) -> Result<Vec<PathBuf>, Error> {
     };
     let mut outcomes = Vec::new();
     for test in &tests {
-        let test_root = if test.stage == "installed" {
+        let test_root = if test.stage != "build" {
             roots.get(&key_for(test)).map(|root| root.path.as_path())
         } else {
             None
@@ -161,6 +162,9 @@ fn run_inner(options: TestRunOptions<'_>) -> Result<Vec<PathBuf>, Error> {
             settings,
         );
         let error = result.as_ref().err().map(|error| error.message.clone());
+        if let Err(error) = &result {
+            eprintln!("rpmx: {}: {}", test.qualified_name(), error);
+        }
         eprintln!(
             "rpmx: test {} ({}): {} ({:.1}s)",
             test.qualified_name(),

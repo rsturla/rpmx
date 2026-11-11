@@ -207,6 +207,7 @@ pub fn execute(request: RebuildRequest<'_>) -> Result<RebuildOutput, Error> {
         );
     }
     let sandbox = Sandbox::new(SandboxConfig {
+        writable_root: false,
         runner: runner_kind,
         host: host_arch,
         exec,

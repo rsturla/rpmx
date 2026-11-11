@@ -124,6 +124,7 @@ pub fn run(args: ShellArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
     bwrap.args(["--chdir", rpmx_core::guest::BUILD]);
     // The same environment a build step gets, not a hand-copied subset.
     let config = rpmx_core::sandbox::SandboxConfig {
+        writable_root: false,
         runner: rpmx_core::runner::RunnerKind::Auto,
         host: rpmx_core::Arch::current()?,
         exec: rpmx_core::Arch::parse(&arch)?,

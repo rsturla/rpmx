@@ -440,6 +440,7 @@ mod tests {
     #[test]
     fn a_missing_appliance_is_a_runner_error() {
         let config = RunnerConfig {
+            writable_root: false,
             host: Arch::X86_64,
             exec: Arch::X86_64,
             target: Arch::X86_64,
