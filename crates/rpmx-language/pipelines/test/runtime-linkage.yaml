@@ -1,0 +1,62 @@
+name: test/runtime-linkage
+version: 1
+summary: Resolve installed shared libraries in their runtime dependency closure
+inputs:
+  libraries:
+    type: list<string>
+    required: true
+needs:
+  packages: [bash, coreutils]
+run:
+  env:
+    RPMX_TEST_LIBRARY_PATTERNS: "${inputs.libraries}"
+  runs: |
+    set -eu
+    library_dir="${libdir}"
+    loader=
+    for candidate in /lib*/ld-linux-*.so.*; do
+      if [ -x "$candidate" ]; then
+        loader=$candidate
+        break
+      fi
+    done
+    if [ -z "$loader" ]; then
+      echo 'runtime-linkage: no installed ELF loader found' >&2
+      exit 1
+    fi
+
+    # Input values are SONAME basenames, separated without expanding their globs.
+    set -f
+    # shellcheck disable=SC2086
+    set -- $RPMX_TEST_LIBRARY_PATTERNS
+    set +f
+    if [ "$#" -eq 0 ]; then
+      echo 'runtime-linkage: libraries must contain at least one SONAME pattern' >&2
+      exit 1
+    fi
+    for pattern do
+      case "$pattern" in
+        */*)
+          echo "runtime-linkage: expected a SONAME basename, got '$pattern'" >&2
+          exit 1
+          ;;
+      esac
+      found=0
+      # Expand each basename only inside the configured library directory.
+      # shellcheck disable=SC2086
+      for library in "$library_dir"/$pattern; do
+        [ -f "$library" ] || continue
+        magic=$(head -c 4 -- "$library")
+        [ "$magic" = "$(printf '\177ELF')" ] || continue
+        echo "runtime-linkage: checking $library"
+        if ! "$loader" --list "$library"; then
+          echo "runtime-linkage: cannot resolve dependencies of $library" >&2
+          exit 1
+        fi
+        found=$((found + 1))
+      done
+      if [ "$found" -eq 0 ]; then
+        echo "runtime-linkage: no ELF shared library matches '$pattern' in $library_dir" >&2
+        exit 1
+      fi
+    done

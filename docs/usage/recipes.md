@@ -558,6 +558,11 @@ license files into `$STAGE$PREFIX/share/licenses/<output>/` for each output, so
 a split package does not duplicate the loop or accidentally share one path.
 `test/hardening-check` checks the staged ELF files for PIE, NX, RELRO,
 BIND_NOW, stack protector, fortify, CFI/branch protection and build IDs.
+`test/runtime-linkage` checks installed shared libraries with the installed ELF
+loader. Its required `libraries` input lists SONAME basename patterns in the
+profile's library directory. Each pattern must match an ELF library whose
+shared dependencies resolve. See [runtime library linkage](testing.md#runtime-library-linkage)
+for an output-scoped example.
 
 A named local step is a YAML file under `pipelines/`:
 
