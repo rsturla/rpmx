@@ -708,7 +708,12 @@ fn looks_like_auth_failure(text: &str) -> bool {
         "unauthorized",
         "forbidden",
         "authentication",
-        "certificate",
+        "certificate verify failed",
+        "certificate verification",
+        "certificate has expired",
+        "ssl certificate problem",
+        "ssl peer certificate",
+        "peer certificate cannot be authenticated",
         "entitlement",
         "login expired",
     ]
@@ -787,7 +792,23 @@ fn repository_failure(context: &str, stderr: &str, secrets: &[String]) -> Error 
         .rev()
         .collect::<Vec<_>>()
         .join("\n");
-    Error::new(code, format!("{context}:\n{}", redact(&tail, secrets)))
+    // DNF emits a line for every interrupted download after the actual error.
+    // Keep the earlier download diagnostics as well as the bounded tail.
+    let diagnostics = stderr
+        .lines()
+        .filter(|line| {
+            let line = line.trim();
+            line.starts_with(">>>") && line != ">>> Interrupted" && !tail.contains(line)
+        })
+        .take(20)
+        .collect::<Vec<_>>()
+        .join("\n");
+    let detail = if diagnostics.is_empty() {
+        tail
+    } else {
+        format!("{diagnostics}\n{tail}")
+    };
+    Error::new(code, format!("{context}:\n{}", redact(&detail, secrets)))
 }
 
 struct Downloaded {
@@ -1336,6 +1357,37 @@ mod local_repository_tests {
         let error =
             repository_failure("dnf resolution failed", "nothing provides libfoo.so.1", &[]);
         assert_eq!(error.code, "RPMX-ROOT-007");
+
+        let error = repository_failure(
+            "dnf resolution failed",
+            ">>> SSL certificate problem: certificate has expired",
+            &[],
+        );
+        assert_eq!(error.code, "RPMX-ROOT-019");
+    }
+
+    #[test]
+    fn dnf_download_error_survives_progress_output() {
+        let mut output = String::from(
+            "ca-certificates-2026.noarch\n>>> Status code: 429 for https://mirror.invalid/?token=secret\n",
+        );
+        for index in 0..30 {
+            output.push_str(&format!("[{index}/30] package\n>>> Interrupted\n"));
+        }
+        output.push_str("Failed to download packages\nAll mirrors were tried\n");
+        let error = repository_failure("dnf resolution failed", &output, &["secret".to_string()]);
+        assert_eq!(error.code, "RPMX-ROOT-007");
+        assert!(
+            error.message.contains("Status code: 429"),
+            "{}",
+            error.message
+        );
+        assert!(
+            error.message.contains("All mirrors were tried"),
+            "{}",
+            error.message
+        );
+        assert!(!error.message.contains("secret"), "{}", error.message);
     }
 
     #[test]
