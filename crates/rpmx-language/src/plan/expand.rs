@@ -390,14 +390,10 @@ pub(crate) fn expand_tests(
         let argv = super::test_command::command(&test).map_err(|error| error.at(&at))?;
         let name = test.name;
         let packages = expand_values(&test.packages, scope, &format!("{path}[{index}].packages"))?;
-        if test.stage != "installed" && !packages.is_empty() {
+        if !matches!(test.stage.as_str(), "build" | "installed") {
             return Err(Error::new(
                 codes::TEST_004,
-                format!(
-                    "test '{name}' declares packages but uses stage '{}'; \
-                     test packages are installed into the disposable installed-stage root",
-                    test.stage
-                ),
+                format!("test '{name}' uses unsupported stage '{}'", test.stage),
             )
             .at(format!("{path}[{index}].packages")));
         }
@@ -433,6 +429,13 @@ pub(crate) fn expand_tests(
         };
         for step in &mut planned_test.pipeline {
             super::test_command::strict_step(step);
+        }
+        if planned_test.stage == "installed" {
+            for dependency in planned_test.pipeline.iter().flat_map(|step| &step.needs) {
+                if !planned_test.packages.contains(dependency) {
+                    planned_test.packages.push(dependency.clone());
+                }
+            }
         }
         planned.push(planned_test);
     }

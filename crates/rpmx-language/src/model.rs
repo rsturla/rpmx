@@ -744,7 +744,7 @@ impl OutputDependencies {
 pub struct Test {
     pub name: String,
     pub stage: String,
-    /// Packages installed only for this test's root.
+    /// Build-test tools or packages for an installed test's root.
     #[serde(default)]
     pub packages: Vec<String>,
     /// Variables applied to every step of this test. A step's own `env`
