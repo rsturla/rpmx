@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::profile::normalize_arch;
-use crate::root::container::{image_digest_for_arch, podman_run_assembly};
+use crate::root::container::{ensure_locked_image, podman_run_assembly};
 use crate::root::lock::{safe_staging_component, PackageKey, RootLock};
 use rpmx_base::error::{codes, Error, Result};
 use rpmx_store::cas;
@@ -34,16 +34,7 @@ pub fn assemble(lock: &RootLock, options: AssembleOptions<'_>) -> Result<std::pa
             "this lock has no builder image, so it cannot be assembled",
         )
     })?;
-    let actual_digest = image_digest_for_arch(&builder.image, lock_arch)?;
-    if actual_digest != builder.image_digest {
-        return Err(Error::new(
-            codes::ROOT_002,
-            format!(
-                "builder image '{}' has drifted: lock records {}, local image is {}",
-                builder.image, builder.image_digest, actual_digest
-            ),
-        ));
-    }
+    let image = ensure_locked_image(&builder.image, &builder.image_digest, lock_arch)?;
     let arch = lock
         .archs
         .first()
@@ -173,7 +164,7 @@ pub fn assemble(lock: &RootLock, options: AssembleOptions<'_>) -> Result<std::pa
     let locked = locked_files;
 
     let run = |args: &[String]| -> Result<std::process::Output> {
-        podman_run_assembly(&builder.image, options.work, options.root, target, args)
+        podman_run_assembly(&image, options.work, options.root, target, args)
     };
     let combined = |erase: bool, files: &[String]| -> Vec<String> {
         let mut args = base.clone();
@@ -197,7 +188,7 @@ pub fn assemble(lock: &RootLock, options: AssembleOptions<'_>) -> Result<std::pa
     let install_extras = |nodeps: bool| -> Result<std::process::Output> {
         crate::root::container::run_offline_root(crate::root::container::OfflineRootCommand {
             root: options.root,
-            image: &builder.image,
+            image: &image,
             target,
             nodeps,
             mode: crate::root::container::OfflineRootMode::Install {
@@ -248,7 +239,7 @@ pub fn assemble(lock: &RootLock, options: AssembleOptions<'_>) -> Result<std::pa
         output =
             crate::root::container::run_offline_root(crate::root::container::OfflineRootCommand {
                 root: options.root,
-                image: &builder.image,
+                image: &image,
                 target,
                 nodeps: true,
                 mode: crate::root::container::OfflineRootMode::Install { rpms: &staged },
@@ -259,14 +250,7 @@ pub fn assemble(lock: &RootLock, options: AssembleOptions<'_>) -> Result<std::pa
         return Err(offline_failure(&output));
     }
 
-    verify_installed(
-        lock,
-        options.root,
-        &builder.image,
-        target,
-        &extra_keys,
-        replaced,
-    )?;
+    verify_installed(lock, options.root, &image, target, &extra_keys, replaced)?;
     Ok(options.root.to_path_buf())
 }
 
