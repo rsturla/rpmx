@@ -8,6 +8,7 @@ use crate::root::container::{image_digest_for_arch, podman_run};
 use crate::root::lock::{
     closure_digest, LockedBuilder, LockedPackage, PackageKey, RootLock, DOCUMENT, VERSION,
 };
+use crate::root::metadata_cache::MetadataCache;
 use rpmx_base::error::{codes, Error, Result};
 use rpmx_store::cas;
 
@@ -36,6 +37,8 @@ pub fn resolve_profile(
         work: work.to_path_buf(),
     };
     let setup = write_repositories(work, &profile.repositories)?;
+    let metadata_cache = MetadataCache::new(profile, &image_digest, cache);
+    metadata_cache.restore(work);
 
     // Resolve all requests in one transaction. Downloading each request's
     // closure can keep a newer dependency beside an exact older request.
@@ -48,6 +51,7 @@ pub fn resolve_profile(
         dnf_base_args(profile)
             .into_iter()
             .chain([
+                "--refresh".to_string(),
                 "install".to_string(),
                 "--store=/work/transaction".to_string(),
             ])
@@ -118,7 +122,7 @@ pub fn resolve_profile(
     // signing policy, but not credential references, which are host-specific.
     let repositories = repositories_for_lock(&profile.repositories);
 
-    Ok(RootLock {
+    let lock = RootLock {
         document: DOCUMENT.to_string(),
         version: VERSION,
         profile: profile_name.to_string(),
@@ -140,16 +144,26 @@ pub fn resolve_profile(
         seed: None,
         generation: None,
         requirement: None,
-    })
+    };
+    metadata_cache.publish(work);
+    Ok(lock)
 }
 
 fn prepare_work(work: &Path) -> Result<()> {
     // The RPMs and the empty installroot are outputs of this run. A reused work
     // directory must not feed packages from an earlier resolution into the
     // closure. Repository definitions and credentials are regenerated too, so a
-    // stale repository cannot leak into the transaction. The metadata cache is
-    // safe to keep: dnf revalidates it.
-    for directory in ["rpms", "transaction", "root", "repos.d", "keys"] {
+    // stale repository cannot leak into the transaction. Only remote metadata
+    // from the persistent snapshot cache is copied back after this reset.
+    for directory in [
+        "rpms",
+        "transaction",
+        "root",
+        "repos.d",
+        "keys",
+        "cache",
+        "persist",
+    ] {
         let path = work.join(directory);
         if path.exists() {
             std::fs::remove_dir_all(&path).map_err(|error| {
@@ -987,9 +1001,19 @@ mod local_repository_tests {
         let packages = directory.path().join("transaction/packages");
         std::fs::create_dir_all(&packages).unwrap();
         std::fs::write(packages.join("stale.rpm"), "stale payload").unwrap();
+        std::fs::create_dir_all(directory.path().join("cache/local/repodata")).unwrap();
+        std::fs::write(
+            directory.path().join("cache/local/repodata/primary.xml"),
+            "stale metadata",
+        )
+        .unwrap();
+        std::fs::create_dir_all(directory.path().join("persist")).unwrap();
+        std::fs::write(directory.path().join("persist/state"), "stale state").unwrap();
         prepare_work(directory.path()).unwrap();
         assert!(!directory.path().join("transaction").exists());
         assert!(directory.path().join("cache").is_dir());
+        assert!(!directory.path().join("cache/local").exists());
+        assert!(!directory.path().join("persist/state").exists());
     }
 
     #[test]

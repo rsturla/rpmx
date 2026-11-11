@@ -1,5 +1,12 @@
 # Profiles and build roots
 
+Root resolution reuses public remote repository metadata from
+`<CAS>/dnf-metadata-v1`. Each resolver gets private copies and refreshes
+`repomd.xml`; changed repositories still produce a fresh package resolution.
+Local repositories, authenticated repositories, downloaded RPMs and previous
+transactions are not shared through this metadata cache. Corrupt snapshots
+cause a cold resolution and are repaired after a successful download.
+
 ## Profiles
 
 A profile is root policy, not a recipe:
