@@ -43,4 +43,4 @@ tests:
   - name: installed
     stage: installed
     packages: [gcc]
-    argv: ["sh", "-c", "printf '#include <zlib.h>\\nint main(void){return zlibVersion()==0;}\\n' > /tmp/z.c && cc /tmp/z.c -o /tmp/z -lz && /tmp/z"]
+    script: "printf '#include <zlib.h>\\nint main(void){return zlibVersion()==0;}\\n' > /tmp/z.c && cc /tmp/z.c -o /tmp/z -lz && /tmp/z"

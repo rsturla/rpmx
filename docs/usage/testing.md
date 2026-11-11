@@ -38,8 +38,23 @@ The default expected exit code is zero. Omit a stream to leave its content unche
 Stream comparisons are exact, including trailing newlines. Assertions support text without NUL bytes.
 Failures show the expected and actual result. Assertions need Bash and coreutils.
 `script` cannot combine with `argv`, `pipeline` or `expect`.
-Existing `argv` and `pipeline` commands keep their shell behavior.
-Lint warns about multiline `sh -c` and `bash -c` tests without an explicit `errexit` setting.
+Choose one form: `argv`, `script` or `pipeline`.
+Shell `-c` commands in `argv` are errors. Move their shell text to `script`.
+Shell steps in test pipelines also use strict Bash options.
+
+### Eternal migration
+
+Update Eternal before changing its pinned rpmx revision:
+
+1. Convert shell `argv` tests in production and bootstrap recipes to `script`.
+2. Check expected failures explicitly. Replace status checks with `expect` where possible.
+3. Fix early assertions that now fail. Check pipelines that use `grep -q` for SIGPIPE failures.
+4. Move compiler inputs and expected results into package-local fixture directories.
+5. Declare upstream suite tools on build-stage tests. Remove unused installed-test tools.
+6. Run lint and package tests on both supported architectures. Then update `.rpmx-revision`.
+
+Use one package per migration commit. Keep fixtures and test reports in the package review.
+Do not update the pin while recipes still use shell `argv` tests.
 
 ### Build and test in one run
 

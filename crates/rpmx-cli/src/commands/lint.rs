@@ -443,20 +443,6 @@ fn check(
                     .at(scope.clone()),
                 );
             }
-            if test.argv.as_ref().is_some_and(|argv| {
-                argv.len() >= 3
-                    && matches!(argv[0].as_str(), "sh" | "bash")
-                    && argv[1] == "-c"
-                    && argv[2].contains('\n')
-                    && !argv[2].contains("set -e")
-                    && !argv[2].contains("set -o errexit")
-            }) {
-                diagnostics.push(Diagnostic::warning(
-                    codes::LINT_020,
-                    "tests/shell-errors",
-                    format!("test '{}' uses a multiline shell command without errexit; use script or explicit error checks", test.name),
-                ).at(scope.clone()));
-            }
         }
     }
 

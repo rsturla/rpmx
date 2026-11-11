@@ -413,7 +413,7 @@ pub(crate) fn expand_tests(
         let step_scope = owner
             .map(|output| format!("test:{output}/{name}"))
             .unwrap_or_else(|| format!("test:{name}"));
-        planned.push(PlannedTest {
+        let mut planned_test = PlannedTest {
             name,
             output: owner.map(str::to_string),
             stage: test.stage,
@@ -430,7 +430,11 @@ pub(crate) fn expand_tests(
             },
             packages,
             environment,
-        });
+        };
+        for step in &mut planned_test.pipeline {
+            super::test_command::strict_step(step);
+        }
+        planned.push(planned_test);
     }
     Ok(planned)
 }

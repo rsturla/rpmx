@@ -51,27 +51,16 @@ fn recipe(text: &str) -> (tempfile::TempDir, String) {
 }
 
 #[test]
-fn shell_tests_warn_and_strict_scripts_are_valid() {
-    for (fields, warning) in [
-        ("argv: [sh, -c, \"false\\ntrue\"]", true),
-        ("argv: [sh, -c, \"set -e\\nfalse\\ntrue\"]", false),
-        ("script: \"false\\ntrue\"", false),
+fn strict_scripts_are_valid_and_shell_argv_is_rejected() {
+    for (fields, valid) in [
+        ("argv: [sh, -c, \"false\\ntrue\"]", false),
+        ("script: \"false\\ntrue\"", true),
     ] {
         let (_directory, path) = recipe(&format!(
             "{CLEAN}tests:\n  - name: probe\n    stage: build\n    {fields}\n"
         ));
-        let output = rpmx(&["lint", &path, "--json"]);
-        let value: serde_json::Value = serde_json::from_slice(&output.stdout).expect("JSON");
-        assert_eq!(value["summary"]["errors"], 0, "{value}");
-        assert_eq!(
-            value["diagnostics"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|d| d["rule"] == "tests/shell-errors"),
-            warning,
-            "{value}"
-        );
+        let output = rpmx(&["lint", &path]);
+        assert_eq!(output.status.success(), valid, "{output:?}");
     }
 }
 

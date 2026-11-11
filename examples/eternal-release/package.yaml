@@ -91,18 +91,4 @@ outputs:
 tests:
   - name: release-files
     stage: build
-    argv:
-      - sh
-      - -c
-      - |
-        grep -q '^ID=eternal$' os-release
-        grep -q '^VERSION_ID="1"$' os-release
-        grep -q '^PRETTY_NAME="Eternal Linux 1"$' os-release
-        test -f system-release
-        test -f redhat-release
-        test -f eternal.repo
-        test -f eternal-updates.repo
-        grep -q 'baseurl=https://repo.eternal.example.org/eternal/$releasever/$basearch' \
-            eternal.repo
-        grep -q 'baseurl=https://repo.eternal.example.org/eternal/updates/$releasever/$basearch' \
-            eternal-updates.repo
+    script: "grep -q '^ID=eternal$' os-release\ngrep -q '^VERSION_ID=\"1\"$' os-release\ngrep -q '^PRETTY_NAME=\"Eternal Linux 1\"$' os-release\ntest -f system-release\ntest -f redhat-release\ntest -f eternal.repo\ntest -f eternal-updates.repo\ngrep -q 'baseurl=https://repo.eternal.example.org/eternal/$releasever/$basearch' \\\n    eternal.repo\ngrep -q 'baseurl=https://repo.eternal.example.org/eternal/updates/$releasever/$basearch' \\\n    eternal-updates.repo\n"

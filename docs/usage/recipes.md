@@ -751,7 +751,7 @@ outputs:
         packages: [grep]
         environment:
           HOME: /tmp
-        argv: [sh, -c, "hello --version | grep -q hello"]
+        script: "hello --version | grep -q hello"
 
   - name: hello-lib
     files:
@@ -759,7 +759,7 @@ outputs:
     tests:
       - name: exported
         stage: installed
-        argv: [sh, -c, "test -e /usr/lib64/libhello.so.1"]
+        script: "test -e /usr/lib64/libhello.so.1"
 ```
 
 - `stage: build` runs in the build sandbox, with the source workspace present.

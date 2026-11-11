@@ -9,6 +9,21 @@ fn quote(value: &str) -> String {
 
 pub(super) fn command(test: &Test) -> Result<Option<Vec<String>>> {
     let invalid = |message: &str| Error::new(codes::TEST_004, message);
+    if test.argv.is_some() && test.pipeline.is_some() {
+        return Err(invalid("choose one test form: argv, script or pipeline"));
+    }
+    if test.argv.as_ref().is_some_and(|argv| {
+        argv.first()
+            .is_some_and(|name| matches!(name.rsplit('/').next(), Some("sh" | "bash")))
+            && argv
+                .iter()
+                .skip(1)
+                .any(|arg| arg.starts_with('-') && !arg.starts_with("--") && arg.contains('c'))
+    }) {
+        return Err(invalid(
+            "shell commands in test argv are not supported; use script",
+        ));
+    }
     if let Some(script) = &test.script {
         if test.argv.is_some() || test.pipeline.is_some() || test.expect.is_some() {
             return Err(invalid(
@@ -62,6 +77,17 @@ fn bash(script: String) -> Vec<String> {
         .collect()
 }
 
+pub(super) fn strict_step(step: &mut super::PlannedStep) {
+    if matches!(step.command.as_deref(), Some("sh" | "bash"))
+        && step.args.first().map(String::as_str) == Some("-c")
+        && step.args.len() == 2
+    {
+        let mut argv = bash(step.args[1].clone());
+        step.command = Some(argv.remove(0));
+        step.args = argv;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -104,15 +130,20 @@ expect:
 
     #[test]
     fn assertions_check_nonzero_exit_and_both_streams() {
-        let yaml = "name: probe\nstage: build\nargv: [sh, -c, 'printf out; printf err >&2; exit 7']\nexpect:\n  exit-code: 7\n  stdout: out\n  stderr: err\n";
+        let yaml = "name: probe\nstage: build\nargv: [printf, out]\nexpect:\n  exit-code: 0\n  stdout: out\n  stderr: ''\n";
         assert!(execute(yaml).status.success());
         for changed in [
-            yaml.replace("exit-code: 7", "exit-code: 0"),
+            yaml.replace("exit-code: 0", "exit-code: 7"),
             yaml.replace("stdout: out", "stdout: wrong"),
-            yaml.replace("stderr: err", "stderr: wrong"),
+            yaml.replace("stderr: ''", "stderr: wrong"),
         ] {
             assert!(!execute(&changed).status.success());
         }
+        assert!(
+            execute("name: probe\nstage: build\nargv: ['false']\nexpect:\n  exit-code: 1\n")
+                .status
+                .success()
+        );
     }
 
     #[test]
