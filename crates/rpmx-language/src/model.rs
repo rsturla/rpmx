@@ -753,8 +753,25 @@ pub struct Test {
     pub environment: BTreeMap<String, String>,
     #[serde(default)]
     pub argv: Option<Vec<String>>,
+    /// A Bash script with error, unset-variable and pipeline checks.
+    #[serde(default)]
+    pub script: Option<String>,
+    /// Expected results for `argv`.
+    #[serde(default)]
+    pub expect: Option<TestExpectation>,
     #[serde(default)]
     pub pipeline: Option<Vec<Step>>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
+pub struct TestExpectation {
+    #[serde(default)]
+    pub exit_code: u8,
+    #[serde(default)]
+    pub stdout: Option<String>,
+    #[serde(default)]
+    pub stderr: Option<String>,
 }
 
 /// One YAML file in a recipe bundle.

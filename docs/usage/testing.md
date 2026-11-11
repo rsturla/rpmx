@@ -2,6 +2,45 @@
 
 ## Tests
 
+### Scripts and command assertions
+
+Use `script` for a test with several shell commands:
+
+```yaml
+tests:
+  - name: patterns
+    stage: installed
+    script: |
+      printf 'alpha\nbeta\n' > input
+      test "$(grep beta input)" = beta
+      test "$(grep -c . input)" = 2
+```
+
+rpmx runs the script with `bash --noprofile --norc -euo pipefail`.
+An unchecked command failure, pipeline failure or unset variable fails the test.
+Bash error handling has exceptions for conditions and commands in `&&` or `||` lists.
+Use explicit checks for expected failures. Build-stage scripts need Bash in the build root.
+
+Use `expect` to check a command without shell assertions:
+
+```yaml
+tests:
+  - name: no-match
+    stage: installed
+    argv: [grep, missing, /dev/null]
+    expect:
+      exit-code: 1
+      stdout: ''
+      stderr: ''
+```
+
+The default expected exit code is zero. Omit a stream to leave its content unchecked.
+Stream comparisons are exact, including trailing newlines. Assertions support text without NUL bytes.
+Failures show the expected and actual result. Assertions need Bash and coreutils.
+`script` cannot combine with `argv`, `pipeline` or `expect`.
+Existing `argv` and `pipeline` commands keep their shell behavior.
+Lint warns about multiline `sh -c` and `bash -c` tests without an explicit `errexit` setting.
+
 ### Build and test in one run
 
 ```console

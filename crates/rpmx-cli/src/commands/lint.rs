@@ -429,15 +429,33 @@ fn check(
                 .pipeline
                 .as_ref()
                 .is_some_and(|steps| !steps.is_empty());
-            if !has_argv && !has_pipeline {
+            let has_script = test
+                .script
+                .as_ref()
+                .is_some_and(|script| !script.trim().is_empty());
+            if !has_argv && !has_pipeline && !has_script {
                 diagnostics.push(
                     Diagnostic::error(
                         codes::LINT_020,
                         "tests/empty",
-                        format!("test '{}' has neither argv nor pipeline", test.name),
+                        format!("test '{}' has no argv, script or pipeline", test.name),
                     )
                     .at(scope.clone()),
                 );
+            }
+            if test.argv.as_ref().is_some_and(|argv| {
+                argv.len() >= 3
+                    && matches!(argv[0].as_str(), "sh" | "bash")
+                    && argv[1] == "-c"
+                    && argv[2].contains('\n')
+                    && !argv[2].contains("set -e")
+                    && !argv[2].contains("set -o errexit")
+            }) {
+                diagnostics.push(Diagnostic::warning(
+                    codes::LINT_020,
+                    "tests/shell-errors",
+                    format!("test '{}' uses a multiline shell command without errexit; use script or explicit error checks", test.name),
+                ).at(scope.clone()));
             }
         }
     }

@@ -51,6 +51,31 @@ fn recipe(text: &str) -> (tempfile::TempDir, String) {
 }
 
 #[test]
+fn shell_tests_warn_and_strict_scripts_are_valid() {
+    for (fields, warning) in [
+        ("argv: [sh, -c, \"false\\ntrue\"]", true),
+        ("argv: [sh, -c, \"set -e\\nfalse\\ntrue\"]", false),
+        ("script: \"false\\ntrue\"", false),
+    ] {
+        let (_directory, path) = recipe(&format!(
+            "{CLEAN}tests:\n  - name: probe\n    stage: build\n    {fields}\n"
+        ));
+        let output = rpmx(&["lint", &path, "--json"]);
+        let value: serde_json::Value = serde_json::from_slice(&output.stdout).expect("JSON");
+        assert_eq!(value["summary"]["errors"], 0, "{value}");
+        assert_eq!(
+            value["diagnostics"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|d| d["rule"] == "tests/shell-errors"),
+            warning,
+            "{value}"
+        );
+    }
+}
+
+#[test]
 fn lint_reports_every_rule_in_one_run() {
     let (_directory, path) = recipe(WEAK);
     let output = rpmx(&["lint", &path]);
