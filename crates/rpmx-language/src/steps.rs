@@ -125,6 +125,10 @@ const BUILTINS: &[(&str, &str)] = &[
     ),
     ("debuginfo", include_str!("../pipelines/debuginfo.yaml")),
     (
+        "test/runtime-linkage",
+        include_str!("../pipelines/test/runtime-linkage.yaml"),
+    ),
+    (
         "test/hardening-check",
         include_str!("../pipelines/test/hardening-check.yaml"),
     ),

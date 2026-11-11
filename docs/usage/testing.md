@@ -141,6 +141,31 @@ It cannot see the source workspace or staged package files.
 Tests with the same dependencies still share prepared root data.
 `--keep-workdir` preserves test workspaces for inspection.
 
+### Runtime library linkage
+
+Check that an installed library output has its required shared-library dependencies:
+
+```yaml
+outputs:
+  - name: example-libs
+    tests:
+      - name: runtime-linkage
+        stage: installed
+        pipeline:
+          - uses: test/runtime-linkage
+            with:
+              libraries: [libexample.so.*, libexample-extra.so.*]
+```
+
+`libraries` is a required, nonempty list of SONAME basename patterns.
+The step searches the profile's `libdir` and requires at least one ELF file for every pattern.
+It skips non-ELF files such as Python GDB helpers, even when their names match.
+The installed ELF loader checks each library's dependency graph.
+A missing loader, missing library pattern or missing dependency fails the test and names the path.
+The step uses only the baseline Bash and coreutils tools.
+Keep it on the runtime output with no compiler or Python test packages, so extra tools cannot supply missing runtime dependencies.
+Pair it with compile, link and execution tests on development and static outputs to exercise the exported APIs.
+
 ### Scripts and command assertions
 
 Use `script` for a test with several shell commands:
