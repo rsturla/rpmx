@@ -19,7 +19,7 @@ fn fixture(root: &Path) {
     write(
         &root.join("recipes/gcc/package.yaml"),
         r#"
-schema: 1
+schema: 2
 package:
   name: gcc
   version: "1"
@@ -34,7 +34,7 @@ outputs:
     write(
         &root.join("recipes/glibc/package.yaml"),
         r#"
-schema: 1
+schema: 2
 package:
   name: glibc
   version: "1"

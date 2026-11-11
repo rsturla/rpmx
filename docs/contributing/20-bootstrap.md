@@ -1,5 +1,9 @@
 # Bootstrap ladder implementation plan
 
+> Historical design record. Some schema and execution examples describe earlier
+> proposals. Use [current recipes](../usage/recipes.md) and
+> [testing](../usage/testing.md) for the supported schema 2 interface.
+
 Status: proposed
 
 Issues covered:

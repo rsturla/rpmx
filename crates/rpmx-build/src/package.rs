@@ -86,7 +86,7 @@ fn walk(root: &Path, dir: &Path, files: &mut Vec<StagedFile>) -> Result<()> {
                 format!("{} is not a regular file", path.display()),
             ));
         }
-        let data = std::fs::read(&path).map_err(|error| {
+        let data = read_staged_file(root, &path).map_err(|error| {
             Error::new(
                 codes::STAGE_006,
                 format!("cannot read {}: {error}", path.display()),
@@ -100,6 +100,50 @@ fn walk(root: &Path, dir: &Path, files: &mut Vec<StagedFile>) -> Result<()> {
         });
     }
     Ok(())
+}
+
+// A stage can legitimately contain mode000 payloads. A child user namespace
+// maps only the caller's UID/GID, so its DAC capability can read caller-owned
+// files without granting access to unrelated host owners or changing modes.
+fn read_staged_file(root: &Path, path: &Path) -> std::io::Result<Vec<u8>> {
+    match std::fs::read(path) {
+        Ok(bytes) => Ok(bytes),
+        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+            let root = std::fs::canonicalize(root)?;
+            let path = std::fs::canonicalize(path)?;
+            if !path.starts_with(&root) || !path.is_file() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "protected payload must be a regular file inside the stage",
+                ));
+            }
+            let mut command = std::process::Command::new("timeout");
+            command
+                .args([
+                    "--signal=TERM",
+                    "--kill-after=2s",
+                    "15s",
+                    "unshare",
+                    "--user",
+                    "--map-root-user",
+                    "--",
+                    "cat",
+                    "--",
+                ])
+                .arg(&path)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped());
+            let output = rpmx_base::process::spawn_sealed(command, &[])?.wait_with_output()?;
+            if !output.status.success() {
+                return Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied,
+                    format!("cannot read protected staged file using the caller's mapped user namespace ({}): {}",
+                        output.status, String::from_utf8_lossy(&output.stderr).trim())));
+            }
+            Ok(output.stdout)
+        }
+        Err(error) => Err(error),
+    }
 }
 
 #[cfg(unix)]

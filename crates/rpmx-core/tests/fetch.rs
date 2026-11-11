@@ -7,7 +7,7 @@ use rpmx_core::{parse_recipe, srpm::sha512_hex};
 fn recipe(digest: &str, locator: &str) -> String {
     format!(
         r#"
-schema: 1
+schema: 2
 package:
   name: demo
   version: "1.0"

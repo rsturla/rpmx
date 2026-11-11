@@ -1,5 +1,9 @@
 # rpmx UX audit and Melange-parity proposals
 
+> Historical design record. Some schema and execution examples describe earlier
+> proposals. Use [current recipes](../usage/recipes.md) and
+> [testing](../usage/testing.md) for the supported schema 2 interface.
+
 Status: audit + proposal, 2026-11-01.
 Audited tree: started at `d15a310`; advanced to `d0beb39` while the audit ran.
 The observed UX was produced by binaries built at ~10:21 (`target/debug/rpmx`)

@@ -5,7 +5,7 @@ pub use rpmx_build::{
     binary_package, elf, fetch, package, package_spec, sbom, source, source_package,
 };
 pub use rpmx_components as components;
-pub use rpmx_root::{appliance, cache_lock, pkgmanifest, profile, request, root, test_root};
+pub use rpmx_root::{appliance, cache_lock, pkgmanifest, profile, request, root};
 pub use rpmx_runner::{build_env, runner, sandbox, terminal, test_runner};
 pub use rpmx_store::{cas, srpm, tar_guard, tree};
 

@@ -1,5 +1,9 @@
 # The design: `rpmx` and `package.yaml`
 
+> Historical design record. Some schema and execution examples describe earlier
+> proposals. Use [current recipes](../usage/recipes.md) and
+> [testing](../usage/testing.md) for the supported schema 2 interface.
+
 Working names only. The design does not depend on them.
 
 ## 1. Scope

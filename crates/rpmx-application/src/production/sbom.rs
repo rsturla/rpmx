@@ -1,11 +1,11 @@
 use std::path::Path;
 
-use rpmx_core::error::codes;
-use rpmx_core::package_spec::{BinaryPackageFile, BinaryPackageSpec};
-use rpmx_core::plan::PlannedCell;
-use rpmx_core::sbom::{BinaryRef, BuildSbom, Generator, PackageSbom, SourceRef};
-use rpmx_core::srpm::PackageLock;
-use rpmx_core::{Error, Recipe};
+use crate::domain::error::codes;
+use crate::domain::package_spec::{BinaryPackageFile, BinaryPackageSpec};
+use crate::domain::plan::PlannedCell;
+use crate::domain::sbom::{BinaryRef, BuildSbom, Generator, PackageSbom, SourceRef};
+use crate::domain::srpm::PackageLock;
+use crate::domain::{Error, Recipe};
 
 pub(super) struct BuildSbomInput<'a> {
     pub(super) recipe: &'a Recipe,
@@ -13,7 +13,7 @@ pub(super) struct BuildSbomInput<'a> {
     pub(super) arch: &'a str,
     pub(super) source_date_epoch: u32,
     pub(super) binaries: &'a [BinaryRef<'a>],
-    pub(super) root_lock: Option<&'a rpmx_core::root::RootLock>,
+    pub(super) root_lock: Option<&'a crate::domain::root::RootLock>,
     pub(super) signing_key: Option<&'a str>,
     pub(super) path: &'a Path,
 }
@@ -30,7 +30,7 @@ impl SbomContext {
         let mut recipe_digest = package_lock.recipe_digest.clone();
         if recipe_digest.is_empty() {
             if let Ok(bytes) = std::fs::read(work.join("package.yaml")) {
-                recipe_digest = rpmx_core::srpm::sha512_hex(&bytes);
+                recipe_digest = crate::domain::srpm::sha512_hex(&bytes);
             }
         }
         Self {
@@ -63,7 +63,7 @@ impl SbomContext {
         recipe: &Recipe,
     ) -> Result<(), Error> {
         let refs = self.refs();
-        let text = rpmx_core::sbom::native_spdx().package(&PackageSbom {
+        let text = crate::domain::sbom::native_spdx().package(&PackageSbom {
             name: &package.name,
             version: &package.version,
             release: &package.release,
@@ -78,7 +78,7 @@ impl SbomContext {
         package.files.push(BinaryPackageFile {
             path: format!(
                 "{}/{}-{}-{}.spdx.json",
-                rpmx_core::sbom::SBOM_DIR,
+                crate::domain::sbom::SBOM_DIR,
                 package.name,
                 package.version,
                 package.release
@@ -100,7 +100,7 @@ impl SbomContext {
     /// Write the build-level SPDX document next to the binaries.
     pub(super) fn emit_build(&self, input: BuildSbomInput<'_>) -> Result<(), Error> {
         let refs = self.refs();
-        let text = rpmx_core::sbom::native_spdx().build(&BuildSbom {
+        let text = crate::domain::sbom::native_spdx().build(&BuildSbom {
             name: &input.cell.package,
             version: &input.cell.version,
             release: &input.cell.release,

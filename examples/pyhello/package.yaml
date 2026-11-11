@@ -1,4 +1,4 @@
-schema: 1
+schema: 2
 package:
   name: pyhello
   version: "1.0.0"
@@ -50,6 +50,5 @@ outputs:
         - /usr/lib/python3*/site-packages/pyhello-*.dist-info/**
 tests:
   - name: installed
-    stage: installed
     packages: [python3]
     argv: ["python3", "-c", "import pyhello; assert pyhello.answer() == 42"]

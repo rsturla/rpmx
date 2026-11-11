@@ -64,7 +64,7 @@ mod tests {
         let steps: Vec<Step> = serde_json::from_value(serde_json::json!([
             {"runs": "true", "timeout": "4h"},
             {"argv": ["true"], "timeout": "30m"},
-            {"uses": "cmake/build", "timeout": "1s"},
+            {"uses": "test/runtime-linkage", "with": {"libraries": ["libz.so.*"]}, "timeout": "1s"},
             {"runs": "true"}
         ]))
         .unwrap();

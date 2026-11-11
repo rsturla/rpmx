@@ -16,7 +16,7 @@ fn write(path: &Path, text: &str) {
 }
 
 const VALID: &str = r#"
-schema: 1
+schema: 2
 package:
   name: probe
   version: "1.0"
@@ -71,7 +71,7 @@ fn json_is_a_global_flag_on_either_side_of_the_subcommand() {
 fn recipe_errors_exit_2_and_emit_one_json_document() {
     let directory = tempfile::tempdir().expect("tempdir");
     let recipe = directory.path().join("package.yaml");
-    write(&recipe, "schema: 1\npackage:\n  name: probe\n");
+    write(&recipe, "schema: 2\npackage:\n  name: probe\n");
     let output = rpmx(&["lint", recipe.to_str().unwrap(), "--json"]);
     assert_eq!(output.status.code(), Some(2));
     let value: serde_json::Value =
@@ -87,12 +87,18 @@ fn root_resolution_errors_exit_4() {
     let directory = tempfile::tempdir().expect("tempdir");
     let recipe = directory.path().join("package.yaml");
     write(&recipe, VALID);
-    let output = rpmx(&["build", recipe.to_str().unwrap(), "--json"]);
+    let output = rpmx(&[
+        "build",
+        recipe.to_str().unwrap(),
+        "--output",
+        directory.path().join("out").to_str().unwrap(),
+        "--json",
+    ]);
     assert_eq!(output.status.code(), Some(4), "{output:?}");
     let value: serde_json::Value =
         serde_json::from_slice(&output.stdout).expect("stdout is one JSON document");
-    assert_eq!(value["ok"], false);
-    assert_eq!(value["command"], "build");
+    assert_eq!(value["outcome"], "failed");
+    assert_eq!(value["operation"], "build");
 }
 
 #[test]
@@ -104,7 +110,7 @@ fn automatic_root_reports_a_missing_offline_closure() {
         &recipe,
         &format!(
             r#"
-schema: 1
+schema: 2
 package:
   name: probe
   version: "1.0"
@@ -139,9 +145,9 @@ outputs:
     assert_eq!(output.status.code(), Some(4), "{output:?}");
     let value: serde_json::Value =
         serde_json::from_slice(&output.stdout).expect("stdout is one JSON document");
-    assert_eq!(value["ok"], false);
+    assert_eq!(value["outcome"], "failed");
     assert!(
-        value["diagnostics"][0]["message"]
+        value["primary"]["message"]
             .as_str()
             .unwrap_or_default()
             .contains("not cached"),
@@ -170,13 +176,15 @@ fn srpm_json_lists_typed_artifacts_with_paths() {
     assert!(output.status.success(), "{output:?}");
     let value: serde_json::Value =
         serde_json::from_slice(&output.stdout).expect("stdout is one JSON document");
-    assert_eq!(value["schema"], 1);
-    assert_eq!(value["ok"], true);
-    assert_eq!(value["command"], "srpm");
-    let artifacts = value["artifacts"].as_array().expect("artifacts");
+    assert_eq!(value["document"], "rpmx-run-report");
+    assert_eq!(value["version"], 1);
+    assert_eq!(value["outcome"], "passed");
+    assert_eq!(value["operation"], "srpm");
+    let artifacts = value["artifacts"]["srpms"]
+        .as_array()
+        .expect("SRPM artifacts");
     assert_eq!(artifacts.len(), 1, "{value}");
-    assert_eq!(artifacts[0]["kind"], "srpm");
-    let path = artifacts[0]["path"].as_str().expect("path");
+    let path = artifacts[0].as_str().expect("path");
     assert!(Path::new(path).is_file(), "missing artifact {path}");
 }
 
@@ -203,13 +211,14 @@ fn failing_guest_step_exits_5_and_keeps_stdout_clean() {
     assert_eq!(output.status.code(), Some(5), "{output:?}");
     let value: serde_json::Value =
         serde_json::from_slice(&output.stdout).expect("stdout is one JSON document");
-    assert_eq!(value["schema"], 1);
-    assert_eq!(value["ok"], false);
-    assert_eq!(value["command"], "source");
-    assert_eq!(value["diagnostics"][0]["severity"], "error");
-    let message = value["diagnostics"][0]["message"]
+    assert_eq!(value["document"], "rpmx-run-report");
+    assert_eq!(value["version"], 1);
+    assert_eq!(value["outcome"], "failed");
+    assert_eq!(value["operation"], "source");
+    assert!(value["primary"]["code"]
         .as_str()
-        .unwrap_or_default();
+        .is_some_and(|code| code.starts_with("RPMX-")));
+    let message = value["primary"]["message"].as_str().unwrap_or_default();
     assert!(message.contains("command:"), "{message}");
     assert!(message.contains("cwd:"), "{message}");
     assert!(message.contains("workspace:"), "{message}");
@@ -220,7 +229,7 @@ fn failing_guest_step_exits_5_and_keeps_stdout_clean() {
         "guest output missing: {stderr}"
     );
     assert!(
-        stderr.contains("INFO source   step"),
+        stderr.contains("INFO step"),
         "step header missing: {stderr}"
     );
 }
@@ -282,8 +291,9 @@ fn guest_output_goes_to_stderr_when_json_is_set() {
     assert!(output.status.success(), "{output:?}");
     let value: serde_json::Value =
         serde_json::from_slice(&output.stdout).expect("stdout is one JSON document");
-    assert_eq!(value["schema"], 1);
-    assert_eq!(value["ok"], true);
+    assert_eq!(value["document"], "rpmx-run-report");
+    assert_eq!(value["version"], 1);
+    assert_eq!(value["outcome"], "passed");
     assert!(
         String::from_utf8_lossy(&output.stderr).contains("guest-output"),
         "guest output missing from stderr: {}",

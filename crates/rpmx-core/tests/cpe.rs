@@ -2,7 +2,7 @@ mod common;
 
 fn recipe(cpe: &str) -> String {
     format!(
-        "schema: 1\npackage:\n  name: demo\n  version: \"1.0\"\n  release: 1\n  summary: demo\n  license: MIT\n{cpe}\noutputs:\n  - name: demo\n    files:\n      include:\n        - /usr/bin/demo\n"
+        "schema: 2\npackage:\n  name: demo\n  version: \"1.0\"\n  release: 1\n  summary: demo\n  license: MIT\n{cpe}\noutputs:\n  - name: demo\n    files:\n      include:\n        - /usr/bin/demo\n"
     )
 }
 

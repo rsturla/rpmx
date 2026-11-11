@@ -10,7 +10,7 @@ rpmx build --arch x86_64,aarch64 --arch-jobs 2
 rpmx build --arch all --arch-jobs all
 rpmx build --jobs 32
 rpmx build --no-tests              # skip the tests a build runs by default
-rpmx build --test installed --junit report.xml
+rpmx build                       # writes run-report.json and run-report.xml
 rpmx build --stage /tmp/stage    # package an existing tree, skip the pipeline
 rpmx build --locked
 rpmx build --offline
@@ -27,18 +27,22 @@ architectures.
 `--stage DIR` packages a staged tree; it does not run source assembly, SRPM
 creation or builds. It verifies the lock when `--locked` is given.
 
-A build runs the recipe's tests after it packages them, so a green build means
-the same thing it means under `rpmbuild`. `--no-tests` skips them, and
-`--skip-installed` runs only build-stage tests (the installed stage needs to
-execute the target binary). `--test NAME` runs one test instead of all; use
-`--test OUTPUT/NAME` when an output-level test shares its bare name with
-another output.
+A build runs `build.tests` source cases after the build pipeline and before
+packaging. `--no-tests` skips those cases. Package acceptance is a separate
+operation against existing artifacts:
+
+```console
+rpmx build package.yaml --output packages
+rpmx test package.yaml --install-dir packages/x86_64 --junit acceptance.xml
+```
+
+A production release gate must require both reports to pass. See [testing](testing.md).
 
 The full build runs:
 
 ```
 root -> fetch -> source snapshot -> SRPM -> extract SRPM -> build steps
-     -> package -> SBOM -> tests -> sign -> repodata
+     -> source tests -> package -> SBOM -> sign -> repodata
 ```
 
 Progress goes to stderr as leveled lines, with guest stdout labelled `INFO` and

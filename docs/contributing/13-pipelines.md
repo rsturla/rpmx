@@ -1,5 +1,9 @@
 # Pipelines and named steps
 
+> Historical design record. Some schema and execution examples describe earlier
+> proposals. Use [current recipes](../usage/recipes.md) and
+> [testing](../usage/testing.md) for the supported schema 2 interface.
+
 ## 1. Decision
 
 The build is an **ordered pipeline of steps**, modeled directly on melange.

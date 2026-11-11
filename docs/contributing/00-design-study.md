@@ -1,5 +1,9 @@
 # A better RPM build definition — design study
 
+> Historical design record. Some schema and execution examples describe earlier
+> proposals. Use [current recipes](../usage/recipes.md) and
+> [testing](../usage/testing.md) for the supported schema 2 interface.
+
 This repository is a design study, not an implementation.
 
 The question: **if we could replace the RPM spec file with a build definition designed for the 2020s, while still producing ordinary RPM packages, what should it look like?**

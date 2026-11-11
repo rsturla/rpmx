@@ -25,6 +25,16 @@ scripts/replacement-dnf-test.sh
 scripts/systemd-dnf-test.sh <v1-rpm-dir> <v2-rpm-dir>
 ```
 
+On an SELinux enforcing host, test concurrent resolver repository mounts with:
+
+```console
+cargo test -p rpmx-root concurrent_resolvers_can_read_the_same_local_repository -- --ignored
+```
+
+The test uses Fedora 44 by default. Set `RPMX_TEST_IMAGE` to use another image
+with `sh`, `cat`, `touch`, `seq` and `sleep`. Local repositories and cached RPMs
+use shared SELinux labels because concurrent root preparations read the same files.
+
 To check builder image pins with Podman and access to the Fedora registry, run:
 
 ```console
@@ -37,6 +47,17 @@ architectures and a missing original tag. Image locks record the selected
 platform manifest digest. Podman's image `Digest` field can identify its parent
 index, so resolution uses temporary manifest metadata instead. No image layers
 are downloaded to select a manifest.
+
+To exercise package acceptance with local RPM repositories, a cached Fedora 44
+builder image, Podman and configured bubblewrap namespaces, run:
+
+```console
+cargo test -p rpmx-application --test acceptance package_tests_resolve_only_required_outputs_and_replay_exact_environments -- --ignored
+```
+
+This regression checks candidate selection, minimal output closures, immutable
+fixtures, private transaction state and recipe-bound replay through the public
+application interface. It generates repository payloads locally.
 
 ## Design rules
 

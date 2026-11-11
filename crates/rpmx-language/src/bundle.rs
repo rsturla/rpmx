@@ -24,6 +24,27 @@ pub struct BundleFile {
     pub name: String,
     pub digest: String,
     pub bytes: Vec<u8>,
+    /// Permission bits captured with the file contents, without ownership or timestamps.
+    pub mode: u32,
+}
+
+fn file_mode(path: &Path) -> Result<u32> {
+    let metadata = std::fs::metadata(path).map_err(|error| {
+        Error::new(
+            codes::INCLUDE_001,
+            format!("cannot read permissions for {}: {error}", path.display()),
+        )
+    })?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        Ok(metadata.permissions().mode() & 0o7777)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = metadata;
+        Ok(0o644)
+    }
 }
 
 /// The merged recipe plus the files it came from.
@@ -158,9 +179,53 @@ pub fn load_recipe_bundle(path: impl AsRef<Path>) -> Result<RecipeBundle> {
         .map_err(|error| Error::new(codes::INCLUDE_003, error.to_string()))?;
     let _ = parse_recipe(&canonical)?;
 
-    let mut entries: Vec<(String, String)> = files
+    let tests: Vec<_> = recipe
+        .tests
         .iter()
-        .map(|file| (file.name.clone(), file.digest.clone()))
+        .chain(&recipe.build.tests)
+        .chain(recipe.outputs.iter().flat_map(|output| &output.tests))
+        .collect();
+    let directories = tests
+        .iter()
+        .filter_map(|test| test.files.as_deref())
+        .chain(
+            recipe
+                .build
+                .pipeline
+                .iter()
+                .chain(&recipe.source_assembly.pipeline)
+                .filter_map(|step| step.files.as_deref()),
+        )
+        .chain(
+            tests
+                .iter()
+                .flat_map(|test| test.pipeline.iter().flatten())
+                .filter_map(|step| step.files.as_deref()),
+        );
+    for directory in directories {
+        for path in crate::test_files::entries(&root_dir, directory)? {
+            if files.iter().any(|file| file.path == path) {
+                continue;
+            }
+            let bytes = std::fs::read(&path)
+                .map_err(|error| Error::new(codes::TEST_004, error.to_string()))?;
+            files.push(BundleFile {
+                name: path
+                    .strip_prefix(&root_dir)
+                    .expect("test file in recipe")
+                    .to_string_lossy()
+                    .replace('\\', "/"),
+                digest: sha512_hex(&bytes),
+                mode: file_mode(&path)?,
+                bytes,
+                path,
+            });
+        }
+    }
+
+    let mut entries: Vec<(String, String, u32)> = files
+        .iter()
+        .map(|file| (file.name.clone(), file.digest.clone(), file.mode))
         .collect();
     entries.sort();
     let encoded = serde_json::to_vec(&entries)
@@ -267,6 +332,7 @@ fn apply_repo_defaults(
         || defaults.has_metadata
     {
         files.push(BundleFile {
+            mode: file_mode(&defaults.path)?,
             path: defaults.path,
             name: DEFAULTS_FILE.to_string(),
             digest: defaults.digest,
@@ -425,6 +491,7 @@ fn visit(
     let digest = sha512_hex(&bytes);
     files.push(BundleFile {
         path: canonical.clone(),
+        mode: file_mode(&canonical)?,
         name,
         digest,
         bytes,
@@ -515,7 +582,7 @@ mod tests {
         std::fs::write(path, text).expect("write");
     }
 
-    const PACKAGE: &str = "schema: 1\npackage:\n  name: probe\n  version: \"1.0\"\n  release: 1\n  summary: probe\n  license: MIT\n";
+    const PACKAGE: &str = "schema: 2\npackage:\n  name: probe\n  version: \"1.0\"\n  release: 1\n  summary: probe\n  license: MIT\n";
 
     #[test]
     fn a_single_file_is_a_bundle() {
@@ -532,12 +599,71 @@ mod tests {
     }
 
     #[test]
+    fn build_and_output_test_fixtures_join_the_immutable_bundle() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("package.yaml");
+        write(&root, &format!("{PACKAGE}build:\n  tests:\n    - name: upstream\n      script: bash \"$TEST_FILES/upstream.sh\"\n      files: checks\ntests:\n  - name: installed\n    pipeline:\n      - argv: [true]\n        files: vectors\n"));
+        write(&directory.path().join("checks/upstream.sh"), "set -eu\n");
+        write(
+            &directory.path().join("vectors/nested/input.c"),
+            "int main(void) { return 0; }\n",
+        );
+        let bundle = load_recipe_bundle(&root).unwrap();
+        assert!(bundle
+            .files
+            .iter()
+            .any(|file| file.name == "checks/upstream.sh"));
+        assert!(bundle
+            .files
+            .iter()
+            .any(|file| file.name == "vectors/nested/input.c"));
+        let before = bundle.digest().to_owned();
+        write(
+            &directory.path().join("vectors/nested/input.c"),
+            "invalid C\n",
+        );
+        assert_ne!(load_recipe_bundle(&root).unwrap().digest(), before);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn fixture_permissions_are_snapshotted_and_change_bundle_identity() {
+        use std::os::unix::fs::PermissionsExt;
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("package.yaml");
+        write(&root, &format!("{PACKAGE}tests:\n  - name: executable\n    script: \"$TEST_FILES/probe.sh\"\n    files: tests\n"));
+        let fixture = directory.path().join("tests/probe.sh");
+        write(&fixture, "#!/bin/bash\nexit 0\n");
+        std::fs::set_permissions(&fixture, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let original = load_recipe_bundle(&root).unwrap();
+        let saved = original
+            .files
+            .iter()
+            .find(|file| file.name == "tests/probe.sh")
+            .unwrap();
+        assert_eq!(saved.mode, 0o644);
+        std::fs::set_permissions(&fixture, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let executable = load_recipe_bundle(&root).unwrap();
+        let changed = executable
+            .files
+            .iter()
+            .find(|file| file.name == "tests/probe.sh")
+            .unwrap();
+        assert_eq!(changed.mode, 0o755);
+        assert_eq!(saved.digest, changed.digest);
+        assert_ne!(original.digest(), executable.digest());
+        write(&fixture, "exit 42\n");
+        assert_eq!(saved.bytes, b"#!/bin/bash\nexit 0\n");
+        assert_eq!(saved.mode, 0o644);
+    }
+
+    #[test]
     fn sections_can_live_in_their_own_files() {
         let directory = tempfile::tempdir().expect("tempdir");
         let root = directory.path().join("package.yaml");
         write(
             &root,
-            "schema: 1\ninclude: [build.yaml, outputs.yaml]\npackage:\n  name: probe\n  version: \"1.0\"\n  release: 1\n  summary: probe\n  license: MIT\n",
+            "schema: 2\ninclude: [build.yaml, outputs.yaml]\npackage:\n  name: probe\n  version: \"1.0\"\n  release: 1\n  summary: probe\n  license: MIT\n",
         );
         write(
             &directory.path().join("build.yaml"),
@@ -761,7 +887,7 @@ mod tests {
         write(&root, &format!("{PACKAGE}include: [build.yaml]\n"));
         write(
             &directory.path().join("build.yaml"),
-            "schema: 1\nbuild:\n  pipeline: []\n",
+            "schema: 2\nbuild:\n  pipeline: []\n",
         );
         let error = load_recipe_bundle(&root).expect_err("fragment schema");
         assert_eq!(error.code, codes::INCLUDE_006);

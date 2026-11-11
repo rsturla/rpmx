@@ -29,7 +29,7 @@ fn find_rpm(directory: &Path) -> PathBuf {
 }
 
 const STAGE_RECIPE: &str = r#"
-schema: 1
+schema: 2
 package:
   name: bundled-stage
   version: "1.0"
@@ -96,7 +96,7 @@ fn build_stage_emits_explicit_bundled_provides() {
 }
 
 const SOURCE_RECIPE: &str = r#"
-schema: 1
+schema: 2
 package:
   name: bundled-source
   version: "1.0"
@@ -156,7 +156,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
     assert!(output.status.success(), "{output:?}");
 
     let inventory: serde_json::Value = serde_json::from_str(
-        &fs::read_to_string(out.join("RPMX-BUNDLED.json")).expect("inventory"),
+        &fs::read_to_string(out.join("source/RPMX-BUNDLED.json")).expect("inventory"),
     )
     .expect("valid JSON");
     let components = inventory["components"].as_array().expect("components");
@@ -174,7 +174,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
     let output = rpmx(&[
         "srpm",
         "--sources",
-        out.to_str().unwrap(),
+        out.join("source").to_str().unwrap(),
         "--output",
         srpm_out.to_str().unwrap(),
         recipe.to_str().unwrap(),
@@ -183,7 +183,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 }
 
 const EXPLAIN_RECIPE: &str = r#"
-schema: 1
+schema: 2
 package:
   name: explain-components
   version: "1.0"
@@ -242,7 +242,7 @@ fn explain_components_without_source_shows_recipe_declarations() {
     let recipe = directory.path().join("package.yaml");
     fs::write(
         &recipe,
-        r#"schema: 1
+        r#"schema: 2
 package:
   name: explain-declared
   version: "1.0"
@@ -278,7 +278,7 @@ fn explain_components_applies_generator_exclusions() {
     let recipe = directory.path().join("package.yaml");
     fs::write(
         &recipe,
-        r#"schema: 1
+        r#"schema: 2
 package:
   name: explain-excluded
   version: "1.0"
@@ -337,7 +337,7 @@ fn explain_components_shows_components_when_the_generator_is_disabled() {
     let recipe = directory.path().join("package.yaml");
     fs::write(
         &recipe,
-        r#"schema: 1
+        r#"schema: 2
 package:
   name: explain-disabled
   version: "1.0"
@@ -379,7 +379,7 @@ fn bundled_declare_step_writes_a_version_from_a_file() {
     let recipe = directory.path().join("package.yaml");
     fs::write(
         &recipe,
-        r#"schema: 1
+        r#"schema: 2
 package:
   name: bundled-declare
   version: "1.0"
@@ -413,7 +413,7 @@ outputs:
     ]);
     assert!(output.status.success(), "{output:?}");
     let inventory: serde_json::Value = serde_json::from_str(
-        &fs::read_to_string(out.join("RPMX-BUNDLED.json")).expect("inventory"),
+        &fs::read_to_string(out.join("source/RPMX-BUNDLED.json")).expect("inventory"),
     )
     .expect("valid JSON");
     let component = inventory["components"]
@@ -439,7 +439,7 @@ fn bundled_declare_rejects_version_and_version_file_together() {
     let recipe = directory.path().join("package.yaml");
     fs::write(
         &recipe,
-        r#"schema: 1
+        r#"schema: 2
 package:
   name: bundled-declare-conflict
   version: "1.0"
@@ -489,7 +489,7 @@ fn bundled_declare_supports_unversioned_components() {
     let recipe = directory.path().join("package.yaml");
     fs::write(
         &recipe,
-        r#"schema: 1
+        r#"schema: 2
 package:
   name: bundled-unversioned
   version: "1.0"
@@ -520,7 +520,7 @@ outputs:
     ]);
     assert!(output.status.success(), "{output:?}");
     let inventory: serde_json::Value = serde_json::from_str(
-        &fs::read_to_string(out.join("RPMX-BUNDLED.json")).expect("inventory"),
+        &fs::read_to_string(out.join("source/RPMX-BUNDLED.json")).expect("inventory"),
     )
     .expect("valid JSON");
     let component = inventory["components"]
@@ -542,7 +542,7 @@ fn bundled_declare_rejects_an_invalid_name() {
     let recipe = directory.path().join("package.yaml");
     fs::write(
         &recipe,
-        r#"schema: 1
+        r#"schema: 2
 package:
   name: bundled-invalid
   version: "1.0"

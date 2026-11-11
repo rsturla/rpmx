@@ -6,14 +6,189 @@ use crate::profile::{
 };
 use crate::root::container::{image_digest_for_arch, podman_run};
 use crate::root::lock::{
-    closure_digest, LockedBuilder, LockedPackage, PackageKey, RootLock, DOCUMENT, VERSION,
+    closure_digest, LockedBuilder, LockedImage, LockedPackage, PackageKey, PackageOrigin, RootLock,
+    DOCUMENT, VERSION,
 };
+use crate::root::metadata_cache::MetadataCache;
 use rpmx_base::error::{codes, Error, Result};
 use rpmx_store::cas;
 
 pub fn resolve_profile(
     profile: &Profile,
     profile_name: &str,
+    work: &Path,
+    cache: &Path,
+) -> Result<RootLock> {
+    resolve_inner(
+        profile,
+        profile_name,
+        LocalPackages::Mandatory(&super::CandidateSet::default()),
+        None,
+        work,
+        cache,
+    )
+}
+
+const CANDIDATE_REPOSITORY: &str = "rpmx-candidates";
+
+enum LocalPackages<'a> {
+    Mandatory(&'a super::CandidateSet),
+    Repository {
+        repository: &'a super::CandidateRepository,
+        required: &'a [String],
+    },
+}
+
+impl LocalPackages<'_> {
+    fn pool(&self) -> &super::CandidateSet {
+        match self {
+            Self::Mandatory(pool) => pool,
+            Self::Repository { repository, .. } => &repository.pool,
+        }
+    }
+    fn required(&self) -> Result<Vec<&super::Candidate>> {
+        match self {
+            Self::Mandatory(pool) => Ok(pool.packages().iter().collect()),
+            Self::Repository {
+                repository,
+                required,
+            } => required
+                .iter()
+                .map(|name| {
+                    repository
+                        .pool
+                        .packages()
+                        .iter()
+                        .find(|candidate| candidate.metadata().name == *name)
+                        .ok_or_else(|| {
+                            Error::new(
+                                codes::ROOT_009,
+                                format!("required candidate output '{name}' is absent"),
+                            )
+                        })
+                })
+                .collect(),
+        }
+    }
+}
+
+/// Resolve exact subject outputs and tools; other unpublished siblings remain optional providers.
+pub fn resolve(
+    policy: &super::RootPolicy,
+    candidates: &super::CandidateRepository,
+    required_outputs: &[String],
+    tools: &[String],
+    work: &Path,
+    cache: &Path,
+) -> Result<RootLock> {
+    let mut profile = policy.profile.clone();
+    profile.packages.install = tools.to_vec();
+    resolve_inner(
+        &profile,
+        "package-acceptance",
+        LocalPackages::Repository {
+            repository: candidates,
+            required: required_outputs,
+        },
+        policy.images.as_ref(),
+        work,
+        cache,
+    )
+}
+
+/// Add check tools without changing any byte of the pinned build package closure.
+/// Assembly is a separate operation against the resulting complete lock.
+pub fn extend(
+    baseline: &RootLock,
+    additions: &[String],
+    work: &Path,
+    cache: &Path,
+) -> Result<RootLock> {
+    baseline.validate()?;
+    if additions.is_empty() {
+        let mut unchanged = baseline.clone();
+        unchanged.root_digest = None;
+        unchanged.rpmdb_digest = None;
+        return Ok(unchanged);
+    }
+    let policy = super::RootPolicy::from_lock(baseline)?;
+    let paths = baseline
+        .packages
+        .values()
+        .flatten()
+        .map(|package| cas::path(cache, &package.checksum))
+        .collect::<Result<Vec<_>>>()?;
+    let pins = super::CandidateSet::import(cache, &paths)?;
+    for (arch, packages) in &baseline.packages {
+        for package in packages {
+            if !pins.packages().iter().any(|candidate| {
+                candidate.checksum() == package.checksum
+                    && candidate.metadata().name == package.name
+                    && candidate.metadata().arch == *arch
+                    && candidate.metadata().evr() == package.evr
+            }) {
+                return Err(Error::new(
+                    codes::ROOT_009,
+                    format!(
+                        "pinned package metadata disagrees with CAS payload {}",
+                        package.checksum
+                    ),
+                ));
+            }
+        }
+    }
+    let mut profile = policy.profile.clone();
+    profile.packages.install = additions.to_vec();
+    let mut extended = resolve_inner(
+        &profile,
+        &format!("{}-checks", baseline.profile),
+        LocalPackages::Mandatory(&pins),
+        policy.images.as_ref(),
+        work,
+        cache,
+    )?;
+    for (arch, packages) in &baseline.packages {
+        for pinned in packages {
+            let resolved = extended
+                .packages
+                .get_mut(arch)
+                .and_then(|entries| {
+                    entries
+                        .iter_mut()
+                        .find(|package| package.name == pinned.name)
+                })
+                .ok_or_else(|| {
+                    Error::new(
+                        codes::ROOT_009,
+                        format!(
+                            "check dependencies remove pinned {}-{}.{}",
+                            pinned.name, pinned.evr, arch
+                        ),
+                    )
+                })?;
+            if resolved.evr != pinned.evr || resolved.checksum != pinned.checksum {
+                return Err(Error::new(codes::ROOT_009, format!("check dependencies change pinned {}-{}.{}; choose compatible check tools or update the build root", pinned.name, pinned.evr, arch)));
+            }
+            *resolved = pinned.clone();
+        }
+    }
+    extended.closure_digest = closure_digest(
+        &extended.releasever,
+        &extended.archs,
+        &extended.repositories,
+        &extended.packages,
+    );
+    extended.root_digest = None;
+    extended.rpmdb_digest = None;
+    extended.validate()?;
+    Ok(extended)
+}
+
+fn resolve_inner(
+    profile: &Profile,
+    profile_name: &str,
+    local: LocalPackages<'_>,
+    images: Option<&LockedBuilder>,
     work: &Path,
     cache: &Path,
 ) -> Result<RootLock> {
@@ -27,15 +202,106 @@ pub fn resolve_profile(
             ),
         ));
     }
+    let candidates = local.pool();
+    let required = local.required()?;
+    let original_profile = profile;
+    let mut effective = profile.clone();
+    for candidate in candidates.packages() {
+        if candidate.metadata().arch != "noarch" && candidate.metadata().arch != profile.arch() {
+            return Err(Error::new(
+                codes::ROOT_009,
+                format!(
+                    "candidate {} is not for {}",
+                    candidate.spec(),
+                    profile.arch()
+                ),
+            ));
+        }
+        for repository in &mut effective.repositories {
+            repository.exclude.push(candidate.spec());
+        }
+    }
+    for candidate in &required {
+        effective
+            .packages
+            .install
+            .retain(|request| request != &candidate.metadata().name);
+    }
+    if let LocalPackages::Repository { repository, .. } = &local {
+        if effective
+            .repositories
+            .iter()
+            .any(|entry| entry.id == CANDIDATE_REPOSITORY)
+        {
+            return Err(Error::new(
+                codes::ROOT_006,
+                "repository id rpmx-candidates is reserved for immutable candidate inputs",
+            ));
+        }
+        effective.repositories.insert(
+            0,
+            Repository {
+                id: CANDIDATE_REPOSITORY.to_string(),
+                baseurl: Some(format!("file://{}", repository.path().display())),
+                metalink: None,
+                mirrorlist: None,
+                gpgkey: None,
+                repo_gpgcheck: false,
+                exclude: vec![],
+                priority: Some(1),
+                auth: None,
+            },
+        );
+    }
+    let profile = &effective;
     let arch = profile.arch();
-    let image = profile.builder_image();
-    let image_digest = image_digest_for_arch(&image, profile.arch())?;
+    let host = rpmx_base::arch::Arch::current()?;
+    let (resolver, installer) = if let Some(images) = images {
+        if images.resolver.architecture() != host.as_str()
+            || images.installer.architecture() != arch
+        {
+            return Err(Error::new(codes::ROOT_006, "locked tool image platforms do not match this host and target; resolve with an explicit profile"));
+        }
+        super::container::ensure_locked_image(
+            images.resolver.reference(),
+            images.resolver.digest(),
+            host.as_str(),
+        )?;
+        super::container::ensure_locked_image(
+            images.installer.reference(),
+            images.installer.digest(),
+            arch,
+        )?;
+        (images.resolver.clone(), images.installer.clone())
+    } else {
+        let reference = profile.builder_image();
+        let installer = LockedImage::new(
+            reference.clone(),
+            image_digest_for_arch(&reference, arch)?,
+            arch,
+        )?;
+        let resolver = LockedImage::new(
+            reference.clone(),
+            image_digest_for_arch(&reference, host.as_str())?,
+            host.as_str(),
+        )?;
+        (resolver, installer)
+    };
+    let image = resolver.pinned_reference();
 
     prepare_work(work)?;
     let _scratch = ResolverScratch {
         work: work.to_path_buf(),
     };
+    let candidate_requests = match &local {
+        LocalPackages::Mandatory(_) => candidates.stage(cache, &work.join("candidates"))?,
+        LocalPackages::Repository { .. } => {
+            required.iter().map(|candidate| candidate.spec()).collect()
+        }
+    };
     let setup = write_repositories(work, &profile.repositories)?;
+    let metadata_cache = MetadataCache::new(profile, resolver.digest(), cache);
+    metadata_cache.restore(work);
 
     // Resolve all requests in one transaction. Downloading each request's
     // closure can keep a newer dependency beside an exact older request.
@@ -48,15 +314,75 @@ pub fn resolve_profile(
         dnf_base_args(profile)
             .into_iter()
             .chain([
+                "--refresh".to_string(),
                 "install".to_string(),
                 "--store=/work/transaction".to_string(),
             ])
             .chain(profile.packages.install.iter().cloned())
+            .chain(candidate_requests)
             .collect(),
     )?;
 
-    let downloaded = read_downloaded(&work.join("transaction/packages"), cache)?;
-    if downloaded.is_empty() {
+    let transaction = read_transaction(&work.join("transaction/transaction.json"))?;
+    for candidate in &required {
+        if !transaction
+            .iter()
+            .any(|package| candidate_nevra(candidate, &package.nevra))
+        {
+            return Err(Error::new(codes::ROOT_009, format!("resolver removed or replaced mandatory candidate {}; pinned packages cannot change", candidate.spec())));
+        }
+    }
+    let selected = candidates
+        .packages()
+        .iter()
+        .filter(|candidate| {
+            transaction
+                .iter()
+                .any(|package| candidate_nevra(candidate, &package.nevra))
+        })
+        .collect::<Vec<_>>();
+    for package in &transaction {
+        if stored_repository_id(&package.repo_id) == CANDIDATE_REPOSITORY
+            && !selected
+                .iter()
+                .any(|candidate| candidate_nevra(candidate, &package.nevra))
+        {
+            return Err(Error::new(
+                codes::ROOT_009,
+                format!(
+                    "candidate repository selected unknown RPM {}",
+                    package.nevra
+                ),
+            ));
+        }
+    }
+
+    // DNF does not create a download directory when every input is a local RPM.
+    let downloaded_path = work.join("transaction/packages");
+    let mut downloaded = if downloaded_path.is_dir() {
+        read_downloaded(&downloaded_path, cache)?
+    } else {
+        Vec::new()
+    };
+    for package in &downloaded {
+        if let Some(candidate) = candidates.packages().iter().find(|candidate| {
+            candidate.metadata().name == package.name && candidate.metadata().arch == package.arch
+        }) {
+            if package.digest != candidate.checksum() {
+                return Err(Error::new(
+                    codes::ROOT_009,
+                    format!("resolver substituted candidate {}", candidate.spec()),
+                ));
+            }
+        }
+    }
+    downloaded.retain(|package| {
+        !candidates
+            .packages()
+            .iter()
+            .any(|candidate| candidate.checksum() == package.digest)
+    });
+    if downloaded.is_empty() && selected.is_empty() {
         return Err(Error::new(
             codes::ROOT_008,
             "the resolver downloaded no packages",
@@ -75,8 +401,11 @@ pub fn resolve_profile(
     }
 
     let specs = downloaded.iter().map(Downloaded::spec).collect::<Vec<_>>();
-    let metadata =
-        query_repositories(&image, work, profile, &specs, &setup.mounts, &setup.secrets)?;
+    let metadata = if specs.is_empty() {
+        BTreeMap::new()
+    } else {
+        query_repositories(&image, work, profile, &specs, &setup.mounts, &setup.secrets)?
+    };
 
     let mut packages: BTreeMap<String, Vec<LockedPackage>> = BTreeMap::new();
     for package in downloaded {
@@ -89,18 +418,44 @@ pub fn resolve_profile(
                 ),
             )
         })?;
+        if found.repo_id == CANDIDATE_REPOSITORY {
+            return Err(Error::new(
+                codes::ROOT_009,
+                format!(
+                    "candidate repository supplied an unknown payload {}",
+                    package.spec()
+                ),
+            ));
+        }
         packages
             .entry(package.arch.clone())
             .or_default()
             .push(LockedPackage {
                 name: package.name.clone(),
-                repo_id: found.repo_id.clone(),
+                origin: PackageOrigin::Repository {
+                    repository: found.repo_id.clone(),
+                    location: None,
+                },
                 evr: package.evr(),
                 checksum: package.digest.clone(),
                 size: package.size,
                 srpm: found.srpm.clone().or(package.srpm.clone()),
                 module: None,
-                location: None,
+            });
+    }
+    for candidate in selected {
+        let metadata = candidate.metadata();
+        packages
+            .entry(metadata.arch.clone())
+            .or_default()
+            .push(LockedPackage {
+                name: metadata.name.clone(),
+                evr: metadata.evr(),
+                checksum: candidate.checksum().to_string(),
+                size: candidate.size(),
+                origin: PackageOrigin::Candidate,
+                srpm: None,
+                module: None,
             });
     }
     for entries in packages.values_mut() {
@@ -111,14 +466,14 @@ pub fn resolve_profile(
     let closure = closure_digest(
         &profile.releasever,
         &archs,
-        &profile.repositories,
+        &original_profile.repositories,
         &packages,
     );
     // The lock is a distributable artefact. Keep the repository identity and
     // signing policy, but not credential references, which are host-specific.
-    let repositories = repositories_for_lock(&profile.repositories);
+    let repositories = repositories_for_lock(&original_profile.repositories);
 
-    Ok(RootLock {
+    let lock = RootLock {
         document: DOCUMENT.to_string(),
         version: VERSION,
         profile: profile_name.to_string(),
@@ -133,23 +488,99 @@ pub fn resolve_profile(
         packages,
         closure_digest: closure,
         root_digest: None,
+        rpmdb_digest: None,
         builder: Some(LockedBuilder {
-            image,
-            image_digest,
+            resolver,
+            installer,
         }),
         seed: None,
         generation: None,
         requirement: None,
-    })
+    };
+    lock.validate()?;
+    metadata_cache.publish(work);
+    Ok(lock)
+}
+
+#[derive(serde::Deserialize)]
+struct StoredTransaction {
+    version: String,
+    rpms: Vec<StoredRpm>,
+}
+#[derive(serde::Deserialize)]
+struct StoredRpm {
+    nevra: String,
+    action: String,
+    repo_id: String,
+}
+
+fn read_transaction(path: &Path) -> Result<Vec<StoredRpm>> {
+    let bytes = std::fs::read(path).map_err(|error| {
+        Error::new(
+            codes::ROOT_009,
+            format!("cannot read solved transaction {}: {error}", path.display()),
+        )
+    })?;
+    let transaction: StoredTransaction = serde_json::from_slice(&bytes).map_err(|error| {
+        Error::new(
+            codes::ROOT_009,
+            format!("invalid solved transaction: {error}"),
+        )
+    })?;
+    if transaction.version != "1.0" {
+        return Err(Error::new(
+            codes::ROOT_009,
+            format!(
+                "unsupported DNF transaction version '{}'; expected 1.0",
+                transaction.version
+            ),
+        ));
+    }
+    if transaction
+        .rpms
+        .iter()
+        .any(|package| package.action != "Install")
+    {
+        return Err(Error::new(codes::ROOT_009, "root resolution requires a fresh-install transaction; removals and replacements are forbidden"));
+    }
+    Ok(transaction.rpms)
+}
+
+fn stored_repository_id(value: &str) -> &str {
+    value
+        .strip_prefix("@stored_transaction(")
+        .and_then(|value| value.strip_suffix(')'))
+        .unwrap_or(value)
+}
+
+fn candidate_nevra(candidate: &super::Candidate, nevra: &str) -> bool {
+    nevra == candidate.spec()
+        || (candidate.metadata().epoch == 0
+            && nevra
+                == format!(
+                    "{}-0:{}.{}",
+                    candidate.metadata().name,
+                    candidate.metadata().evr(),
+                    candidate.metadata().arch
+                ))
 }
 
 fn prepare_work(work: &Path) -> Result<()> {
     // The RPMs and the empty installroot are outputs of this run. A reused work
     // directory must not feed packages from an earlier resolution into the
     // closure. Repository definitions and credentials are regenerated too, so a
-    // stale repository cannot leak into the transaction. The metadata cache is
-    // safe to keep: dnf revalidates it.
-    for directory in ["rpms", "transaction", "root", "repos.d", "keys"] {
+    // stale repository cannot leak into the transaction. Only remote metadata
+    // from the persistent snapshot cache is copied back after this reset.
+    for directory in [
+        "rpms",
+        "transaction",
+        "candidates",
+        "root",
+        "repos.d",
+        "keys",
+        "cache",
+        "persist",
+    ] {
         let path = work.join(directory);
         if path.exists() {
             std::fs::remove_dir_all(&path).map_err(|error| {
@@ -746,6 +1177,10 @@ fn dnf_base_args(profile: &Profile) -> Vec<String> {
         ),
         "--setopt=cachedir=/work/cache".to_string(),
         "--setopt=persistdir=/work/persist".to_string(),
+        // A fresh installroot does not load distribution defaults. Select
+        // the newest compatible closure, including exact selector requires,
+        // rather than forcing an incompatible newest generic candidate.
+        "--setopt=best=False".to_string(),
     ];
     if !profile.options.docs {
         args.push("--setopt=tsflags=nodocs".to_string());
@@ -1008,9 +1443,19 @@ mod local_repository_tests {
         let packages = directory.path().join("transaction/packages");
         std::fs::create_dir_all(&packages).unwrap();
         std::fs::write(packages.join("stale.rpm"), "stale payload").unwrap();
+        std::fs::create_dir_all(directory.path().join("cache/local/repodata")).unwrap();
+        std::fs::write(
+            directory.path().join("cache/local/repodata/primary.xml"),
+            "stale metadata",
+        )
+        .unwrap();
+        std::fs::create_dir_all(directory.path().join("persist")).unwrap();
+        std::fs::write(directory.path().join("persist/state"), "stale state").unwrap();
         prepare_work(directory.path()).unwrap();
         assert!(!directory.path().join("transaction").exists());
         assert!(directory.path().join("cache").is_dir());
+        assert!(!directory.path().join("cache/local").exists());
+        assert!(!directory.path().join("persist/state").exists());
     }
 
     #[test]
@@ -1408,5 +1853,496 @@ mod local_repository_tests {
             redact(text, &["s3cret".to_string()]),
             "failed with password *** and *** again"
         );
+    }
+}
+
+#[cfg(test)]
+mod candidate_transaction_tests {
+    use super::*;
+
+    #[test]
+    #[ignore = "requires rootless Podman and the Fedora builder image"]
+    fn candidate_closure_replays_without_input_paths_and_rejects_missing_dependencies() {
+        let work = tempfile::tempdir().unwrap();
+        let cache = work.path().join("cas");
+        let fixtures = work.path().join("inputs");
+        std::fs::create_dir(&fixtures).unwrap();
+        let provider = super::super::candidate::tests::rpm(
+            &fixtures,
+            "rpmx-fixture-provider",
+            "1",
+            "noarch",
+            None,
+        );
+        let consumer = super::super::candidate::tests::rpm(
+            &fixtures,
+            "rpmx-fixture-consumer",
+            "1",
+            "noarch",
+            Some("rpmx-fixture-provider"),
+        );
+        let candidates = super::super::CandidateSet::import(&cache, &[consumer, provider]).unwrap();
+        let arch = rpmx_base::arch::Arch::current().unwrap();
+        let profile = crate::profile::Profile {
+            document: crate::profile::DOCUMENT.to_string(),
+            version: crate::profile::VERSION,
+            name: None,
+            releasever: "44".to_string(),
+            dist_tag: None,
+            archs: vec![arch.to_string()],
+            builder: crate::profile::Builder {
+                image: Some("registry.fedoraproject.org/fedora:44".to_string()),
+            },
+            repositories: vec![],
+            packages: Default::default(),
+            cross: None,
+            modules: Default::default(),
+            options: Default::default(),
+            paths: Default::default(),
+            sbom: false,
+        };
+        let policy = super::super::RootPolicy::from_profile(&profile, arch).unwrap();
+        std::fs::remove_dir_all(&fixtures).unwrap();
+        let lock = resolve_inner(
+            &policy.profile,
+            "candidate-control",
+            LocalPackages::Mandatory(&candidates),
+            None,
+            &work.path().join("resolve"),
+            &cache,
+        )
+        .unwrap();
+        assert!(lock.repositories.is_empty());
+        assert_eq!(lock.packages.values().flatten().count(), 2);
+        assert!(lock
+            .packages
+            .values()
+            .flatten()
+            .all(|package| matches!(package.origin, PackageOrigin::Candidate)));
+        let root = work.path().join("root");
+        let selection = super::super::RootSelection::assemble(
+            lock.clone(),
+            super::super::AssembleOptions {
+                cache: &cache,
+                work: &work.path().join("assemble"),
+                root: &root,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(
+                selection
+                    .path()
+                    .join("usr/share/rpmx-fixture-consumer/value")
+            )
+            .unwrap(),
+            "rpmx-fixture-consumer=1\n"
+        );
+        let saved = work.path().join("root.lock.yaml");
+        super::super::write_lock(&saved, selection.lock()).unwrap();
+        assert!(super::super::RootSelection::load(&saved, selection.path(), arch.as_str()).is_ok());
+        let replay = work.path().join("replay");
+        super::super::RootSelection::assemble(
+            lock,
+            super::super::AssembleOptions {
+                cache: &cache,
+                work: &work.path().join("assemble-replay"),
+                root: &replay,
+            },
+        )
+        .unwrap();
+        // RPM databases are excluded from the filesystem digest because RPM
+        // updates their bookkeeping. They must nevertheless match the lock.
+        let image = selection
+            .lock()
+            .builder
+            .as_ref()
+            .unwrap()
+            .installer
+            .pinned_reference();
+        let query = super::super::container::query_root(selection.path(), &image, arch).unwrap();
+        assert!(
+            query.status.success(),
+            "{}",
+            String::from_utf8_lossy(&query.stderr)
+        );
+        assert!(
+            super::super::RootSelection::load(&saved, selection.path(), arch.as_str()).is_ok(),
+            "an ordinary RPM query must not invalidate the database proof"
+        );
+        let erase = std::process::Command::new("podman")
+            .args(["run", "--rm", "--pull=never", "--network=none", "-v"])
+            .arg(format!("{}:/root:Z", selection.path().display()))
+            .arg(image)
+            .args([
+                "rpm",
+                "--root",
+                "/root",
+                "--justdb",
+                "--nodeps",
+                "-e",
+                "rpmx-fixture-consumer",
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            erase.status.success(),
+            "{}",
+            String::from_utf8_lossy(&erase.stderr)
+        );
+        assert_eq!(
+            rpmx_store::tree::digest_root(selection.path()).unwrap(),
+            selection.digest()
+        );
+        let error = super::super::RootSelection::load(&saved, selection.path(), arch.as_str())
+            .err()
+            .unwrap();
+        assert!(
+            error.message.contains("installed RPM database differs"),
+            "{}",
+            error.message
+        );
+        let consumer_only = candidates
+            .select(&["rpmx-fixture-consumer".to_string()])
+            .unwrap();
+        let error = resolve_inner(
+            &policy.profile,
+            "candidate-control",
+            LocalPackages::Mandatory(&consumer_only),
+            None,
+            &work.path().join("missing-resolve"),
+            &cache,
+        )
+        .unwrap_err();
+        assert!(
+            error.message.contains("rpmx-fixture-provider"),
+            "{}",
+            error.message
+        );
+        // A conflicting payload is a packaging error, never a reason to replace files
+        // or turn off dependency checks during assembly.
+        let mut conflicting = Vec::new();
+        for name in ["rpmx-conflict-first", "rpmx-conflict-second"] {
+            let path = work.path().join(format!("{name}.rpm"));
+            let mut builder =
+                rpm::PackageBuilder::new(name, "1", "MIT", "noarch", "file conflict fixture");
+            builder
+                .with_file_contents(
+                    name.as_bytes(),
+                    rpm::FileOptions::new("/usr/share/rpmx-conflict/value"),
+                )
+                .unwrap();
+            builder.build().unwrap().write_file(&path).unwrap();
+            conflicting.push(path);
+        }
+        let conflicting = super::super::CandidateSet::import(&cache, &conflicting).unwrap();
+        let conflict_lock = resolve_inner(
+            &policy.profile,
+            "candidate-control",
+            LocalPackages::Mandatory(&conflicting),
+            None,
+            &work.path().join("conflict-resolve"),
+            &cache,
+        )
+        .unwrap();
+        let error = super::super::RootSelection::assemble(
+            conflict_lock,
+            super::super::AssembleOptions {
+                cache: &cache,
+                work: &work.path().join("conflict-assemble"),
+                root: &work.path().join("conflict-root"),
+            },
+        )
+        .err()
+        .expect("conflicting files must fail the single locked transaction");
+        assert!(error.message.contains("conflict"), "{}", error.message);
+    }
+}
+
+#[cfg(test)]
+mod extension_tests {
+    use super::*;
+
+    #[test]
+    fn unsupported_or_mutating_solver_transactions_fail_closed() {
+        let work = tempfile::tempdir().unwrap();
+        let path = work.path().join("transaction.json");
+        for action in ["Remove", "Upgrade", "Downgrade", "Obsoleted"] {
+            std::fs::write(&path, serde_json::to_vec(&serde_json::json!({"version":"1.0", "rpms":[{"nevra":"fixture-1-1.noarch", "action":action,"repo_id":"fixtures"}]})).unwrap()).unwrap();
+            assert!(read_transaction(&path)
+                .err()
+                .unwrap()
+                .message
+                .contains("removals and replacements are forbidden"));
+        }
+        std::fs::write(&path, br#"{"version":"2.0","rpms":[]}"#).unwrap();
+        assert!(read_transaction(&path)
+            .err()
+            .unwrap()
+            .message
+            .contains("unsupported DNF transaction version"));
+    }
+
+    fn package(
+        directory: &Path,
+        name: &str,
+        version: &str,
+        requires: Option<rpm::Dependency>,
+        provides: Option<rpm::Dependency>,
+        obsoletes: Option<rpm::Dependency>,
+    ) -> PathBuf {
+        let path = directory.join(format!("{name}-{version}.rpm"));
+        let mut builder =
+            rpm::PackageBuilder::new(name, version, "MIT", "noarch", "root extension fixture");
+        builder.release("1");
+        if let Some(dependency) = requires {
+            builder.requires(dependency);
+        }
+        if let Some(dependency) = provides {
+            builder.provides(dependency);
+        }
+        if let Some(dependency) = obsoletes {
+            builder.obsoletes(dependency);
+        }
+        builder
+            .with_file_contents(
+                version.as_bytes(),
+                rpm::FileOptions::new(format!("/usr/share/{name}/value")),
+            )
+            .unwrap();
+        builder.build().unwrap().write_file(&path).unwrap();
+        path
+    }
+
+    fn index(directory: &Path) {
+        let output = std::process::Command::new("createrepo_c")
+            .arg(directory)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    fn profile(repository: Option<&Path>) -> Profile {
+        Profile {
+            document: crate::profile::DOCUMENT.into(),
+            version: crate::profile::VERSION,
+            name: Some("root-extension-fixture".into()),
+            releasever: "44".into(),
+            dist_tag: None,
+            archs: vec![rpmx_base::arch::Arch::current().unwrap().to_string()],
+            builder: crate::profile::Builder {
+                image: Some("registry.fedoraproject.org/fedora:44".into()),
+            },
+            repositories: repository
+                .into_iter()
+                .map(|path| Repository {
+                    id: "fixtures".into(),
+                    baseurl: Some(format!("file://{}", path.display())),
+                    metalink: None,
+                    mirrorlist: None,
+                    gpgkey: None,
+                    repo_gpgcheck: false,
+                    exclude: vec![],
+                    priority: None,
+                    auth: None,
+                })
+                .collect(),
+            packages: Default::default(),
+            cross: None,
+            modules: Default::default(),
+            options: Default::default(),
+            paths: Default::default(),
+            sbom: false,
+        }
+    }
+
+    #[test]
+    #[ignore = "requires rootless Podman, createrepo_c and the Fedora builder image"]
+    fn extending_the_real_transaction_keeps_base_bytes_and_rejects_upgrades_and_obsoletes() {
+        let work = tempfile::tempdir().unwrap();
+        let repository = work.path().join("repo");
+        std::fs::create_dir(&repository).unwrap();
+        package(&repository, "rpmx-base", "1", None, None, None);
+        package(&repository, "rpmx-base", "2", None, None, None);
+        package(
+            &repository,
+            "rpmx-check-tool",
+            "1",
+            Some(rpm::Dependency::eq("rpmx-base", "1-1")),
+            Some(rpm::Dependency::any("rpmx-check-capability")),
+            None,
+        );
+        package(
+            &repository,
+            "rpmx-incompatible-tool",
+            "1",
+            Some(rpm::Dependency::greater_eq("rpmx-base", "2-1")),
+            None,
+            None,
+        );
+        package(
+            &repository,
+            "rpmx-obsoleting-tool",
+            "1",
+            None,
+            Some(rpm::Dependency::any("rpmx-base")),
+            Some(rpm::Dependency::any("rpmx-base")),
+        );
+        index(&repository);
+        let cache = work.path().join("cas");
+        let mut policy = profile(Some(&repository));
+        policy.packages.install = vec!["rpmx-base-1-1.noarch".into()];
+        let baseline = resolve_profile(
+            &policy,
+            "baseline",
+            &work.path().join("base-resolve"),
+            &cache,
+        )
+        .unwrap();
+        let original = serde_json::to_vec(&baseline).unwrap();
+        // Republishing the same NEVRA must not change a pinned baseline payload.
+        let mut replacement = rpm::PackageBuilder::new(
+            "rpmx-base",
+            "1",
+            "MIT",
+            "noarch",
+            "different publisher payload",
+        );
+        replacement
+            .release("1")
+            .with_file_contents(
+                b"replacement",
+                rpm::FileOptions::new("/usr/share/rpmx-base/value"),
+            )
+            .unwrap();
+        replacement
+            .build()
+            .unwrap()
+            .write_file(repository.join("rpmx-base-1.rpm"))
+            .unwrap();
+        index(&repository);
+        let extended = extend(
+            &baseline,
+            &["rpmx-check-capability".into()],
+            &work.path().join("extension"),
+            &cache,
+        )
+        .unwrap();
+        assert_eq!(extended.packages.values().flatten().count(), 2);
+        let base = &baseline.packages["noarch"][0];
+        assert!(
+            extended.packages["noarch"].contains(base),
+            "base origins, NEVRA and checksum must all survive"
+        );
+        assert!(extended.packages["noarch"]
+            .iter()
+            .any(|package| package.name == "rpmx-check-tool"));
+        assert_eq!(serde_json::to_vec(&baseline).unwrap(), original);
+        let selected =
+            super::super::RootSelection::temporary(extended, &cache, &work.path().join("assembly"))
+                .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(selected.path().join("usr/share/rpmx-base/value")).unwrap(),
+            "1"
+        );
+        assert_eq!(
+            std::fs::read_to_string(selected.path().join("usr/share/rpmx-check-tool/value"))
+                .unwrap(),
+            "1"
+        );
+        for (index, name) in ["rpmx-incompatible-tool", "rpmx-obsoleting-tool"]
+            .iter()
+            .enumerate()
+        {
+            let error = extend(
+                &baseline,
+                &[(*name).into()],
+                &work.path().join(format!("negative-{index}")),
+                &cache,
+            )
+            .unwrap_err();
+            assert!(error.message.contains("rpmx-base"), "{}", error.message);
+        }
+        assert_eq!(serde_json::to_vec(&baseline).unwrap(), original);
+    }
+
+    #[test]
+    #[ignore = "requires rootless Podman, createrepo_c and the Fedora builder image"]
+    fn the_solver_selects_required_subject_and_virtual_sibling_without_unrelated_tools() {
+        let work = tempfile::tempdir().unwrap();
+        let indexed = work.path().join("indexed");
+        std::fs::create_dir(&indexed).unwrap();
+        let inputs = vec![
+            package(
+                &indexed,
+                "rpmx-subject",
+                "1",
+                Some(rpm::Dependency::any("rpmx-runtime-capability")),
+                None,
+                None,
+            ),
+            package(
+                &indexed,
+                "rpmx-runtime-sibling",
+                "1",
+                None,
+                Some(rpm::Dependency::any("rpmx-runtime-capability")),
+                None,
+            ),
+            package(&indexed, "rpmx-unrelated-compiler", "1", None, None, None),
+        ];
+        index(&indexed);
+        let cache = work.path().join("cas");
+        let candidates = super::super::CandidateSet::import(&cache, &inputs).unwrap();
+        let repository =
+            super::super::CandidateRepository::verify(&candidates, &indexed, &cache).unwrap();
+        std::fs::remove_dir_all(&indexed).unwrap();
+        let policy = super::super::RootPolicy::from_profile(
+            &profile(None),
+            rpmx_base::arch::Arch::current().unwrap(),
+        )
+        .unwrap();
+        let lock = resolve(
+            &policy,
+            &repository,
+            &["rpmx-subject".into()],
+            &[],
+            &work.path().join("resolve"),
+            &cache,
+        )
+        .unwrap();
+        let names = lock
+            .packages
+            .values()
+            .flatten()
+            .map(|package| package.name.as_str())
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(
+            names,
+            std::collections::BTreeSet::from(["rpmx-subject", "rpmx-runtime-sibling"])
+        );
+        assert!(lock
+            .packages
+            .values()
+            .flatten()
+            .all(|package| package.origin == PackageOrigin::Candidate));
+        assert!(lock.repositories.is_empty());
+        let encoded = serde_json::to_string(&lock).unwrap();
+        assert!(!encoded.contains(repository.path().to_str().unwrap()));
+        let selected =
+            super::super::RootSelection::temporary(lock, &cache, &work.path().join("assemble"))
+                .unwrap();
+        assert!(selected
+            .path()
+            .join("usr/share/rpmx-runtime-sibling/value")
+            .is_file());
+        assert!(!selected
+            .path()
+            .join("usr/share/rpmx-unrelated-compiler")
+            .exists());
     }
 }

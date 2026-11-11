@@ -4,7 +4,7 @@
 # python3 to emit a header, make to compile, and coreutils to install. It is the
 # end-to-end test for rebuilding from a locked root.
 
-schema: 1
+schema: 2
 
 package:
   name: c-hello
@@ -62,6 +62,23 @@ build:
     - uses: make
     - uses: strip
 
+  tests:
+    - name: smoke
+      argv: ["./c-hello"]
+    - name: no-network
+      pipeline:
+        - runs: |
+            python3 - <<'PY'
+            import socket
+            try:
+                socket.create_connection(("1.1.1.1", 80), timeout=2)
+            except OSError:
+                pass
+            else:
+                raise SystemExit("network is reachable")
+            PY
+      packages:
+        - python3
 outputs:
   - name: c-hello
     scriptlets:
@@ -71,22 +88,5 @@ outputs:
       include: ["/usr/bin/c-hello*"]
 
 tests:
-  - name: smoke
-    stage: build
-    argv: ["./c-hello"]
-  - name: no-network
-    stage: build
-    pipeline:
-      - runs: |
-          python3 - <<'PY'
-          import socket
-          try:
-              socket.create_connection(("1.1.1.1", 80), timeout=2)
-          except OSError:
-              pass
-          else:
-              raise SystemExit("network is reachable")
-          PY
   - name: installed
-    stage: installed
     argv: ["c-hello"]

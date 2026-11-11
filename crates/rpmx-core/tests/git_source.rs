@@ -44,7 +44,7 @@ fn repository(parent: &Path) -> String {
 
 fn recipe(commit: &str, digest: &str) -> String {
     format!(
-        "schema: 1\npackage:\n  name: demo\n  version: \"1.0\"\n  release: 1\n  summary: demo\n  license: MIT\nsources:\n  - name: demo\n    kind: git\n    digest: \"{digest}\"\n    locators:\n      - kind: git\n        url: file://REPO\n        commit: {commit}\n"
+        "schema: 2\npackage:\n  name: demo\n  version: \"1.0\"\n  release: 1\n  summary: demo\n  license: MIT\nsources:\n  - name: demo\n    kind: git\n    digest: \"{digest}\"\n    locators:\n      - kind: git\n        url: file://REPO\n        commit: {commit}\n"
     )
 }
 

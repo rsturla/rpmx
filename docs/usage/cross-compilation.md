@@ -171,49 +171,26 @@ sysroot's architecture. Without `--arch`, the output goes to
 
 ## Tests
 
-- `tests: stage: build` runs in the build sandbox and crosses like any step.
-- `tests: stage: installed` runs the packaged target binary in a target test
-  root assembled from the sysroot lock, so it needs the target architecture to
-  be executable: binfmt on the build host, or a machine of that architecture.
+`build.tests` checks source workspaces in the build execution environment.
+Its tools extend the pinned host closure; they do not populate the target
+sysroot. A source suite that executes target binaries still needs a supported
+execution environment. A cross compilation alone does not prove runtime behavior.
 
-### Building and testing separately
-
-`rpmx build` runs the recipe's tests by default. A cross build executes
-build-stage tests natively (they are host binaries) but cannot execute
-installed-stage tests without binfmt, so `--skip-installed` keeps the native
-tests while leaving the installed stage to the target. A fast host can also
-package without testing at all:
+Package acceptance is always explicit and uses existing target RPMs:
 
 ```console
-# build host: no installed tests, no binfmt
-rpmx build package.yaml --skip-installed
-# or: package only, no tests at all
-rpmx build package.yaml --no-tests
-
-# test host of the target architecture: no binfmt, no build root
-rpmx test package.yaml --install-dir packages/aarch64 --profile native-aarch64.profile.yaml
+# Build host: source checks run here; no implicit package acceptance.
+rpmx build package.yaml --output packages
+# Target host or supported emulation environment:
+rpmx test package.yaml --install-dir packages/aarch64 \
+  --arch aarch64 --test-profile native-aarch64.profile.yaml
 ```
 
-The test host uses a *native* profile for its own architecture; the `cross`
-block describes the build host and is not used there. To avoid resolving the
-test root again, ship the `*.test-root.lock.json` the build writes and pin it:
-
-```console
-rpmx test package.yaml --install-dir DIR --test-root-lock DIR/pkg.test-root.lock.json --offline
-```
-
-The pinned form still needs the test root's packages in the local cache and the
-builder image available, because it assembles the root from the lock. To move
-the root itself instead, save it and ship the directory:
-
-```console
-rpmx build package.yaml --run-tests --save-test-root ./test-root
-# on the machine that will run the tests:
-rpmx test package.yaml --test-root ./test-root --test installed
-```
-
-`--test-root` needs no build root, profile, cache or network: the directory
-contains the package under test and its lock sits beside it.
+The acceptance profile describes the target runtime architecture and layout.
+Its repository policy does not alter the build root. To replay an already
+prepared environment, save it during an acceptance run and pass it with
+`--replay`; an arbitrary bare lock or root directory is not accepted. See
+[testing](testing.md#repository-policy-and-replay).
 
 ## Limitations
 

@@ -1,5 +1,19 @@
 # Profiles and build roots
 
+Root resolution reuses public remote repository metadata from
+`<CAS>/dnf-metadata-v1`. Each resolver gets private copies and refreshes
+`repomd.xml`; changed repositories still produce a fresh package resolution.
+Local repositories, authenticated repositories, downloaded RPMs and previous
+transactions are not shared through this metadata cache. Corrupt snapshots
+cause a cold resolution and are repaired after a successful download.
+
+Resolution prefers the newest compatible versions within repository policy.
+A generic package request can select an older version when another package
+requires it exactly. Exact requests and all package dependencies remain
+mandatory. An unsatisfiable profile fails; the resolver does not skip broken
+packages to produce a partial root. This policy is explicit and does not depend
+on the builder image's DNF defaults.
+
 ## Profiles
 
 A profile is root policy, not a recipe:
@@ -144,8 +158,8 @@ host. Authentication problems are reported as `RPMX-ROOT-019`.
 
 ### Automatic root (normal use)
 
-With `build.root` or `--profile`, `build`, `test`, `source` and `lock` do this
-automatically:
+With `build.root` or `--profile`, production source/build operations select a
+build environment automatically:
 
 1. Merge the profile packages with the plan's dependencies and step needs.
 2. Hash the requirement.
@@ -153,6 +167,11 @@ automatically:
 4. On a miss, resolve with dnf5, assemble offline, verify the digest and record
    `root.lock.yaml`.
 5. Reuse the root on the next build.
+
+Package acceptance uses its own minimal environments through `rpmx test
+--install-dir`; it does not prepare a build root. `rpmx lock` records the
+declared requirement and available verified cache evidence without resolving
+or assembling a root.
 
 `--profile FILE` wins over a profile the recipe names in `build.root`, and its
 policy (dist tag) follows the same profile. An inline `build.root` cannot be
@@ -176,17 +195,21 @@ rpmx root assemble root.lock.yaml --root ./root --output root.assembled.yaml
 rpmx build package.yaml --root-lock root.assembled.yaml --root ./root
 ```
 
-Explicit roots are verified by hashing the tree. Auto-resolved roots are
-trusted on a cache hit, with a mtime check; use explicit `--root` when you need
-proof. `rpmx root digest ROOT` computes the deterministic digest. On a root
+Version 2 root locks bind the exact package closure. Assembly checks the installed
+package set, then records both the filesystem tree digest and authoritative RPM
+database digest. Explicit roots and cache hits verify those digests without an
+image pull or network access. Changing only package database headers or erasing
+their records invalidates the root too.
+
+`rpmx root digest ROOT` computes the deterministic tree digest. On a root
 with mode-000 files it re-enters a user namespace via `unshare` or `podman
 unshare`.
 
 ### QEMU appliance
 
 A QEMU build does not boot the build root. It boots a separate transport
-appliance containing the kernel, initramfs, systemd-networkd, `openssh-server`
-and `tar`. The appliance is resolved from the profile's repositories, but its
+appliance containing the kernel, initramfs, systemd-networkd, `openssh-server`,
+`dbus-broker` and `tar`. The appliance is resolved from the profile's repositories, but its
 package list is owned by rpmx; do not add those packages to
 `packages.install`.
 
@@ -196,6 +219,12 @@ resolves and assembles it on demand and caches it under
 `rpmx runner resolve|assemble|inspect` to manage it explicitly, or pass
 `--runner-asset-root DIR` to `build`, `source`, `test` or `rebuild` to use a
 preassembled one.
+
+Payload commands run in private systemd services with separate PID and network
+namespaces. Input and stage mounts stay read-only when policy requires it.
+The runner stops the payload service and verifies quiescence before exporting
+workspace changes or collecting artifacts. The transport appliance remains
+separate from the package environment.
 
 `--offline` never resolves an appliance; an uncached one is
 `RPMX-ROOT-020`.

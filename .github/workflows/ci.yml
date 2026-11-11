@@ -15,12 +15,33 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+      - name: Prepare native execution tests
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends bubblewrap uidmap util-linux
+          if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+          # Ubuntu's separate Bubblewrap profile denies child capabilities,
+          # including DAC access needed by private package transactions.
+          if [ -f /etc/apparmor.d/bwrap-userns-restrict ]; then
+            sudo apparmor_parser -R /etc/apparmor.d/bwrap-userns-restrict
+          fi
+          # Fail here instead of silently skipping the real sandbox tests.
+          bwrap --unshare-all --ro-bind / / -- true
       - name: Format
         run: cargo fmt --all -- --check
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Test
         run: cargo test --workspace
+      - name: Native sandbox policy diagnostics
+        if: failure()
+        run: |
+          sudo journalctl -k --no-pager -n 100
+          if [ -f /etc/apparmor.d/bwrap-userns-restrict ]; then
+            cat /etc/apparmor.d/bwrap-userns-restrict
+          fi
 
   licenses:
     runs-on: ubuntu-latest

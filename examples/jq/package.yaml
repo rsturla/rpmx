@@ -1,6 +1,6 @@
 # The split example: each top-level section lives in its own file.
 # `rpmx build examples/jq/package.yaml` composes them before planning.
-schema: 1
+schema: 2
 include:
   - sources.yaml
   - build.yaml

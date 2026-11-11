@@ -32,6 +32,17 @@ The three things to remember:
 - Rust 1.88+ to build rpmx (the vendored rpm crate requires it).
 - `bubblewrap` for native steps, or `podman` for root resolution and
   image-backed rebuilds.
+- Linux 5.11 or newer with `close_range(CLOSE_RANGE_CLOEXEC)` available.
+  Runner commands inherit only their standard streams and explicit handles.
+  A host that blocks this syscall fails command startup; there is no fallback
+  that leaves caller descriptors open in the sandbox.
+- For bubblewrap: util-linux `unshare` with `--map-auto`, `newuidmap` and
+  `newgidmap` (the `uidmap` or `shadow-utils` package), and at least 65,536
+  subordinate IDs allocated to your user in both `/etc/subuid` and `/etc/subgid`.
+  Run rpmx as a regular user. `rpmx doctor --strict` verifies this setup.
+  Host security policy must also permit `CAP_DAC_OVERRIDE` in private RPM
+  transactions. Doctor verifies a real read and write to a disposable mode-000
+  file; creating a namespace alone does not establish this prerequisite.
 - `dnf5` in the builder image used for root resolution.
 - `tar`, `findutils`, `binutils` and the usual build tools inside the root.
 - For emulated foreign-architecture builds: `qemu-user-static` with an enabled
@@ -110,7 +121,7 @@ guest output, go to stderr.
 | `rpmx lint [FILE]` | Check every rule, expand the matrix. |
 | `rpmx plan [FILE]` | Show cells, outputs, tests and expanded commands. |
 | `rpmx build [FILE]` | Resolve root, fetch, snapshot, SRPM, build, package, index. |
-| `rpmx test [FILE]` | Run tests, building first when needed. |
+| `rpmx test [FILE] --install-dir DIR` | Accept existing binary RPMs without building. |
 | `rpmx rebuild SRPM` | Rebuild a source RPM, assembling its embedded root. |
 | `rpmx lock [FILE]` | Write or check `package.lock.json`. |
 | `rpmx explain TOPIC` | Explain policy, root, steps, matrix, requires, files or components. |

@@ -8,6 +8,19 @@ use rpmx_core::guest::CrossToolchain;
 use rpmx_core::{parse_recipe, plan};
 
 fn root_lock(arch: &str) -> rpmx_core::root::RootLock {
+    // This fixture only tests SRPM serialization; it makes no assembled-root claim.
+    let packages = std::collections::BTreeMap::from([(
+        arch.to_string(),
+        vec![rpmx_core::root::LockedPackage {
+            name: "build-base".into(),
+            origin: rpmx_core::root::PackageOrigin::Candidate,
+            evr: "1-1".into(),
+            checksum: rpmx_core::srpm::sha512_hex(b"unresolved serialization fixture"),
+            size: 32,
+            srpm: None,
+            module: None,
+        }],
+    )]);
     rpmx_core::root::RootLock {
         document: rpmx_core::root::DOCUMENT.to_string(),
         version: rpmx_core::root::VERSION,
@@ -20,9 +33,10 @@ fn root_lock(arch: &str) -> rpmx_core::root::RootLock {
         libdir: "/usr/lib64".to_string(),
         sbom: true,
         repositories: Vec::new(),
-        packages: std::collections::BTreeMap::new(),
-        closure_digest: "sha512:00".to_string(),
-        root_digest: Some("sha512:00".to_string()),
+        closure_digest: rpmx_core::root::closure_digest("44", &[arch.to_string()], &[], &packages),
+        packages,
+        root_digest: None,
+        rpmdb_digest: None,
         builder: None,
         seed: None,
         generation: None,
@@ -31,7 +45,7 @@ fn root_lock(arch: &str) -> rpmx_core::root::RootLock {
 }
 
 const RECIPE: &str = r#"
-schema: 1
+schema: 2
 package:
   name: demo
   version: "1.0"
@@ -54,6 +68,7 @@ fn source_package_contains_recipe_lock_manifest_and_sources() {
     fs::write(sources.path().join("demo-1.0.tar.gz"), b"source").expect("source");
 
     let packages = prepare_source_packages(SourcePackageOptions {
+        recipe_mode: 0o644,
         recipe: &recipe,
         plan: &plan,
         recipe_bytes: RECIPE.as_bytes(),
@@ -90,6 +105,7 @@ fn source_package_rejects_reserved_source_names() {
     fs::write(sources.path().join("package.yaml"), b"collision").expect("source");
 
     let error = prepare_source_packages(SourcePackageOptions {
+        recipe_mode: 0o644,
         recipe: &recipe,
         plan: &plan,
         recipe_bytes: RECIPE.as_bytes(),
@@ -134,7 +150,7 @@ fn binary_package_prepares_one_package_per_output() {
 #[test]
 fn lock_records_builtin_step_digests() {
     let yaml = r#"
-schema: 1
+schema: 2
 package:
   name: demo
   version: "1.0"
@@ -157,6 +173,7 @@ outputs:
     fs::write(sources.path().join("demo-1.0.tar.gz"), b"source").expect("source");
 
     let packages = prepare_source_packages(SourcePackageOptions {
+        recipe_mode: 0o644,
         recipe: &recipe,
         plan: &plan,
         recipe_bytes: yaml.as_bytes(),
@@ -193,7 +210,7 @@ outputs:
 #[test]
 fn binary_dependencies_are_generated_from_elf_and_pkgconfig() {
     const RECIPE: &str = r#"
-schema: 1
+schema: 2
 package:
   name: demo
   version: "1.0"
@@ -253,7 +270,7 @@ outputs:
 #[test]
 fn output_file_flags_mark_license_doc_and_config() {
     const RECIPE: &str = r#"
-schema: 1
+schema: 2
 package:
   name: demo
   version: "1.0"
@@ -312,11 +329,13 @@ fn source_package_embeds_included_recipe_fragments() {
     let sources = tempfile::tempdir().expect("tempdir");
     fs::write(sources.path().join("demo-1.0.tar.gz"), b"source").expect("source");
     let includes = vec![RecipeInclude {
+        mode: 0o644,
         name: "build.yaml".to_string(),
         bytes: b"build:\n  pipeline: []\n".to_vec(),
     }];
 
     let packages = prepare_source_packages(SourcePackageOptions {
+        recipe_mode: 0o644,
         recipe: &recipe,
         plan: &plan,
         recipe_bytes: RECIPE.as_bytes(),
@@ -349,7 +368,7 @@ fn source_package_embeds_included_recipe_fragments() {
 #[test]
 fn every_file_class_contributes_its_dependencies() {
     const RECIPE: &str = r#"
-schema: 1
+schema: 2
 package:
   name: demo
   version: "1.0"
@@ -504,7 +523,7 @@ outputs:
 #[test]
 fn a_recipe_can_disable_a_generator_and_exclude_a_dependency() {
     const RECIPE: &str = r#"
-schema: 1
+schema: 2
 package:
   name: demo
   version: "1.0"
@@ -588,6 +607,7 @@ fn a_cross_source_package_embeds_the_sysroot_and_toolchain() {
     toolchain.ldflags = vec!["-Wl,-z,now".to_string()];
 
     let packages = prepare_source_packages(SourcePackageOptions {
+        recipe_mode: 0o644,
         recipe: &recipe,
         plan: &plan,
         recipe_bytes: RECIPE.as_bytes(),
@@ -626,6 +646,7 @@ fn a_cross_source_package_embeds_the_sysroot_and_toolchain() {
     );
     // A native SRPM has no cross block.
     let native = prepare_source_packages(SourcePackageOptions {
+        recipe_mode: 0o644,
         recipe: &recipe,
         plan: &plan,
         recipe_bytes: RECIPE.as_bytes(),
@@ -707,7 +728,7 @@ fn explicit_and_discovered_components_become_bundled_provides() {
 #[test]
 fn the_bundled_generator_can_be_disabled_per_output() {
     let recipe = r#"
-schema: 1
+schema: 2
 package:
   name: demo
   version: "1.0"
@@ -753,7 +774,7 @@ outputs:
 #[test]
 fn generators_exclude_drops_a_bundled_provide() {
     let recipe = r#"
-schema: 1
+schema: 2
 package:
   name: demo
   version: "1.0"
@@ -807,7 +828,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 fn a_padded_bundled_name_is_rejected_at_plan_time() {
     let error = common::try_load(
         r#"
-schema: 1
+schema: 2
 package:
   name: demo
   version: "1.0"

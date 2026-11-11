@@ -79,6 +79,8 @@ pub fn check_build_tools(
         inputs: BTreeMap::new(),
         input: None,
         input_file: None,
+        files: None,
+        artifacts: Vec::new(),
     };
     sandbox.run(&step).map_err(|error| {
         Error::new(

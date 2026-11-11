@@ -67,7 +67,7 @@ selected by package name: you still run `rpmx build --distro acme`, and the
 tool uses the fork instead of the upstream `package.yaml`.
 
 ```yaml
-schema: 1
+schema: 2
 package:
   name: toolbox
   version: "3.1.0"
