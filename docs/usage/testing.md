@@ -59,6 +59,19 @@ For existing RPMs or saved roots, use `rpmx test --test-output DIR`.
 The default directory for these standalone runs is `./test-results`.
 Each test has separate `stdout.log` and `stderr.log` files. Output still appears while commands run.
 
+Before preparing each installed-test environment, `rpmx test` prints its group
+number, output and explicit tools to stderr. JSON results stay on stdout.
+The test output directory also keeps `environments/N/environment.json` and
+`environments/N/root.lock.yaml`. The JSON identifies the group's tests and
+records `preparing`, `ready` or `error`. The lock records the exact resolved
+dependency closure without repository authentication settings. The supplied
+RPMs under test remain separate from this dependency lock.
+
+These files survive temporary root cleanup. An assembly failure retains the
+resolved lock when resolution completed. A resolution failure records its
+diagnostic code without a lock. Each new invocation clears old environment
+metadata so a failed preparation cannot reuse evidence from an earlier run.
+
 Declare workspace files or directories to preserve, including upstream reports:
 
 ```yaml

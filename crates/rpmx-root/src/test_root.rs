@@ -221,6 +221,9 @@ pub fn prepare(options: TestRootOptions<'_>) -> Result<PreparedTestRoot> {
             "no binary RPMs were selected for the test root",
         ));
     }
+    // Retain the resolved dependency evidence if assembly fails. Callers can
+    // copy this lock to persistent reports before the scratch directory goes.
+    crate::root::write_lock(&options.work.join("root.lock.yaml"), &test_lock)?;
     // podman treats a relative -v source as a named volume.
     let rpms = options
         .rpms

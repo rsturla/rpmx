@@ -261,3 +261,132 @@ fn an_explicit_skip_needs_no_root_and_setup_errors_get_reports() {
     assert!(!output.status.success());
     assert!(std::fs::read_to_string(report).unwrap().contains("<error "));
 }
+
+#[test]
+fn environment_reports_survive_inputs_and_keep_json_stdout_clean() {
+    if !Command::new("bwrap")
+        .args(["--unshare-all", "--ro-bind", "/", "/", "--", "true"])
+        .output()
+        .is_ok_and(|output| output.status.success())
+    {
+        return;
+    }
+    let inputs = tempfile::tempdir().unwrap();
+    let reports = tempfile::tempdir().unwrap();
+    let path = recipe(
+        inputs.path(),
+        "  - name: success\n    stage: installed\n    argv: ['true']",
+    );
+    let lock_path = inputs.path().join("root.lock.yaml");
+    host_lock(&lock_path);
+    let mut lock = rpmx_core::root::load_lock(&lock_path).unwrap();
+    lock.repositories.push(rpmx_core::profile::Repository {
+        id: "private".into(),
+        baseurl: Some("https://example.invalid/packages".into()),
+        metalink: None,
+        mirrorlist: None,
+        gpgkey: None,
+        repo_gpgcheck: false,
+        exclude: Vec::new(),
+        priority: None,
+        auth: Some(rpmx_core::profile::RepositoryAuth {
+            username: Some("test-user".into()),
+            password: Some("test-secret".into()),
+            ..Default::default()
+        }),
+    });
+    lock.closure_digest = rpmx_core::root::closure_digest(
+        &lock.releasever,
+        &lock.archs,
+        &lock.repositories,
+        &lock.packages,
+    );
+    rpmx_core::root::write_lock(&lock_path, &lock).unwrap();
+    let stale = reports.path().join("environments/stale/root.lock.yaml");
+    std::fs::create_dir_all(stale.parent().unwrap()).unwrap();
+    std::fs::write(&stale, "stale lock").unwrap();
+    let output = rpmx(&[
+        "test",
+        path.to_str().unwrap(),
+        "--test-root",
+        "/",
+        "--test-root-lock",
+        lock_path.to_str().unwrap(),
+        "--test-output",
+        reports.path().to_str().unwrap(),
+        "--json",
+        "--offline",
+    ]);
+    assert!(output.status.success(), "{output:?}");
+    let document: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(document["ok"], true);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("using saved test environment 1/1: output=all outputs; tools=none"));
+    assert!(!stderr.contains("test-secret"));
+    drop(inputs);
+    assert!(!stale.exists());
+    let evidence = reports.path().join("environments/1");
+    let metadata: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(evidence.join("environment.json")).unwrap()).unwrap();
+    assert_eq!(metadata["status"], "ready");
+    assert_eq!(metadata["tests"], serde_json::json!(["success"]));
+    let saved_text = std::fs::read_to_string(evidence.join("root.lock.yaml")).unwrap();
+    assert!(!saved_text.contains("test-secret") && !saved_text.contains("test-user"));
+    let saved = rpmx_core::root::load_lock(&evidence.join("root.lock.yaml")).unwrap();
+    assert_eq!(saved.closure_digest, lock.closure_digest);
+    assert_eq!(
+        saved.packages.keys().collect::<Vec<_>>(),
+        lock.packages.keys().collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn environment_setup_errors_replace_stale_evidence() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = recipe(
+        directory.path(),
+        "  - name: needs-image\n    stage: installed\n    argv: ['true']",
+    );
+    let stage = directory.path().join("stage");
+    std::fs::create_dir(&stage).unwrap();
+    let artifacts = directory.path().join("rpms");
+    let built = rpmx(&[
+        "build",
+        path.to_str().unwrap(),
+        "--stage",
+        stage.to_str().unwrap(),
+        "--output",
+        artifacts.to_str().unwrap(),
+        "--no-tests",
+    ]);
+    assert!(built.status.success(), "{built:?}");
+    let lock = directory.path().join("root.lock.yaml");
+    host_lock(&lock);
+    let reports = directory.path().join("results");
+    let stale = reports.join("environments/1/root.lock.yaml");
+    std::fs::create_dir_all(stale.parent().unwrap()).unwrap();
+    std::fs::write(&stale, "stale lock").unwrap();
+    let output = rpmx(&[
+        "test",
+        path.to_str().unwrap(),
+        "--root-lock",
+        lock.to_str().unwrap(),
+        "--install-dir",
+        artifacts.join(std::env::consts::ARCH).to_str().unwrap(),
+        "--test-output",
+        reports.to_str().unwrap(),
+        "--json",
+        "--offline",
+    ]);
+    assert!(!output.status.success(), "{output:?}");
+    let _: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("preparing test environment 1/1: output=all outputs; tools=none"));
+    assert!(!stale.exists());
+    let metadata: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(reports.join("environments/1/environment.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(metadata["status"], "error");
+    assert_eq!(metadata["error_code"], "RPMX-BUILD-007");
+}

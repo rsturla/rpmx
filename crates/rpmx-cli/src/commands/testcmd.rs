@@ -13,7 +13,8 @@ use rpmx_core::test_runner::{run_planned_tests, TestSandboxConfig};
 use rpmx_core::Error;
 
 use crate::commands::test_roots::{
-    grouped, key_for, read_rpms, rpms_for_output, under_test_repo, validate_selectors, TestRpm,
+    grouped, key_for, read_rpms, rpms_for_output, under_test_repo, validate_selectors, TestGroup,
+    TestRpm,
 };
 use crate::commands::{
     load_plan, pipeline::BuildPipeline, report, resolve_policy, OptionalSigningArgs, PlanPolicy,
@@ -33,6 +34,15 @@ pub fn run(args: TestArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
 }
 
 fn run_inner(args: TestArgs, pipeline_dir: Option<&Path>) -> Result<(), Error> {
+    let environments = args.test_output.join("environments");
+    if environments.exists() {
+        std::fs::remove_dir_all(&environments).map_err(|error| {
+            Error::new(
+                codes::TEST_003,
+                format!("cannot clear {}: {error}", environments.display()),
+            )
+        })?;
+    }
     if let Some(path) = args.junit.as_deref() {
         let _ = std::fs::remove_file(path);
     }
@@ -369,6 +379,75 @@ fn installed_tests(
     Ok(tests)
 }
 
+fn begin_environment_report(
+    results: &Path,
+    index: usize,
+    total: usize,
+    group: &TestGroup,
+    action: &str,
+) -> Result<PathBuf, Error> {
+    let directory = results.join("environments").join((index + 1).to_string());
+    std::fs::create_dir_all(&directory).map_err(|error| {
+        Error::new(
+            codes::TEST_003,
+            format!("cannot create {}: {error}", directory.display()),
+        )
+    })?;
+    eprintln!(
+        "rpmx: {action} test environment {}/{}: output={}; tools={}",
+        index + 1,
+        total,
+        group.output.as_deref().unwrap_or("all outputs"),
+        if group.packages.is_empty() {
+            "none".to_string()
+        } else {
+            group.packages.join(", ")
+        }
+    );
+    write_environment_report(&directory, index, total, group, "preparing", None)?;
+    Ok(directory)
+}
+
+fn write_environment_report(
+    directory: &Path,
+    index: usize,
+    total: usize,
+    group: &TestGroup,
+    status: &str,
+    error_code: Option<&str>,
+) -> Result<(), Error> {
+    let document = serde_json::json!({
+        "schema": 1,
+        "index": index + 1,
+        "total": total,
+        "output": group.output,
+        "packages": group.packages,
+        "tests": group.tests.iter().map(|test| test.qualified_name()).collect::<Vec<_>>(),
+        "status": status,
+        "error_code": error_code,
+    });
+    let path = directory.join("environment.json");
+    std::fs::write(&path, format!("{document:#}\n")).map_err(|error| {
+        Error::new(
+            codes::TEST_003,
+            format!("cannot write {}: {error}", path.display()),
+        )
+    })
+}
+
+fn persist_environment_lock(
+    directory: &Path,
+    lock: &rpmx_core::root::RootLock,
+) -> Result<(), Error> {
+    let mut evidence = lock.clone();
+    // Saved locks can retain credential references. Test reports need the
+    // exact dependency closure, not repository authentication settings.
+    for repository in &mut evidence.repositories {
+        repository.auth = None;
+    }
+    rpmx_core::root::write_lock(&directory.join("root.lock.yaml"), &evidence)
+}
+
 fn run_installed(
     args: &TestArgs,
     arch: &str,
@@ -424,7 +503,16 @@ fn run_installed(
                 format!("{} is not a directory", directory.display()),
             ));
         }
-        for group in &groups {
+        for (index, group) in groups.iter().enumerate() {
+            let report = begin_environment_report(
+                &args.test_output,
+                index,
+                groups.len(),
+                group,
+                "using saved",
+            )?;
+            persist_environment_lock(&report, &lock)?;
+            write_environment_report(&report, index, groups.len(), group, "ready", None)?;
             roots.insert(group.key.clone(), directory.clone());
         }
     } else {
@@ -441,28 +529,58 @@ fn run_installed(
             ));
         }
         for (index, group) in groups.iter().enumerate() {
+            let report = begin_environment_report(
+                &args.test_output,
+                index,
+                groups.len(),
+                group,
+                "preparing",
+            )?;
             let group_work = work.path().join(format!("test-root-{index}"));
-            let group_rpms = rpms_for_output(group.output.as_deref(), rpms, &group.packages)?;
-            let repo = under_test_repo(&group_work.join("test-rpms"), &group_rpms)?;
-            let prepared = prepare_test_root(TestRootOptions {
-                lock: &lock,
-                destination: if groups.len() == 1 {
-                    args.save_test_root.as_deref()
-                } else {
-                    None
-                },
-                pinned: if groups.len() == 1 {
-                    args.test_root_lock.as_deref()
-                } else {
-                    None
-                },
-                tools: &group.packages,
-                rpms: &group_rpms,
-                repo: &repo,
-                image: lock.builder.as_ref().map(|builder| builder.image.as_str()),
-                cache: &cache,
-                work: &group_work,
-            })?;
+            let prepared = (|| {
+                let group_rpms = rpms_for_output(group.output.as_deref(), rpms, &group.packages)?;
+                let repo = under_test_repo(&group_work.join("test-rpms"), &group_rpms)?;
+                prepare_test_root(TestRootOptions {
+                    lock: &lock,
+                    destination: if groups.len() == 1 {
+                        args.save_test_root.as_deref()
+                    } else {
+                        None
+                    },
+                    pinned: if groups.len() == 1 {
+                        args.test_root_lock.as_deref()
+                    } else {
+                        None
+                    },
+                    tools: &group.packages,
+                    rpms: &group_rpms,
+                    repo: &repo,
+                    image: lock.builder.as_ref().map(|builder| builder.image.as_str()),
+                    cache: &cache,
+                    work: &group_work,
+                })
+            })();
+            let prepared = match prepared {
+                Ok(prepared) => prepared,
+                Err(error) => {
+                    let resolved = group_work.join("root.lock.yaml");
+                    if resolved.is_file() {
+                        let resolved = rpmx_core::root::load_lock(&resolved)?;
+                        persist_environment_lock(&report, &resolved)?;
+                    }
+                    write_environment_report(
+                        &report,
+                        index,
+                        groups.len(),
+                        group,
+                        "error",
+                        Some(error.code.as_str()),
+                    )?;
+                    return Err(error);
+                }
+            };
+            persist_environment_lock(&report, &prepared.lock)?;
+            write_environment_report(&report, index, groups.len(), group, "ready", None)?;
             roots.insert(group.key.clone(), prepared.path.clone());
             prepared_roots.push(prepared);
         }
