@@ -23,7 +23,9 @@ use guest::{
     generate_ssh_key, inject_build_mount, inject_network, inject_ssh, known_hosts, APPLIANCE_LABEL,
     BUILD_LABEL, BUILD_ROOT_MOUNT,
 };
-use ssh::{shell_quote, step_script, stream_command_output, stream_tar_in, stream_tar_out};
+use ssh::{
+    shell_quote, step_command, step_script, stream_command_output, stream_tar_in, stream_tar_out,
+};
 
 pub struct QemuBackend<'a> {
     pub root: &'a Path,
@@ -296,17 +298,43 @@ impl QemuSession {
     }
 }
 
+// SSH startup is part of the host elapsed time, but not the guest deadline.
+// A late ordinary failure must keep its command failure classification.
+fn step_timed_out(
+    status: std::process::ExitStatus,
+    elapsed: Duration,
+    timeout: NonZeroU64,
+) -> bool {
+    matches!(status.code(), Some(124 | 137)) && elapsed >= Duration::from_secs(timeout.get())
+}
+
 impl Session for QemuSession {
     fn run(&mut self, request: &RunnerRequest<'_>) -> Result<()> {
         let script = step_script(request);
+        // Give the appliance's supervisor time to send KILL and return its
+        // status before the host-side transport watchdog closes SSH.
+        let transport_timeout = NonZeroU64::new(request.timeout.get().saturating_add(10))
+            .expect("positive transport timeout");
+        let command = step_command(request.timeout);
+        let started = Instant::now();
         let (status, stderr) = self.ssh_run_with_timeout(
-            self.build_port,
-            &["sh", "-s"],
+            self.control_port,
+            &[&command],
             Some(script.as_bytes()),
-            self.timeout,
+            transport_timeout,
             request.logs,
         )?;
         if !status.success() {
+            if step_timed_out(status, started.elapsed(), request.timeout) {
+                return Err(Error::new(
+                    codes::SANDBOX_004,
+                    format!(
+                        "qemu step '{}' timed out after {}s",
+                        request.label,
+                        request.timeout.get()
+                    ),
+                ));
+            }
             return Err(Error::new(
                 codes::SANDBOX_002,
                 format!(
@@ -415,11 +443,41 @@ fn secure_delete(path: &Path) {
 #[cfg(test)]
 mod tests {
     use super::ssh::{shell_quote, stream_tar_in, stream_tar_out};
-    use super::{secure_delete, ssh_args_for, QemuSession, RunnerConfig};
+    use super::{secure_delete, ssh_args_for, step_timed_out, QemuSession, RunnerConfig};
     use crate::runner::RunnerAssets;
     use rpmx_base::arch::Arch;
     use std::num::{NonZeroU32, NonZeroU64};
     use std::process::{Command, Stdio};
+
+    #[test]
+    fn a_delayed_ordinary_failure_is_not_a_step_timeout() {
+        let started = std::time::Instant::now();
+        let status = Command::new("sh")
+            .args(["-c", "sleep 1.1; exit 7"])
+            .status()
+            .unwrap();
+        assert!(started.elapsed() >= std::time::Duration::from_secs(1));
+        assert!(!step_timed_out(
+            status,
+            started.elapsed(),
+            NonZeroU64::new(1).unwrap()
+        ));
+    }
+
+    #[test]
+    fn supervisor_deadline_status_is_classified_as_timeout() {
+        let started = std::time::Instant::now();
+        let status = Command::new("timeout")
+            .args(["1", "sleep", "30"])
+            .status()
+            .unwrap();
+        assert_eq!(status.code(), Some(124));
+        assert!(step_timed_out(
+            status,
+            started.elapsed(),
+            NonZeroU64::new(1).unwrap()
+        ));
+    }
 
     #[test]
     fn ssh_uses_the_allocated_host_port() {

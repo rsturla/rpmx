@@ -361,6 +361,7 @@ fn run_one_test(
             command: Some(command.clone()),
             args: argv[1..].to_vec(),
             cwd: None,
+            timeout_seconds: None,
             env: test.environment.clone(),
             needs: Vec::new(),
             needs_packages: Vec::new(),

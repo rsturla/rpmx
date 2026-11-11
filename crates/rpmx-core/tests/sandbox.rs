@@ -44,6 +44,7 @@ fn step(command: &str, args: &[&str]) -> PlannedStep {
         command: Some(command.to_string()),
         args: args.iter().map(|arg| arg.to_string()).collect(),
         cwd: None,
+        timeout_seconds: None,
         env: BTreeMap::new(),
         needs: Vec::new(),
         needs_packages: Vec::new(),
@@ -493,4 +494,41 @@ fn runner_selection_is_centralized() {
         Err(error) => error,
     };
     assert_eq!(error.code, "RPMX-ROOT-016");
+}
+
+#[test]
+fn step_deadlines_override_the_default_in_both_directions() {
+    if !bwrap_available() {
+        eprintln!("bwrap not installed; skipping sandbox test");
+        return;
+    }
+    let work = tempfile::tempdir().expect("work");
+    let stage = tempfile::tempdir().expect("stage");
+    let sandbox = Sandbox::new(SandboxConfig {
+        timeout: NonZeroU64::new(1).unwrap(),
+        ..config(work.path(), stage.path())
+    })
+    .unwrap();
+    let mut longer = step("sh", &["-c", "sleep 2"]);
+    longer.timeout_seconds = NonZeroU64::new(5);
+    sandbox
+        .run(&longer)
+        .expect("longer step override beats 1s default");
+    sandbox
+        .run(&step("true", &[]))
+        .expect("short step succeeds with inherited default");
+    let error = sandbox
+        .run(&step("sleep", &["30"]))
+        .expect_err("next step inherits 1s default");
+    assert_eq!(error.code, "RPMX-SANDBOX-004");
+
+    let sandbox = Sandbox::new(config(work.path(), stage.path())).unwrap();
+    let mut shorter = step("sleep", &["30"]);
+    shorter.timeout_seconds = NonZeroU64::new(1);
+    let started = std::time::Instant::now();
+    let error = sandbox
+        .run(&shorter)
+        .expect_err("shorter override beats 3600s default");
+    assert_eq!(error.code, "RPMX-SANDBOX-004");
+    assert!(started.elapsed() < std::time::Duration::from_secs(15));
 }
