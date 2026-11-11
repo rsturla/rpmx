@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
-use rpmx_core::package_spec::{BinaryPackageSpec, SourcePackageSpec};
-use rpmx_core::Error;
+use crate::domain::package_spec::{BinaryPackageSpec, SourcePackageSpec};
+use crate::domain::Error;
 use rpmx_rpm::sign::SigningKey;
 use rpmx_rpm::{write_binary_rpm, write_srpm};
 

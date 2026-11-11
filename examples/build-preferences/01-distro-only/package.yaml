@@ -5,7 +5,7 @@
 # The recipe is distro-neutral. It does not name a build root or a distro.
 # `rpmx build --distro acme` supplies the root and the distro preferences.
 
-schema: 1
+schema: 2
 
 package:
   name: hello-color
@@ -52,5 +52,4 @@ outputs:
 
 tests:
   - name: installed
-    stage: installed
     argv: ["hello-color"]

@@ -183,7 +183,7 @@ pub enum Command {
     Keygen(crate::commands::KeygenArgs),
     /// Sign RPM packages in place with an OpenPGP secret key.
     Sign(crate::commands::SignArgs),
-    /// Run a recipe's tests, building it first when needed.
+    /// Accept existing binary RPMs with the recipe's installed-package tests.
     Test(crate::commands::TestArgs),
     /// Build a recipe end to end, or package an already-staged tree.
     Build(crate::commands::BuildArgs),

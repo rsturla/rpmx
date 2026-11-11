@@ -16,12 +16,14 @@ pub struct RecipeInclude {
     /// Path relative to the root recipe, using `/`.
     pub name: String,
     pub bytes: Vec<u8>,
+    pub mode: u32,
 }
 
 pub struct SourcePackageOptions<'a> {
     pub recipe: &'a Recipe,
     pub plan: &'a Plan,
     pub recipe_bytes: &'a [u8],
+    pub recipe_mode: u32,
     /// Bundle digest covering the root recipe and every fragment.
     pub recipe_digest: Option<&'a str>,
     pub recipe_includes: &'a [RecipeInclude],
@@ -84,7 +86,7 @@ pub fn prepare_source_packages(
     let (steps, step_files) = collect_local_steps(options.plan, options.step_root)?;
     let root_lock = match options.root_lock {
         Some(lock) => {
-            let mut text = serde_json::to_string_pretty(lock)
+            let mut text = serde_json::to_string_pretty(&lock.redacted())
                 .map_err(|error| Error::new(codes::SRPM_006, error.to_string()))?;
             text.push('\n');
             let digest = srpm::sha512_hex(text.as_bytes());
@@ -101,7 +103,7 @@ pub fn prepare_source_packages(
 
     let sysroot_lock = match options.sysroot_lock {
         Some(lock) => {
-            let mut text = serde_json::to_string_pretty(lock)
+            let mut text = serde_json::to_string_pretty(&lock.redacted())
                 .map_err(|error| Error::new(codes::SRPM_006, error.to_string()))?;
             text.push('\n');
             let digest = srpm::sha512_hex(text.as_bytes());
@@ -173,7 +175,7 @@ pub fn prepare_source_packages(
             SourcePackageFile {
                 path: "package.yaml".to_string(),
                 data: options.recipe_bytes.to_vec(),
-                mode: 0o644,
+                mode: options.recipe_mode,
             },
             SourcePackageFile {
                 path: "package.lock.json".to_string(),
@@ -198,7 +200,7 @@ pub fn prepare_source_packages(
                 .map(|include| SourcePackageFile {
                     path: include.name.clone(),
                     data: include.bytes.clone(),
-                    mode: 0o644,
+                    mode: include.mode,
                 }),
         );
         files.extend(step_files.iter().cloned());

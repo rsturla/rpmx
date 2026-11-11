@@ -1814,8 +1814,34 @@ version = "0.0.0"
 dependencies = [
  "clap",
  "libc",
+ "rpmx-application",
+ "rpmx-base",
+ "rpmx-build",
  "rpmx-core",
+ "rpmx-language",
+ "rpmx-root",
  "rpmx-rpm",
+ "serde",
+ "serde_json",
+ "serde_yaml_ng",
+ "tempfile",
+]
+
+[[package]]
+name = "rpmx-application"
+version = "0.0.0"
+dependencies = [
+ "libc",
+ "rpm",
+ "rpmx-base",
+ "rpmx-build",
+ "rpmx-components",
+ "rpmx-language",
+ "rpmx-payload",
+ "rpmx-root",
+ "rpmx-rpm",
+ "rpmx-runner",
+ "rpmx-store",
  "serde",
  "serde_json",
  "serde_yaml_ng",
@@ -1826,10 +1852,12 @@ dependencies = [
 name = "rpmx-base"
 version = "0.0.0"
 dependencies = [
+ "libc",
  "saphyr-parser",
  "serde",
  "serde_yaml_ng",
  "sha2",
+ "tempfile",
 ]
 
 [[package]]
@@ -1949,6 +1977,7 @@ dependencies = [
 name = "rpmx-runner"
 version = "0.0.0"
 dependencies = [
+ "libc",
  "rpmx-base",
  "rpmx-language",
  "rpmx-store",

@@ -35,7 +35,7 @@ const SHA512: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 fn minimal(outputs: &str) -> String {
     format!(
         r#"
-schema: 1
+schema: 2
 package:
   name: foo
   version: "1.0"
@@ -95,7 +95,7 @@ outputs:
 #[test]
 fn anchors_and_aliases_are_rejected() {
     let yaml = r#"
-schema: 1
+schema: 2
 package:
   name: &name foo
   version: "1.0"
@@ -211,7 +211,7 @@ outputs:
 #[test]
 fn unknown_template_in_pipeline_is_rejected() {
     let yaml = r#"
-schema: 1
+schema: 2
 package:
   name: foo
   version: "1.0"
@@ -234,7 +234,7 @@ outputs:
 #[test]
 fn empty_argv_step_is_rejected() {
     let yaml = r#"
-schema: 1
+schema: 2
 package:
   name: foo
   version: "1.0"
@@ -318,7 +318,7 @@ outputs:
 #[test]
 fn release_suffix_is_not_applied_twice() {
     let yaml = r#"
-schema: 1
+schema: 2
 package:
   name: foo
   version: "1.0"
@@ -342,7 +342,7 @@ outputs:
 #[test]
 fn dist_tag_follows_the_matrix_suffix() {
     let yaml = r#"
-schema: 1
+schema: 2
 package:
   name: foo
   version: "1.0"
@@ -396,7 +396,7 @@ outputs:
 #[test]
 fn dist_tag_template_and_dependencies_include_the_suffix() {
     let yaml = r#"
-schema: 1
+schema: 2
 package:
   name: foo
   version: "1.0"
@@ -421,7 +421,7 @@ outputs:
 #[test]
 fn recipe_dependencies_reach_every_output() {
     let yaml = r#"
-schema: 1
+schema: 2
 package:
   name: foo
   version: "1.0"
@@ -454,7 +454,7 @@ outputs:
 #[test]
 fn recipe_dependencies_are_templated_per_cell() {
     let yaml = r#"
-schema: 1
+schema: 2
 package:
   name: foo
   version: "1.0"
@@ -499,7 +499,7 @@ outputs:
 #[test]
 fn weak_dependencies_are_planned_and_templated() {
     let yaml = r#"
-schema: 1
+schema: 2
 package:
   name: foo
   version: "1.0"
@@ -529,7 +529,7 @@ outputs:
 #[test]
 fn template_suffixes_are_reordered_after_the_matrix_suffix() {
     let yaml = r#"
-schema: 1
+schema: 2
 package:
   name: foo
   version: "1.0"
@@ -553,7 +553,7 @@ outputs:
 #[test]
 fn template_suffixes_are_reordered_when_the_build_counter_comes_first() {
     let yaml = r#"
-schema: 1
+schema: 2
 package:
   name: foo
   version: "1.0"
@@ -587,7 +587,7 @@ outputs:
 #[test]
 fn dependency_scope_gets_automatically_appended_suffixes() {
     let yaml = r#"
-schema: 1
+schema: 2
 package:
   name: foo
   version: "1.0"
@@ -653,7 +653,7 @@ outputs:
 #[test]
 fn escaped_template_is_literal() {
     let yaml = r#"
-schema: 1
+schema: 2
 package:
   name: foo
   version: "1.0"
@@ -679,10 +679,8 @@ fn duplicate_test_name_is_rejected() {
         r#"
 tests:
   - name: smoke
-    stage: installed
     argv: ["/usr/bin/foo"]
   - name: smoke
-    stage: build
     argv: ["true"]
 outputs:
   - name: foo
@@ -696,7 +694,7 @@ outputs:
 #[test]
 fn unresolved_template_from_variable_is_rejected() {
     let yaml = r#"
-schema: 1
+schema: 2
 package:
   name: "${vars.base}-x"
   version: "1.0"
@@ -717,7 +715,7 @@ outputs:
 #[test]
 fn metapackage_without_files_is_allowed() {
     let yaml = r#"
-schema: 1
+schema: 2
 package:
   name: foo
   version: "1.0"
@@ -735,7 +733,7 @@ outputs:
 #[test]
 fn package_name_cannot_escape_the_output_directory() {
     let yaml = r#"
-schema: 1
+schema: 2
 package:
   name: "../evil"
   version: "1.0"
@@ -753,7 +751,7 @@ outputs:
 #[test]
 fn boolean_version_is_rejected() {
     let yaml = r#"
-schema: 1
+schema: 2
 package:
   name: foo
   version: true
@@ -936,7 +934,7 @@ outputs:
 #[test]
 fn source_assembly_cannot_use_matrix_templates() {
     let yaml = r#"
-schema: 1
+schema: 2
 package:
   name: foo
   version: "1.0"

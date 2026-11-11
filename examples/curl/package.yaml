@@ -4,7 +4,10 @@
 # real values from `rpmx lock --update`. This file is illustrative, not a
 # tested build.
 
-schema: 1
+# HISTORICAL DESIGN PROPOSAL, not valid schema 2 input. Unsupported features
+# are retained only to explain the original design. See examples/README.md.
+
+schema: 2
 
 package:
   name: curl
@@ -56,6 +59,9 @@ build:
     - zlib-devel
     - libpsl-devel
 
+  tests:
+    - name: unit
+      argv: [ctest, --output-on-failure, --test-dir, build]
 sources:
   - name: curl
     digest: "sha512:00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
@@ -197,18 +203,6 @@ outputs:
           license: true
 
 tests:
-  - name: unit
-    stage: build
-    argv: [ctest, --output-on-failure, --test-dir, build]
   - name: smoke
-    stage: installed
     packages: [ca-certificates]
     argv: [curl, --version]
-  - name: abi
-    stage: installed
-    kind: abi
-    library: libcurl.so.4
-    baseline: abi/libcurl-8.10.json
-  - name: reproduce
-    stage: package
-    kind: reproduce

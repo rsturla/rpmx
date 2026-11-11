@@ -10,6 +10,7 @@ use rpmx_core::sandbox::{Sandbox, SandboxConfig};
 fn config<'a>(workspace: &'a std::path::Path, stage: &'a std::path::Path) -> SandboxConfig<'a> {
     let host = Arch::current().expect("host arch");
     SandboxConfig {
+        writable_root: false,
         runner: RunnerKind::Bwrap,
         host,
         exec: host,
@@ -38,11 +39,14 @@ fn bwrap_available() -> bool {
 
 fn step(command: &str, args: &[&str]) -> PlannedStep {
     PlannedStep {
+        files: None,
+        artifacts: vec![],
         label: "inline".to_string(),
         uses: "inline".to_string(),
         command: Some(command.to_string()),
         args: args.iter().map(|arg| arg.to_string()).collect(),
         cwd: None,
+        timeout_seconds: None,
         env: BTreeMap::new(),
         needs: Vec::new(),
         needs_packages: Vec::new(),
@@ -76,6 +80,7 @@ fn constructing_a_foreign_sandbox_does_not_start_a_runner() {
     let root = tempfile::tempdir().expect("root");
 
     Sandbox::new(SandboxConfig {
+        writable_root: false,
         runner: RunnerKind::Qemu,
         exec: target,
         target,
@@ -182,6 +187,7 @@ fn a_custom_runner_receives_the_arch_contract() {
     let seen = probe.seen.clone();
     Sandbox::with_runner(
         SandboxConfig {
+            writable_root: false,
             host: Arch::X86_64,
             target: Arch::Aarch64,
             jobs: NonZeroU32::new(2).expect("jobs"),
@@ -216,6 +222,7 @@ fn a_custom_runner_receives_the_install_layout() {
     let seen = probe.seen.clone();
     Sandbox::with_runner(
         SandboxConfig {
+            writable_root: false,
             prefix: "/opt",
             libdir: "/opt/lib",
             ..config(work.path(), stage.path())
@@ -377,6 +384,7 @@ fn a_step_that_overruns_is_killed() {
     let stage = tempfile::tempdir().expect("stage");
     let started = std::time::Instant::now();
     let error = Sandbox::new(SandboxConfig {
+        writable_root: false,
         timeout: NonZeroU64::new(1).expect("timeout"),
         ..config(work.path(), stage.path())
     })
@@ -410,6 +418,7 @@ fn podman_session_has_no_network() {
     let work = tempfile::tempdir().expect("work");
     let stage = tempfile::tempdir().expect("stage");
     let sandbox = Sandbox::new(SandboxConfig {
+        writable_root: false,
         runner: RunnerKind::Auto,
         image: Some(image),
         ..config(work.path(), stage.path())
@@ -487,4 +496,41 @@ fn runner_selection_is_centralized() {
         Err(error) => error,
     };
     assert_eq!(error.code, "RPMX-ROOT-016");
+}
+
+#[test]
+fn step_deadlines_override_the_default_in_both_directions() {
+    if !bwrap_available() {
+        eprintln!("bwrap not installed; skipping sandbox test");
+        return;
+    }
+    let work = tempfile::tempdir().expect("work");
+    let stage = tempfile::tempdir().expect("stage");
+    let sandbox = Sandbox::new(SandboxConfig {
+        timeout: NonZeroU64::new(1).unwrap(),
+        ..config(work.path(), stage.path())
+    })
+    .unwrap();
+    let mut longer = step("sh", &["-c", "sleep 2"]);
+    longer.timeout_seconds = NonZeroU64::new(5);
+    sandbox
+        .run(&longer)
+        .expect("longer step override beats 1s default");
+    sandbox
+        .run(&step("true", &[]))
+        .expect("short step succeeds with inherited default");
+    let error = sandbox
+        .run(&step("sleep", &["30"]))
+        .expect_err("next step inherits 1s default");
+    assert_eq!(error.code, "RPMX-SANDBOX-004");
+
+    let sandbox = Sandbox::new(config(work.path(), stage.path())).unwrap();
+    let mut shorter = step("sleep", &["30"]);
+    shorter.timeout_seconds = NonZeroU64::new(1);
+    let started = std::time::Instant::now();
+    let error = sandbox
+        .run(&shorter)
+        .expect_err("shorter override beats 3600s default");
+    assert_eq!(error.code, "RPMX-SANDBOX-004");
+    assert!(started.elapsed() < std::time::Duration::from_secs(15));
 }

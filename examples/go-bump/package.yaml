@@ -4,7 +4,7 @@
 # The bump happens in source assembly, before the SRPM. The build remains
 # offline. This file is illustrative and is not a tested build.
 
-schema: 1
+schema: 2
 
 package:
   name: hello-api
@@ -41,6 +41,9 @@ build:
   packages:
     - "go >= 1.24"
 
+  tests:
+    - name: unit
+      argv: [go, test, ./...]
 sources:
   - name: hello-api
     kind: go-module
@@ -80,10 +83,5 @@ outputs:
         - /usr/bin/hello-api
 
 tests:
-  - name: unit
-    stage: build
-    argv: [go, test, ./...]
-
   - name: smoke
-    stage: installed
     argv: [hello-api, --version]

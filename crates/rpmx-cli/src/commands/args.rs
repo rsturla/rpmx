@@ -46,7 +46,7 @@ pub struct BuildArgs {
     #[arg(
         long,
         conflicts_with_all = [
-            "root_lock", "root", "unsafe_host_root", "run_tests", "test_root_lock",
+            "root_lock", "root", "unsafe_host_root",
             "cache", "proxy", "offline", "jobs", "step_timeout", "sbom",
         ]
     )]
@@ -93,37 +93,18 @@ pub struct BuildArgs {
     /// Use the host root for source assembly (unsafe).
     #[arg(long)]
     pub unsafe_host_root: bool,
-    /// Run the recipe's tests (the default; kept for explicitness).
+    /// Skip build.tests. Package acceptance is a separate operation.
     #[arg(long)]
-    pub run_tests: bool,
-    /// Do not run any tests.
-    #[arg(long, conflicts_with_all = ["run_tests", "test"])]
     pub no_tests: bool,
-    /// With tests, skip installed-stage tests (they execute target binaries).
-    #[arg(long)]
-    pub skip_installed: bool,
-    /// Keep the prepared installed-stage test root here so it can be shipped.
-    #[arg(long, value_name = "DIR")]
-    pub save_test_root: Option<PathBuf>,
     /// Do not write repository metadata after the build.
     #[arg(long)]
     pub no_index: bool,
     /// Skip package policy checks.
     #[arg(long)]
     pub no_lint: bool,
-    /// Run only the named test; repeat for several. Use OUTPUT/NAME when a
-    /// bare name is shared by several outputs.
-    #[arg(long = "test", value_name = "NAME")]
-    pub test: Vec<String>,
-    /// Write a JUnit XML report for the tests that ran.
-    #[arg(long)]
-    pub junit: Option<PathBuf>,
     /// Override the build-level SPDX SBOM path.
     #[arg(long)]
     pub sbom: Option<PathBuf>,
-    /// Use a pinned test-root lock instead of resolving one.
-    #[arg(long, conflicts_with = "no_tests")]
-    pub test_root_lock: Option<PathBuf>,
     #[command(flatten)]
     pub signing: OptionalSigningArgs,
 }
@@ -149,9 +130,6 @@ pub struct RebuildArgs {
     pub cell: Option<String>,
     #[command(flatten)]
     pub runtime: RuntimeArgs,
-    /// Run steps inside this builder image instead of host bwrap.
-    #[arg(long, conflicts_with = "root_lock")]
-    pub root_image: Option<String>,
     /// Root lock describing the build root.
     #[arg(long)]
     pub root_lock: Option<PathBuf>,
@@ -164,37 +142,18 @@ pub struct RebuildArgs {
     /// Do not use the network; fail if the root is not cached.
     #[arg(long)]
     pub offline: bool,
-    /// Run the recipe's tests (the default; kept for explicitness).
+    /// Skip build.tests. Package acceptance is a separate operation.
     #[arg(long)]
-    pub run_tests: bool,
-    /// Do not run any tests.
-    #[arg(long, conflicts_with_all = ["run_tests", "test"])]
     pub no_tests: bool,
-    /// With tests, skip installed-stage tests (they execute target binaries).
-    #[arg(long)]
-    pub skip_installed: bool,
-    /// Keep the prepared installed-stage test root here so it can be shipped.
-    #[arg(long, value_name = "DIR")]
-    pub save_test_root: Option<PathBuf>,
     /// Do not write repository metadata after the build.
     #[arg(long)]
     pub no_index: bool,
     /// Skip package policy checks.
     #[arg(long)]
     pub no_lint: bool,
-    /// Run only the named test; repeat for several. Use OUTPUT/NAME when a
-    /// bare name is shared by several outputs.
-    #[arg(long = "test", value_name = "NAME")]
-    pub test: Vec<String>,
-    /// Write a JUnit XML report for the tests that ran.
-    #[arg(long)]
-    pub junit: Option<PathBuf>,
     /// Override the build-level SPDX SBOM path.
     #[arg(long)]
     pub sbom: Option<PathBuf>,
-    /// Use a pinned test-root lock instead of resolving one.
-    #[arg(long, conflicts_with = "no_tests")]
-    pub test_root_lock: Option<PathBuf>,
     #[command(flatten)]
     pub signing: OptionalSigningArgs,
     /// Suppress reporting when this command is used as a pipeline step.
@@ -247,6 +206,9 @@ pub struct ShellArgs {
     /// Assembled root to use as /. Resolved from the recipe when omitted.
     #[arg(long)]
     pub root: Option<PathBuf>,
+    /// Lock binding the explicitly supplied root.
+    #[arg(long, requires = "root")]
+    pub root_lock: Option<PathBuf>,
     /// Host workspace, mounted at /tmp/build (default: the current directory).
     #[arg(long)]
     pub workspace: Option<PathBuf>,
@@ -323,53 +285,43 @@ pub struct InitArgs {
 
 #[derive(Debug, clap::Args)]
 pub struct TestArgs {
-    /// Recipe to test (default: ./package.yaml).
+    /// Recipe whose package tests will run.
     #[arg(default_value = "package.yaml")]
     pub file: PathBuf,
-    #[command(flatten)]
-    pub policy: crate::cli::PolicyArgs,
-    /// Target architecture used for templates. Defaults to the single target
-    /// the recipe's profile declares, or the host architecture.
+    /// Existing binary RPMs for one target architecture. Never builds RPMs.
+    #[arg(long, value_name = "DIR")]
+    pub install_dir: PathBuf,
+    /// Directory for reports, logs and declared artifacts.
+    #[arg(long, default_value = "test-results")]
+    pub test_output: PathBuf,
     #[arg(long)]
     pub arch: Option<String>,
-    /// Runner: auto, bwrap, podman or qemu.
     #[arg(long, default_value = "auto", value_parser = ["auto", "bwrap", "podman", "qemu"])]
     pub runner: String,
-    /// Run only the named test; repeat for several. Use OUTPUT/NAME when a
-    /// bare name is shared by several outputs.
+    /// Select NAME or OUTPUT/NAME; repeat to select multiple cases.
     #[arg(long = "test", value_name = "NAME")]
     pub selected: Vec<String>,
-    /// Test RPMs in this directory instead of building the recipe.
-    #[arg(long, value_name = "DIR")]
-    pub install_dir: Option<PathBuf>,
-    /// Skip installed-stage tests (they execute target binaries).
+    /// Repository policy for package-test dependencies.
+    #[arg(long, conflicts_with = "replay")]
+    pub test_profile: Option<PathBuf>,
+    /// Run with previously saved, recipe-bound test environments.
+    #[arg(long, conflicts_with = "save_environment")]
+    pub replay: Option<PathBuf>,
+    /// Save complete environments for a later replay.
     #[arg(long)]
-    pub skip_installed: bool,
-    /// Keep the prepared installed-stage test root here so it can be shipped.
-    #[arg(long, value_name = "DIR")]
-    pub save_test_root: Option<PathBuf>,
-    /// Run the tests against this pre-assembled test root instead of preparing
-    /// one. `root.lock.yaml` is read from it unless --test-root-lock is given.
-    #[arg(long, value_name = "DIR")]
-    pub test_root: Option<PathBuf>,
-    /// Write a JUnit XML report.
+    pub save_environment: Option<PathBuf>,
+    #[arg(long)]
+    pub dist_tag: Option<String>,
+    #[arg(long)]
+    pub build_release: Option<u32>,
+    /// Also write JUnit XML to this path.
     #[arg(long)]
     pub junit: Option<PathBuf>,
-    /// Root lock for the test environment.
-    #[arg(long)]
-    pub root_lock: Option<PathBuf>,
-    /// Pin the test environment to this lock instead of resolving one.
-    #[arg(long, value_name = "FILE")]
-    pub test_root_lock: Option<PathBuf>,
-    /// Assembled root for the test environment.
-    #[arg(long, requires = "root_lock")]
-    pub root: Option<PathBuf>,
-    /// Use this assembled QEMU appliance instead of the cache.
-    #[arg(long, visible_alias = "appliance-root", value_name = "DIR")]
+    #[arg(long, value_name = "DIR")]
     pub runner_asset_root: Option<PathBuf>,
     #[command(flatten)]
     pub runtime: RuntimeArgs,
-    /// Do not use the network; fail on a cache miss.
+    /// Disable acquisition and external test networking; use a complete saved replay.
     #[arg(long)]
     pub offline: bool,
 }
@@ -451,9 +403,6 @@ pub struct BootstrapBuildArgs {
     /// Do not run the recipes' tests.
     #[arg(long)]
     pub no_tests: bool,
-    /// Skip installed-stage tests, which execute target binaries.
-    #[arg(long)]
-    pub skip_installed: bool,
     #[command(flatten)]
     pub runtime: RuntimeArgs,
     #[command(flatten)]

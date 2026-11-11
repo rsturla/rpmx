@@ -1,7 +1,7 @@
 use std::process::{Command, Output};
 
 const RECIPE: &str = r#"
-schema: 1
+schema: 2
 package:
   name: probe
   version: "1.0"

@@ -31,6 +31,8 @@ const RESERVED_ENV: &[&str] = &[
 /// use, where the build root comes from, and the deterministic policy fields.
 #[derive(Clone, Copy)]
 pub struct SandboxConfig<'a> {
+    /// Permit package transactions only in a private test root.
+    pub writable_root: bool,
     pub runner: RunnerKind,
     /// The machine rpmx runs on.
     pub host: Arch,
@@ -61,6 +63,8 @@ pub struct SandboxConfig<'a> {
 impl<'a> SandboxConfig<'a> {
     fn runner_config(&self) -> RunnerConfig<'a> {
         RunnerConfig {
+            policy: crate::runner::ExecutionPolicy::default(),
+            writable_root: self.writable_root,
             host: self.host,
             exec: self.exec,
             target: self.target,
@@ -74,7 +78,39 @@ impl<'a> SandboxConfig<'a> {
     }
 }
 
+/// Run a native debug command with the build sandbox and inherited terminal.
+/// Unlike build steps, a debug session has no deadline or captured log streams.
+pub fn run_native_terminal(
+    config: &SandboxConfig<'_>,
+    command: &str,
+    args: &[String],
+) -> Result<()> {
+    // Keep normal native-runner validation, including foreign-architecture
+    // root and binfmt requirements, before constructing a terminal command.
+    drop(RunnerKind::Bwrap.resolve(config.host, config.exec, config.target, config.root, None)?);
+    prepare_cross_files(config)?;
+    let env = environment(config)
+        .into_iter()
+        .map(|(key, value)| (key.to_string(), value))
+        .collect();
+    crate::runner::run_bwrap_terminal(
+        config.root,
+        &config.runner_config(),
+        &RunnerRequest {
+            command,
+            args,
+            cwd: rpmx_base::guest::BUILD,
+            env: &env,
+            timeout: config.timeout,
+            label: "native debug shell",
+            logs: None,
+        },
+    )
+}
+
 pub struct Sandbox<'a> {
+    logs: Option<&'a crate::runner::OutputLogs>,
+    policy: crate::runner::ExecutionPolicy<'a>,
     runner: Box<dyn Runner + 'a>,
     config: SandboxConfig<'a>,
     session: std::cell::RefCell<Option<Box<dyn Session>>>,
@@ -83,6 +119,13 @@ pub struct Sandbox<'a> {
 impl<'a> Sandbox<'a> {
     /// Resolve the configured runner kind and prepare a sandbox.
     pub fn new(config: SandboxConfig<'a>) -> Result<Self> {
+        Self::with_policy(config, crate::runner::ExecutionPolicy::default())
+    }
+
+    pub fn with_policy(
+        config: SandboxConfig<'a>,
+        policy: crate::runner::ExecutionPolicy<'a>,
+    ) -> Result<Self> {
         if config.root.is_some() && config.image.is_some() {
             return Err(Error::new(
                 codes::ROOT_016,
@@ -103,7 +146,9 @@ impl<'a> Sandbox<'a> {
             config.root,
             config.image,
         )?;
-        Ok(Self::with_runner(config, runner))
+        let mut sandbox = Self::with_runner(config, runner);
+        sandbox.policy = policy;
+        Ok(sandbox)
     }
 
     /// Prepare a sandbox around a caller-provided runner. Compatibility with
@@ -111,22 +156,46 @@ impl<'a> Sandbox<'a> {
     /// constructing a sandbox that is never used cannot fail on the runner.
     pub fn with_runner(config: SandboxConfig<'a>, runner: Box<dyn Runner + 'a>) -> Self {
         Self {
+            logs: None,
+            policy: crate::runner::ExecutionPolicy::default(),
             runner,
             config,
             session: std::cell::RefCell::new(None),
         }
     }
 
+    /// Record every command in this sandbox, including generated patch steps.
+    pub fn recording(mut self, logs: &'a crate::runner::OutputLogs) -> Self {
+        self.logs = Some(logs);
+        self
+    }
+
     pub fn run(&self, step: &PlannedStep) -> Result<()> {
-        self.run_at(step, None)
+        self.run_at(step, None, None)
     }
 
     /// Run one step and report its position in a phase, such as `[2/3] make`.
     pub fn run_numbered(&self, step: &PlannedStep, index: usize, total: usize) -> Result<()> {
-        self.run_at(step, Some((index, total)))
+        self.run_at(step, Some((index, total)), None)
     }
 
-    fn run_at(&self, step: &PlannedStep, position: Option<(usize, usize)>) -> Result<()> {
+    pub fn run_recorded(
+        &self,
+        step: &PlannedStep,
+        index: usize,
+        total: usize,
+        logs: &crate::runner::OutputLogs,
+    ) -> Result<()> {
+        self.run_at(step, Some((index, total)), Some(logs))
+    }
+
+    fn run_at(
+        &self,
+        step: &PlannedStep,
+        position: Option<(usize, usize)>,
+        logs: Option<&crate::runner::OutputLogs>,
+    ) -> Result<()> {
+        let logs = logs.or(self.logs);
         for key in step.env.keys() {
             if RESERVED_ENV.contains(&key.as_str()) {
                 return Err(Error::new(
@@ -180,11 +249,13 @@ impl<'a> Sandbox<'a> {
         };
         let heading = step_heading(step, position);
         let request = RunnerRequest {
+            timeout: step.timeout_seconds.unwrap_or(self.config.timeout),
             command,
             args: &args,
             cwd: &cwd,
             env: &env,
             label: &label,
+            logs,
         };
 
         let mut session = self.session.borrow_mut();
@@ -196,7 +267,11 @@ impl<'a> Sandbox<'a> {
                     self.config.exec,
                 ));
             }
-            *session = Some(self.runner.start(&self.config.runner_config())?);
+            *session = Some({
+                let mut config = self.config.runner_config();
+                config.policy = self.policy;
+                self.runner.start(&config)?
+            });
         }
         let mut rendered = String::new();
         rendered.push_str(command);
@@ -251,6 +326,15 @@ impl<'a> Sandbox<'a> {
                 Err(error)
             }
         }
+    }
+
+    /// End execution before packaging or exporting outputs. No command may
+    /// retain a writer into the host workspace after this returns.
+    pub fn finish(&self) -> Result<()> {
+        if let Some(mut session) = self.session.borrow_mut().take() {
+            session.finish()?;
+        }
+        Ok(())
     }
 
     /// Flush session-local outputs to the host workspace and stage.
@@ -605,6 +689,7 @@ mod tests {
         toolchain.cxxflags = vec!["-mcxx".to_string()];
         toolchain.ldflags = vec!["-Wl,-z,now".to_string()];
         let config = SandboxConfig {
+            writable_root: false,
             runner: RunnerKind::Auto,
             host: Arch::X86_64,
             exec: Arch::X86_64,
@@ -658,6 +743,7 @@ mod tests {
         let toolchain = CrossToolchain::new("aarch64-linux-gnu");
         let workspace = tempfile::tempdir().expect("workspace");
         let config = SandboxConfig {
+            writable_root: false,
             runner: RunnerKind::Auto,
             host: Arch::X86_64,
             exec: Arch::X86_64,
@@ -699,6 +785,7 @@ mod tests {
     #[test]
     fn a_root_and_an_image_cannot_both_be_configured() {
         let config = SandboxConfig {
+            writable_root: false,
             runner: RunnerKind::Auto,
             host: Arch::X86_64,
             exec: Arch::X86_64,

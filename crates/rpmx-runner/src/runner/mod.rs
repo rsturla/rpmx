@@ -7,7 +7,26 @@ use rpmx_base::error::{codes, Error, Result};
 
 mod backend;
 
+/// The complete capability budget for private package transactions. Keep the
+/// policy here so container, native and VM adapters cannot drift independently.
+/// Ordinary build and installed-test commands retain no capabilities.
+pub(crate) const TRANSACTION_CAPABILITIES: &[&str] = &[
+    "CAP_CHOWN",
+    "CAP_DAC_OVERRIDE",
+    "CAP_FOWNER",
+    "CAP_FSETID",
+    "CAP_SETGID",
+    "CAP_SETUID",
+    "CAP_SYS_CHROOT",
+];
+
+pub(crate) use backend::run_bwrap_terminal;
 use backend::{BwrapBackend, PodmanBackend, QemuBackend};
+
+/// Verify delegated ID maps and actual private transaction access on this host.
+pub fn check_bwrap_environment() -> Result<()> {
+    backend::check_bwrap_environment()
+}
 
 /// A runner-owned artifact that is locked separately from the build root.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -103,10 +122,28 @@ pub const RUNNER_DESCRIPTORS: &[RunnerDescriptor] = &[
     },
 ];
 
+/// Additional filesystem and network policy used by test cases. Normal build
+/// sessions use the default; only test declarations may enable networking.
+#[derive(Clone, Copy, Default)]
+pub struct ExecutionPolicy<'a> {
+    pub deadline: Option<std::time::Instant>,
+    pub network: bool,
+    pub readonly_stage: bool,
+    pub readonly_mounts: &'a [ReadOnlyMount<'a>],
+}
+
+#[derive(Clone, Copy)]
+pub struct ReadOnlyMount<'a> {
+    pub source: &'a Path,
+    pub target: &'a str,
+}
+
 /// The inputs a backend needs to start one session. Policy fields such as the
 /// source date and debuginfo stay in `SandboxConfig`; the runner never sees
 /// them.
 pub struct RunnerConfig<'a> {
+    pub policy: ExecutionPolicy<'a>,
+    pub writable_root: bool,
     /// The machine rpmx runs on.
     pub host: Arch,
     /// The architecture the steps execute as. It differs from `target` for a
@@ -125,11 +162,19 @@ pub struct RunnerConfig<'a> {
 }
 
 pub struct RunnerRequest<'a> {
+    /// Effective deadline for this step, including any recipe override.
+    pub timeout: NonZeroU64,
     pub command: &'a str,
     pub args: &'a [String],
     pub cwd: &'a str,
     pub env: &'a BTreeMap<String, String>,
     pub label: &'a str,
+    pub logs: Option<&'a OutputLogs>,
+}
+
+pub struct OutputLogs {
+    pub stdout: std::fs::File,
+    pub stderr: std::fs::File,
 }
 
 /// Whether the host has an enabled qemu-user binfmt handler for `target`.
@@ -163,6 +208,13 @@ fn binfmt_record_usable(contents: &str) -> bool {
 }
 
 pub trait Session {
+    /// Stop payload writers before exporting their final outputs. Backends
+    /// that keep a persistent guest must implement this explicitly.
+    fn finish(&mut self) -> Result<()> {
+        self.sync_out()?;
+        self.stop()
+    }
+
     fn run(&mut self, request: &RunnerRequest<'_>) -> Result<()>;
     /// Copy host-visible outputs back from the session. This is a no-op for
     /// bind-mounted runners and a workspace transfer for the QEMU VM.
@@ -223,6 +275,7 @@ enum Selection<'a> {
     Bwrap(Option<&'a Path>),
     Qemu(&'a Path),
     Podman(&'a str),
+    PodmanRoot(&'a Path),
 }
 
 /// The bubblewrap decision. Native targets run directly. A foreign target
@@ -282,11 +335,16 @@ impl RunnerKind {
                 Ok(Selection::Qemu(root))
             }
             Self::Bwrap => bwrap(host, exec, root, emulation),
-            Self::Podman => match image {
-                Some(image) => Ok(Selection::Podman(image)),
-                None => Err(Error::new(
+            Self::Podman => match (root, image) {
+                (Some(root), None) => Ok(Selection::PodmanRoot(root)),
+                (None, Some(image)) => Ok(Selection::Podman(image)),
+                (Some(_), Some(_)) => Err(Error::new(
                     codes::RUNNER_001,
-                    "the podman runner needs a builder image",
+                    "the podman runner needs one assembled root or image, not both",
+                )),
+                (None, None) => Err(Error::new(
+                    codes::RUNNER_001,
+                    "the podman runner needs an assembled root or builder image",
                 )),
             },
             Self::Auto => match root {
@@ -320,7 +378,14 @@ impl RunnerKind {
             match self.choose(host, exec, target, root, image, emulation)? {
                 Selection::Bwrap(root) => Box::new(BwrapBackend { root }),
                 Selection::Qemu(root) => Box::new(QemuBackend { root }),
-                Selection::Podman(image) => Box::new(PodmanBackend { image, arch: exec }),
+                Selection::Podman(image) => Box::new(PodmanBackend {
+                    source: backend::PodmanSource::Image(image),
+                    arch: exec,
+                }),
+                Selection::PodmanRoot(root) => Box::new(PodmanBackend {
+                    source: backend::PodmanSource::Root(root),
+                    arch: exec,
+                }),
             },
         )
     }

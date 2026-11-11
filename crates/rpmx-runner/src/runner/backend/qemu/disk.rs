@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 
+use super::budget::Budget;
 use super::guest::{BUILD_PORT, CONTROL_PORT};
 use crate::runner::RunnerConfig;
 use rpmx_base::arch::Arch;
@@ -222,23 +223,19 @@ pub(super) fn find_initrd(root: &Path) -> Result<PathBuf> {
     ))
 }
 
-pub(super) fn make_disk(root: &Path, disk: &Path, label: &str) -> Result<()> {
-    let size = directory_size_kb(root)?
+pub(super) fn make_disk(root: &Path, disk: &Path, label: &str, budget: Budget) -> Result<()> {
+    let size = directory_size_kb_with_budget(root, budget)?
         .saturating_mul(2)
         .max(2 * 1024 * 1024);
-    let output = Command::new("unshare")
-        .args(["-Ur", "mke2fs", "-q", "-t", "ext4", "-L", label, "-d"])
-        .arg(root)
-        .arg("-F")
-        .arg(disk)
-        .arg(format!("{size}K"))
-        .output()
-        .map_err(|error| {
-            Error::new(
-                codes::RUNNER_003,
-                format!("cannot create qemu root disk: {error}"),
-            )
-        })?;
+    let output = budget.output(
+        Command::new("unshare")
+            .args(["-Ur", "mke2fs", "-q", "-t", "ext4", "-L", label, "-d"])
+            .arg(root)
+            .arg("-F")
+            .arg(disk)
+            .arg(format!("{size}K")),
+        "creating qemu disk",
+    )?;
     if !output.status.success() {
         return Err(Error::new(
             codes::RUNNER_003,
@@ -251,12 +248,11 @@ pub(super) fn make_disk(root: &Path, disk: &Path, label: &str) -> Result<()> {
     Ok(())
 }
 
-pub(super) fn directory_size_kb(root: &Path) -> Result<u64> {
-    let output = Command::new("du")
-        .args(["-sk"])
-        .arg(root)
-        .output()
-        .map_err(|error| Error::new(codes::RUNNER_003, format!("cannot size root: {error}")))?;
+fn directory_size_kb_with_budget(root: &Path, budget: Budget) -> Result<u64> {
+    let output = budget.output(
+        Command::new("du").args(["-sk"]).arg(root),
+        "sizing qemu root",
+    )?;
     if !output.status.success() {
         return Err(Error::new(codes::RUNNER_003, "cannot size root"));
     }
@@ -301,7 +297,7 @@ pub(super) fn start_vm(
 ) -> Result<std::process::Child> {
     let mut args = vec![
         "-M".to_string(),
-        if config.target == Arch::X86_64 {
+        if config.exec == Arch::X86_64 {
             "q35".to_string()
         } else {
             "virt".to_string()
@@ -324,12 +320,12 @@ pub(super) fn start_vm(
         format!("file={},format=raw,if=virtio", build_disk.display()),
         "-netdev".to_string(),
         format!(
-            "user,id=net0,restrict=on,hostfwd=tcp:127.0.0.1:{control_port}-:{CONTROL_PORT},hostfwd=tcp:127.0.0.1:{build_port}-:{BUILD_PORT}"
+            "user,id=net0,restrict={},hostfwd=tcp:127.0.0.1:{control_port}-:{CONTROL_PORT},hostfwd=tcp:127.0.0.1:{build_port}-:{BUILD_PORT}", if config.policy.network { "off" } else { "on" }
         ),
         "-device".to_string(),
         "virtio-net-pci,netdev=net0,romfile=".to_string(),
     ];
-    if config.host == config.target && Path::new("/dev/kvm").exists() {
+    if config.host == config.exec && Path::new("/dev/kvm").exists() {
         args.push("-accel".to_string());
         args.push("kvm".to_string());
         args.push("-cpu".to_string());
@@ -347,12 +343,13 @@ pub(super) fn start_vm(
         )
     })?;
     let log = Arc::new(Mutex::new(CappedLog::new(log_file, LOG_LIMIT)));
-    let mut child = Command::new(qemu)
+    let mut command = Command::new(qemu);
+    command
         .args(&args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
+        .stderr(Stdio::piped());
+    let mut child = super::super::process::spawn_inheriting_fds(command, &[])
         .map_err(|error| Error::new(codes::RUNNER_003, format!("cannot start {qemu}: {error}")))?;
     if let Some(stdout) = child.stdout.take() {
         pump_log(stdout, Arc::clone(&log));

@@ -482,9 +482,6 @@ fn remove_existing(path: &Path) -> Result<()> {
 
 fn set_mode(path: &Path, mode: usize) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
-    if mode & 0o7777 == 0 {
-        return Ok(());
-    }
     std::fs::set_permissions(
         path,
         std::fs::Permissions::from_mode((mode & 0o7777) as u32),
@@ -595,6 +592,48 @@ mod tests {
 
     fn cpio_trailer() -> Vec<u8> {
         cpio_entry("TRAILER!!!", b"", 0)
+    }
+
+    #[test]
+    fn real_rpm_mode000_payload_keeps_its_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let mut builder =
+            rpm::PackageBuilder::new("protected", "1", "MIT", "noarch", "protected file");
+        builder.using_config(rpm::BuildConfig::v4().compression(rpm::CompressionType::Gzip));
+        builder
+            .with_file_contents(
+                b"protected bytes".as_slice(),
+                rpm::FileOptions::new("/protected").mode(rpm::FileMode::regular(0o0)),
+            )
+            .unwrap();
+        let package = builder.build().unwrap();
+        let root = tempfile::tempdir().unwrap();
+        super::extract_payload(&package, root.path()).unwrap();
+        let path = root.path().join("protected");
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o7777,
+            0o0
+        );
+        // Inspect only the disposable extraction after proving the exact mode;
+        // the RPM and its recorded permissions are unchanged.
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"protected bytes");
+    }
+
+    #[test]
+    fn mode000_empty_hardlinks_keep_their_shared_inode() {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        let root = tempfile::tempdir().unwrap();
+        let mut cpio = cpio_entry_with("a", b"", 0, 0o100000, 42, 2);
+        cpio.extend(cpio_entry_with("b", b"", 0, 0o100000, 42, 2));
+        cpio.extend(cpio_trailer());
+        super::extract_decoded(std::io::Cursor::new(cpio), root.path()).unwrap();
+        let a = std::fs::metadata(root.path().join("a")).unwrap();
+        let b = std::fs::metadata(root.path().join("b")).unwrap();
+        assert_eq!(a.permissions().mode() & 0o7777, 0o0);
+        assert_eq!(b.permissions().mode() & 0o7777, 0o0);
+        assert_eq!(a.ino(), b.ino());
+        assert_eq!(a.len(), 0);
     }
 
     #[test]

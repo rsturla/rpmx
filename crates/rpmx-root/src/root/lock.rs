@@ -8,21 +8,20 @@ use rpmx_base::error::{codes, Error, Result};
 use rpmx_base::hash::sha512_hex;
 
 pub const DOCUMENT: &str = "rpmx-root-lock";
-pub const VERSION: u32 = 1;
+pub const VERSION: u32 = 2;
 
 /// Version of the runner-owned appliance package set and boot protocol.
 ///
 /// Bump this when `APPLIANCE_PACKAGES` or the QEMU boot/mount contract changes.
 /// An old lock is then rejected with a re-resolve hint instead of booting an
 /// appliance that no longer matches the runner.
-pub const APPLIANCE_SCHEMA: u32 = 1;
+pub const APPLIANCE_SCHEMA: u32 = 3;
 
 /// A resolved build root: repositories, an exact package closure and the
 /// builder that produced it.
 ///
-/// The `repositories` and `packages` sections use the libpkgmanifest
-/// `rpm-package-manifest` vocabulary. The document header and integrity fields
-/// are rpmx's own.
+/// Every package has an immutable payload digest and explicit origin, including
+/// locally supplied candidates. The lock is the entire installation authority.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RootLock {
@@ -51,6 +50,10 @@ pub struct RootLock {
     pub closure_digest: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub root_digest: Option<String>,
+    /// Authoritative installed-database bytes, bound after assembly verifies
+    /// the package closure. SQLite shared-memory and lock files are transient.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rpmdb_digest: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub builder: Option<LockedBuilder>,
     /// Seed provenance recorded by a bootstrap stage. It is metadata, outside
@@ -68,6 +71,106 @@ pub struct RootLock {
 }
 
 impl RootLock {
+    /// Public provenance retains the exact package and tool-image bindings,
+    /// while credential references remain in the private acquisition policy.
+    pub fn redacted(&self) -> Self {
+        let mut public = self.clone();
+        for repository in &mut public.repositories {
+            repository.auth = None;
+        }
+        public
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        if self.document != DOCUMENT || self.version != VERSION {
+            return Err(Error::new(
+                codes::ROOT_006,
+                format!("expected {DOCUMENT} version {VERSION}; regenerate the root lock"),
+            ));
+        }
+        if self.archs.len() != 1 {
+            return Err(Error::new(
+                codes::ROOT_006,
+                "a root lock must describe exactly one target architecture",
+            ));
+        }
+        let arch = normalize_arch(&self.archs[0])?;
+        validate_package_keys(&self.packages, codes::ROOT_006)?;
+        if self.packages.values().all(Vec::is_empty) {
+            return Err(Error::new(
+                codes::ROOT_006,
+                "root lock has no package closure",
+            ));
+        }
+        let mut identities = std::collections::BTreeSet::new();
+        for (package_arch, packages) in &self.packages {
+            if package_arch != "noarch" && package_arch != arch {
+                return Err(Error::new(
+                    codes::ROOT_006,
+                    "root lock includes a foreign package architecture",
+                ));
+            }
+            for package in packages {
+                if !identities.insert((&package.name, package_arch)) {
+                    return Err(Error::new(
+                        codes::ROOT_006,
+                        "root lock contains duplicate package identities",
+                    ));
+                }
+                if let PackageOrigin::Repository { repository, .. } = &package.origin {
+                    if !self
+                        .repositories
+                        .iter()
+                        .any(|entry| entry.id == *repository)
+                    {
+                        return Err(Error::new(
+                            codes::ROOT_006,
+                            format!("unknown package repository '{repository}'"),
+                        ));
+                    }
+                }
+            }
+        }
+        if let Some(builder) = &self.builder {
+            if builder.installer.architecture() != arch {
+                return Err(Error::new(
+                    codes::ROOT_006,
+                    "installer image architecture differs from root target",
+                ));
+            }
+        }
+        let expected = closure_digest(
+            &self.releasever,
+            &self.archs,
+            &self.repositories,
+            &self.packages,
+        );
+        if expected != self.closure_digest {
+            return Err(Error::new(
+                codes::ROOT_006,
+                format!(
+                    "root lock closure digest mismatch: recorded {}, recomputed {expected}",
+                    self.closure_digest
+                ),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Cache identity for the complete installation, distinct from package closure identity.
+    pub fn assembly_identity(&self) -> String {
+        let material = serde_json::json!({
+            "schema": 2,
+            "closure": self.closure_digest,
+            "target": self.archs,
+            "options": self.options,
+            "prefix": self.prefix,
+            "libdir": self.libdir,
+            "installer": self.builder.as_ref().map(|builder| &builder.installer),
+        });
+        sha512_hex(&serde_json::to_vec(&material).expect("root identity serializes"))
+    }
+
     /// The lock must describe the architecture being built.
     pub fn require_target(&self, arch: &str) -> Result<()> {
         let wanted = normalize_arch(arch)?;
@@ -111,13 +214,15 @@ impl RootLock {
 
 /// A lock plus the verified assembled root it describes.
 pub struct RootSelection {
-    pub lock: RootLock,
-    pub path: std::path::PathBuf,
-    pub digest: String,
+    lock: RootLock,
+    path: std::path::PathBuf,
+    digest: String,
+    _temporary: Option<tempfile::TempDir>,
 }
 
 impl RootSelection {
     pub fn verify(lock: &RootLock, root: &Path, arch: &str) -> Result<Self> {
+        lock.validate()?;
         lock.require_target(arch)?;
         let expected = lock.require_digest()?;
         let path = std::fs::canonicalize(root).map_err(|error| {
@@ -136,11 +241,65 @@ impl RootSelection {
                 ),
             ));
         }
+        let expected_database = lock.rpmdb_digest.as_deref().ok_or_else(|| {
+            Error::new(
+                codes::ROOT_017,
+                "saved root lock has no rpmdb_digest; assemble it again",
+            )
+        })?;
+        let database = rpmx_store::tree::rpmdb_digest(&path)?;
+        if database != expected_database {
+            return Err(Error::new(codes::ROOT_017, format!(
+                "installed RPM database differs from the assembled lock: expected {expected_database}, found {database}"
+            )));
+        }
         Ok(Self {
             lock: lock.clone(),
             path,
             digest,
+            _temporary: None,
         })
+    }
+
+    pub fn lock(&self) -> &RootLock {
+        &self.lock
+    }
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+    pub fn digest(&self) -> &str {
+        &self.digest
+    }
+
+    pub fn assemble(mut lock: RootLock, options: super::AssembleOptions<'_>) -> Result<Self> {
+        let path = super::assemble(&lock, options)?;
+        let digest = rpmx_store::tree::digest_root(&path)?;
+        lock.root_digest = Some(digest.clone());
+        lock.rpmdb_digest = Some(rpmx_store::tree::rpmdb_digest(&path)?);
+        Ok(Self {
+            lock,
+            path,
+            digest,
+            _temporary: None,
+        })
+    }
+
+    pub fn temporary(lock: RootLock, cache: &Path, work: &Path) -> Result<Self> {
+        let temporary = tempfile::Builder::new()
+            .prefix("rpmx-root-")
+            .tempdir()
+            .map_err(|error| Error::new(codes::ROOT_004, error.to_string()))?;
+        let root = temporary.path().join("root");
+        let mut selection = Self::assemble(
+            lock,
+            super::AssembleOptions {
+                cache,
+                work,
+                root: &root,
+            },
+        )?;
+        selection._temporary = Some(temporary);
+        Ok(selection)
     }
 
     pub fn load(lock_path: &Path, root_path: &Path, arch: &str) -> Result<Self> {
@@ -186,20 +345,105 @@ impl std::fmt::Display for PackageKey {
     }
 }
 
+impl Drop for RootSelection {
+    fn drop(&mut self) {
+        if self._temporary.is_some() && self.path.exists() {
+            let _ = super::remove_tree(&self.path);
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LockedBuilder {
-    pub image: String,
-    /// Manifest digest for the lock's target architecture, not the multi-arch
-    /// index digest.
-    pub image_digest: String,
+    pub resolver: LockedImage,
+    pub installer: LockedImage,
+}
+
+/// A Linux platform manifest, never an OCI index or a mutable tag alone.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(try_from = "ImageRecord", into = "ImageRecord")]
+pub struct LockedImage {
+    reference: String,
+    digest: String,
+    architecture: String,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ImageRecord {
+    reference: String,
+    digest: String,
+    architecture: String,
+}
+
+impl LockedImage {
+    pub fn new(reference: String, digest: String, architecture: &str) -> Result<Self> {
+        let architecture = normalize_arch(architecture)?.to_string();
+        if reference.trim().is_empty()
+            || reference.chars().any(char::is_whitespace)
+            || !digest.strip_prefix("sha256:").is_some_and(|hex| {
+                hex.len() == 64 && hex.bytes().all(|byte| byte.is_ascii_hexdigit())
+            })
+        {
+            return Err(Error::new(
+                codes::ROOT_006,
+                "builder requires an image reference and a SHA-256 platform manifest digest",
+            ));
+        }
+        Ok(Self {
+            reference,
+            digest,
+            architecture,
+        })
+    }
+    pub fn reference(&self) -> &str {
+        &self.reference
+    }
+    pub fn digest(&self) -> &str {
+        &self.digest
+    }
+    pub fn architecture(&self) -> &str {
+        &self.architecture
+    }
+    pub fn pinned_reference(&self) -> String {
+        super::container::locked_image_reference(&self.reference, &self.digest)
+    }
+}
+
+impl TryFrom<ImageRecord> for LockedImage {
+    type Error = String;
+    fn try_from(value: ImageRecord) -> std::result::Result<Self, Self::Error> {
+        Self::new(value.reference, value.digest, &value.architecture).map_err(|error| error.message)
+    }
+}
+impl From<LockedImage> for ImageRecord {
+    fn from(value: LockedImage) -> Self {
+        Self {
+            reference: value.reference,
+            digest: value.digest,
+            architecture: value.architecture,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
+pub enum PackageOrigin {
+    Repository {
+        repository: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        location: Option<String>,
+    },
+    /// Immutable RPM payload supplied by the caller and retained in CAS.
+    Candidate,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct LockedPackage {
     pub name: String,
-    pub repo_id: String,
+    pub origin: PackageOrigin,
     pub evr: String,
     pub checksum: String,
     pub size: u64,
@@ -207,8 +451,6 @@ pub struct LockedPackage {
     pub srpm: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub module: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub location: Option<String>,
 }
 
 /// A runner-owned QEMU transport appliance: the kernel, init system, network
@@ -251,13 +493,9 @@ fn valid_sha512_digest(value: &str) -> bool {
         .is_some_and(|hex| hex.len() == 128 && hex.bytes().all(|byte| byte.is_ascii_hexdigit()))
 }
 
-/// A package checksum is a CAS digest. Full length is enforced by the CAS when
-/// the payload is loaded; this check only rejects a value that could be
-/// mistaken for a path or that is not a SHA-512 digest at all.
+/// Payloads imported or downloaded by rpmx use complete SHA-512 CAS identities.
 fn valid_package_checksum(value: &str) -> bool {
-    value
-        .strip_prefix("sha512:")
-        .is_some_and(|hex| !hex.is_empty() && hex.bytes().all(|byte| byte.is_ascii_hexdigit()))
+    valid_sha512_digest(value)
 }
 
 fn validate_package_keys(
@@ -317,19 +555,16 @@ impl ApplianceLock {
                 )
             })?;
         }
-        if self.releasever.trim().is_empty()
-            || self.profile.chars().any(char::is_control)
-            || self.builder.image.chars().any(char::is_control)
-        {
+        if self.releasever.trim().is_empty() || self.profile.chars().any(char::is_control) {
             return Err(Error::new(
                 codes::ROOT_021,
                 "the QEMU appliance releasever, profile, or builder image is invalid",
             ));
         }
-        if self.builder.image.trim().is_empty() || self.builder.image_digest.trim().is_empty() {
+        if self.builder.installer.architecture() != self.archs[0] {
             return Err(Error::new(
                 codes::ROOT_021,
-                "the QEMU appliance builder image and digest must not be empty",
+                "appliance installer image has the wrong architecture",
             ));
         }
         if !valid_sha512_digest(&self.closure_digest) {
@@ -378,8 +613,10 @@ impl ApplianceLock {
     /// closure, schema, or builder image changes, but not when the recipe does.
     pub fn identity(&self) -> String {
         let material = format!(
-            "rpmx-appliance/1\nschema:{}\nclosure:{}\nbuilder:{}\n",
-            self.schema, self.closure_digest, self.builder.image_digest
+            "rpmx-appliance/2\nschema:{}\nclosure:{}\nbuilder:{}\n",
+            self.schema,
+            self.closure_digest,
+            self.builder.installer.digest()
         );
         sha512_hex(material.as_bytes())
     }
@@ -403,6 +640,7 @@ impl ApplianceLock {
             packages: self.packages.clone(),
             closure_digest: self.closure_digest.clone(),
             root_digest: None,
+            rpmdb_digest: None,
             builder: Some(self.builder.clone()),
             seed: None,
             generation: None,
@@ -413,7 +651,7 @@ impl ApplianceLock {
 
 /// The reproducible input: repositories plus the exact package closure.
 ///
-/// Volatile fields (`root_digest`, builder image, `location`) are deliberately
+/// Volatile fields (`root_digest` and builder image) are deliberately
 /// excluded so two resolutions of the same inputs agree.
 pub fn closure_digest(
     releasever: &str,
@@ -421,7 +659,7 @@ pub fn closure_digest(
     repositories: &[Repository],
     packages: &BTreeMap<String, Vec<LockedPackage>>,
 ) -> String {
-    let mut material = String::from("rpmx-root-lock/1\n");
+    let mut material = String::from("rpmx-root-lock/2\n");
     material.push_str(&format!("releasever:{releasever}\n"));
 
     let mut sorted_archs = archs.to_vec();
@@ -456,7 +694,7 @@ pub fn closure_digest(
                 "pkg:{arch}:{}:{}:{}:{}:{}:{}:{}\n",
                 package.name,
                 package.evr,
-                package.repo_id,
+                serde_json::to_string(&package.origin).expect("package origin serializes"),
                 package.checksum,
                 package.size,
                 package.srpm.as_deref().unwrap_or(""),
@@ -478,48 +716,12 @@ pub fn load_lock(path: &Path) -> Result<RootLock> {
     })?;
     let lock: RootLock = serde_yaml_ng::from_str(&text)
         .map_err(|error| Error::new(codes::ROOT_006, format!("invalid root lock: {error}")))?;
-    if lock.document != DOCUMENT {
-        return Err(Error::new(
-            codes::ROOT_006,
-            format!(
-                "root lock document must be '{DOCUMENT}', found '{}'",
-                lock.document
-            ),
-        ));
-    }
-    if lock.version != VERSION {
-        return Err(Error::new(
-            codes::ROOT_006,
-            format!(
-                "unsupported root lock version {}; this rpmx understands {VERSION}",
-                lock.version
-            ),
-        ));
-    }
-    for arch in &lock.archs {
-        normalize_arch(arch)?;
-    }
-    validate_package_keys(&lock.packages, codes::ROOT_006)?;
-    let expected = closure_digest(
-        &lock.releasever,
-        &lock.archs,
-        &lock.repositories,
-        &lock.packages,
-    );
-    if lock.closure_digest != expected {
-        return Err(Error::new(
-            codes::ROOT_006,
-            format!(
-                "root lock closure digest mismatch: recorded {}, recomputed {expected}",
-                lock.closure_digest
-            ),
-        ));
-    }
+    lock.validate()?;
     Ok(lock)
 }
 
 pub fn write_lock(path: &Path, lock: &RootLock) -> Result<()> {
-    validate_package_keys(&lock.packages, codes::ROOT_006)?;
+    lock.validate()?;
     let text = serde_yaml_ng::to_string(lock)
         .map_err(|error| Error::new(codes::ROOT_004, error.to_string()))?;
     std::fs::write(path, text).map_err(|error| {
@@ -570,5 +772,170 @@ mod closure_digest_tests {
             closure_digest("44", &["x86_64".to_string()], &[plain], &BTreeMap::new()),
             closure_digest("44", &["x86_64".to_string()], &[filtered], &BTreeMap::new())
         );
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod model_tests {
+    use super::*;
+
+    pub(crate) fn candidate_lock(package: &super::super::Candidate) -> RootLock {
+        let packages = BTreeMap::from([(
+            "noarch".to_string(),
+            vec![LockedPackage {
+                name: package.metadata().name.clone(),
+                evr: package.metadata().evr(),
+                origin: PackageOrigin::Candidate,
+                checksum: package.checksum().to_string(),
+                size: package.size(),
+                srpm: None,
+                module: None,
+            }],
+        )]);
+        let archs = vec!["x86_64".to_string()];
+        RootLock {
+            document: DOCUMENT.to_string(),
+            version: VERSION,
+            profile: "candidate-control".to_string(),
+            archs: archs.clone(),
+            releasever: "44".to_string(),
+            dist_tag: None,
+            options: Default::default(),
+            prefix: "/usr".to_string(),
+            libdir: "/usr/lib64".to_string(),
+            sbom: false,
+            repositories: vec![],
+            closure_digest: closure_digest("44", &archs, &[], &packages),
+            packages,
+            root_digest: None,
+            rpmdb_digest: None,
+            builder: None,
+            seed: None,
+            generation: None,
+            requirement: None,
+        }
+    }
+
+    #[test]
+    fn candidate_origin_round_trips_without_original_paths_or_a_fake_repository() {
+        let work = tempfile::tempdir().unwrap();
+        let path = super::super::candidate::tests::rpm(work.path(), "fixture", "1", "noarch", None);
+        let candidates = super::super::CandidateSet::import(work.path(), &[path]).unwrap();
+        let lock = candidate_lock(&candidates.packages()[0]);
+        let path = work.path().join("root.lock.yaml");
+        write_lock(&path, &lock).unwrap();
+        let restored = load_lock(&path).unwrap();
+        assert!(matches!(
+            restored.packages["noarch"][0].origin,
+            PackageOrigin::Candidate
+        ));
+        assert!(restored.repositories.is_empty());
+        assert_eq!(restored.closure_digest, lock.closure_digest);
+        let text = std::fs::read_to_string(path).unwrap();
+        assert!(!text.contains(work.path().to_str().unwrap()));
+        assert!(crate::pkgmanifest::from_lock(&restored).is_err());
+    }
+
+    #[test]
+    fn saved_root_verification_checks_both_tree_and_full_lock() {
+        let work = tempfile::tempdir().unwrap();
+        let path = super::super::candidate::tests::rpm(work.path(), "fixture", "1", "noarch", None);
+        let candidates = super::super::CandidateSet::import(work.path(), &[path]).unwrap();
+        let mut lock = candidate_lock(&candidates.packages()[0]);
+        let root = work.path().join("root");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::write(root.join("value"), "42").unwrap();
+        lock.root_digest = Some(rpmx_store::tree::digest_root(&root).unwrap());
+        lock.rpmdb_digest = Some(rpmx_store::tree::rpmdb_digest(&root).unwrap());
+        assert!(RootSelection::verify(&lock, &root, "x86_64").is_ok());
+        assert!(RootSelection::verify(&lock, &root, "aarch64").is_err());
+        let mut forged = lock.clone();
+        forged.packages.get_mut("noarch").unwrap()[0].checksum =
+            format!("sha512:{}", "a".repeat(128));
+        assert!(RootSelection::verify(&forged, &root, "x86_64").is_err());
+        let database = root.join("usr/lib/sysimage/rpm");
+        std::fs::create_dir_all(&database).unwrap();
+        std::fs::write(database.join("rpmdb.sqlite"), "changed headers").unwrap();
+        // Existing parent directories affect the tree proof too; bind that tree
+        // to isolate the database-specific failure in this unit control.
+        lock.root_digest = Some(rpmx_store::tree::digest_root(&root).unwrap());
+        let error = RootSelection::verify(&lock, &root, "x86_64").err().unwrap();
+        assert!(error.message.contains("installed RPM database differs"));
+        lock.rpmdb_digest = Some(rpmx_store::tree::rpmdb_digest(&root).unwrap());
+        assert!(RootSelection::verify(&lock, &root, "x86_64").is_ok());
+        std::fs::write(root.join("value"), "43").unwrap();
+        assert!(RootSelection::verify(&lock, &root, "x86_64").is_err());
+        let mut old = lock;
+        old.version = 1;
+        assert!(old.validate().unwrap_err().message.contains("regenerate"));
+    }
+
+    #[test]
+    fn installation_identity_tracks_policy_and_installer_but_not_tree_or_resolver() {
+        let work = tempfile::tempdir().unwrap();
+        let input =
+            super::super::candidate::tests::rpm(work.path(), "fixture", "1", "noarch", None);
+        let candidates = super::super::CandidateSet::import(work.path(), &[input]).unwrap();
+        let mut lock = candidate_lock(&candidates.packages()[0]);
+        let image = LockedImage::new(
+            "registry/image:tag".into(),
+            format!("sha256:{}", "a".repeat(64)),
+            "x86_64",
+        )
+        .unwrap();
+        lock.builder = Some(LockedBuilder {
+            resolver: image.clone(),
+            installer: image,
+        });
+        let identity = lock.assembly_identity();
+        let mut changed = lock.clone();
+        changed.options.docs = !changed.options.docs;
+        assert_ne!(changed.assembly_identity(), identity);
+        let mut changed = lock.clone();
+        changed.libdir = "/usr/lib".into();
+        assert_ne!(changed.assembly_identity(), identity);
+        let replacement = LockedImage::new(
+            "registry/image:tag".into(),
+            format!("sha256:{}", "b".repeat(64)),
+            "x86_64",
+        )
+        .unwrap();
+        let mut changed = lock.clone();
+        changed.builder.as_mut().unwrap().installer = replacement.clone();
+        assert_ne!(changed.assembly_identity(), identity);
+        let mut changed = lock;
+        changed.builder.as_mut().unwrap().resolver = replacement;
+        changed.root_digest = Some(format!("sha512:{}", "a".repeat(128)));
+        changed.rpmdb_digest = Some(format!("sha512:{}", "b".repeat(128)));
+        changed.profile = "another-provenance-name".into();
+        assert_eq!(changed.assembly_identity(), identity);
+    }
+
+    #[test]
+    fn locked_images_reject_invalid_identity_and_preserve_registry_ports() {
+        assert!(LockedImage::new("image".into(), "sha256:index".into(), "x86_64").is_err());
+        assert!(LockedImage::new(
+            "image".into(),
+            format!("sha256:{}", "a".repeat(64)),
+            "other"
+        )
+        .is_err());
+        let image = LockedImage::new(
+            "docker://localhost:5000/org/image:tag".into(),
+            format!("sha256:{}", "a".repeat(64)),
+            "amd64",
+        )
+        .unwrap();
+        assert_eq!(image.architecture(), "x86_64");
+        assert_eq!(
+            image.pinned_reference(),
+            format!(
+                "docker://localhost:5000/org/image@sha256:{}",
+                "a".repeat(64)
+            )
+        );
+        let mut encoded = serde_json::to_value(&image).unwrap();
+        encoded["digest"] = serde_json::json!("mutable");
+        assert!(serde_json::from_value::<LockedImage>(encoded).is_err());
     }
 }

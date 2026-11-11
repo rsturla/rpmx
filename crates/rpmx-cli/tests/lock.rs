@@ -2,7 +2,7 @@ use std::path::Path;
 use std::process::{Command, Output};
 
 const RECIPE: &str = r#"
-schema: 1
+schema: 2
 package:
   name: probe
   version: "1.0"
@@ -71,7 +71,13 @@ fn a_locked_build_refuses_to_start_on_drift() {
     let recipe = write_recipe(directory.path(), "1.0");
     assert!(rpmx(&["lock", recipe.to_str().unwrap()]).status.success());
     write_recipe(directory.path(), "1.1");
-    let build = rpmx(&["build", recipe.to_str().unwrap(), "--locked"]);
+    let build = rpmx(&[
+        "build",
+        recipe.to_str().unwrap(),
+        "--locked",
+        "--output",
+        directory.path().join("out").to_str().unwrap(),
+    ]);
     assert_eq!(build.status.code(), Some(3), "{build:?}");
     let stderr = String::from_utf8_lossy(&build.stderr);
     assert!(stderr.contains("RPMX-LOCK-002"), "{stderr}");
@@ -81,7 +87,13 @@ fn a_locked_build_refuses_to_start_on_drift() {
 fn a_locked_build_without_a_lock_is_a_prerequisite_error() {
     let directory = tempfile::tempdir().expect("tempdir");
     let recipe = write_recipe(directory.path(), "1.0");
-    let build = rpmx(&["build", recipe.to_str().unwrap(), "--locked"]);
+    let build = rpmx(&[
+        "build",
+        recipe.to_str().unwrap(),
+        "--locked",
+        "--output",
+        directory.path().join("out").to_str().unwrap(),
+    ]);
     assert_eq!(build.status.code(), Some(2), "{build:?}");
     let stderr = String::from_utf8_lossy(&build.stderr);
     assert!(stderr.contains("RPMX-LOCK-003"), "{stderr}");

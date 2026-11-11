@@ -125,16 +125,25 @@ pub fn plan(plan: &Plan) {
         for output in &cell.outputs {
             println!("  output {}", output.name);
         }
-        for test in &cell.tests {
-            println!("  test   {} ({})", test.qualified_name(), test.stage);
-            if !test.packages.is_empty() {
-                println!("    root   {}", test.packages.join(", "));
-            }
-            for (key, value) in &test.environment {
-                println!("    env    {key}={value}");
-            }
-            for step in &test.pipeline {
-                println!("    step   {}", step_summary(step));
+        for (phase, tests) in [("build test", &cell.build_tests), ("test", &cell.tests)] {
+            for test in tests {
+                if phase == "build test" {
+                    println!("  build test {}", test.qualified_name());
+                } else {
+                    println!("  test   {} ({})", test.qualified_name(), test.mode);
+                }
+                if let Some(argv) = &test.argv {
+                    println!("    argv   {}", argv.join(" "));
+                }
+                if !test.packages.is_empty() {
+                    println!("    root   {}", test.packages.join(", "));
+                }
+                for (key, value) in &test.environment {
+                    println!("    env    {key}={value}");
+                }
+                for step in &test.pipeline {
+                    println!("    step   {}", step_summary(step));
+                }
             }
         }
     }

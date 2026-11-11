@@ -12,8 +12,8 @@ pub fn run(args: BootstrapRebuildArgs) -> Result<(), Error> {
     let input = args.rebuild.file.clone();
     prepare_srpm_output(&args.srpm_out, &input)?;
     let output = crate::commands::rebuild::run_with(args.rebuild, true, Some(&args.srpm_out))?;
-    let _ = output.rpms;
-    for path in &output.srpms {
+    output.require_success()?;
+    for path in &output.artifacts.srpms {
         rpmx_core::output::phase("bootstrap", format!("replacement SRPM {}", path.display()));
     }
     Ok(())

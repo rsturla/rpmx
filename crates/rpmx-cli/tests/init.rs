@@ -84,14 +84,16 @@ fn init_can_split_the_recipe_into_sections() {
     assert!(output.status.success(), "{output:?}");
     let recipe = std::fs::read_to_string(target.join("package.yaml")).expect("recipe");
     assert!(recipe.contains("include:"), "{recipe}");
-    for section in [
-        "build.yaml",
-        "outputs.yaml",
-        "tests.yaml",
-        "source-assembly.yaml",
-    ] {
+    for section in ["build.yaml", "outputs.yaml", "source-assembly.yaml"] {
         assert!(target.join(section).is_file(), "missing {section}");
     }
+    let build = std::fs::read_to_string(target.join("build.yaml")).expect("build section");
+    assert!(build.contains("tests:"), "source checks missing: {build}");
+    let outputs = std::fs::read_to_string(target.join("outputs.yaml")).expect("outputs section");
+    assert!(
+        outputs.contains("tests:"),
+        "acceptance checks missing: {outputs}"
+    );
     let lint = rpmx_in(&target, &["lint"]);
     assert!(lint.status.success(), "{lint:?}");
 }

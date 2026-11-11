@@ -20,6 +20,7 @@ struct Check {
 pub fn run(args: DoctorArgs) -> Result<(), rpmx_core::Error> {
     let mut checks = Vec::new();
     let mut missing_core = false;
+    let bubblewrap = on_path("bwrap").is_some();
 
     for (name, required) in [
         ("dnf5", false),
@@ -29,7 +30,9 @@ pub fn run(args: DoctorArgs) -> Result<(), rpmx_core::Error> {
         ("ssh-keygen", false),
         ("mke2fs", false),
         ("debugfs", false),
-        ("unshare", false),
+        ("unshare", bubblewrap),
+        ("newuidmap", bubblewrap),
+        ("newgidmap", bubblewrap),
     ] {
         let path = on_path(name);
         let check = match path {
@@ -56,6 +59,21 @@ pub fn run(args: DoctorArgs) -> Result<(), rpmx_core::Error> {
             }
         };
         checks.push(check);
+    }
+
+    if bubblewrap {
+        let namespace = rpmx_core::runner::check_bwrap_environment();
+        checks.push(Check {
+            name: "bubblewrap environment",
+            status: if namespace.is_ok() { "ok" } else { "fail" },
+            version: None,
+            detail: Some(match namespace {
+                Ok(()) => {
+                    "UID/GID 65534 mapped to caller; full subordinate ID maps; nested user namespaces disabled; private transaction mode-000 read/write verified".to_string()
+                }
+                Err(error) => error.to_string(),
+            }),
+        });
     }
 
     for descriptor in rpmx_core::runner::RunnerKind::descriptors() {
@@ -248,7 +266,7 @@ fn cache_dir() -> PathBuf {
 /// build root and the target sysroot must be assembled before `--offline`
 /// can work.
 fn recipe_checks(recipe: &std::path::Path) -> Result<Vec<Check>, rpmx_core::Error> {
-    use crate::commands::autoroot;
+    use rpmx_root::recipe as autoroot;
 
     let bundle = rpmx_core::load_recipe_bundle(recipe)?;
     let arch = autoroot::declared_arch(&bundle.recipe, &bundle.root, None)?
@@ -270,7 +288,11 @@ fn recipe_checks(recipe: &std::path::Path) -> Result<Vec<Check>, rpmx_core::Erro
     };
 
     let mut checks = Vec::new();
-    let cached = autoroot::cached_lock_for_requirement(&requirement.digest).is_some();
+    let cached = autoroot::cached_lock_for_requirement(
+        &crate::commands::fetch::default_cache()?,
+        &requirement.digest,
+    )
+    .is_some();
     checks.push(Check {
         name: "build root",
         status: if cached { "ok" } else { "warn" },
@@ -292,7 +314,11 @@ fn recipe_checks(recipe: &std::path::Path) -> Result<Vec<Check>, rpmx_core::Erro
         )),
     });
     if let Some(sysroot) = &requirement.sysroot {
-        let cached = autoroot::cached_lock_for_requirement(&sysroot.digest).is_some();
+        let cached = autoroot::cached_lock_for_requirement(
+            &crate::commands::fetch::default_cache()?,
+            &sysroot.digest,
+        )
+        .is_some();
         checks.push(Check {
             name: "cross sysroot",
             status: if cached { "ok" } else { "warn" },

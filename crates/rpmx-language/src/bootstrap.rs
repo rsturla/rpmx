@@ -1406,7 +1406,7 @@ stages:
             directory.join("package.yaml"),
             format!(
                 r#"
-schema: 1
+schema: 2
 package:
   name: {name}
   version: "1"
@@ -1832,7 +1832,7 @@ stages:
         std::fs::write(
             root.join("recipes/other/package.yaml"),
             r#"
-schema: 1
+schema: 2
 package:
   name: gcc
   version: "1"

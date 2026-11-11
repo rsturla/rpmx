@@ -28,7 +28,50 @@ fn main() -> ExitCode {
     rpmx_core::output::set_verbose(cli.verbose);
     rpmx_core::output::set_color(&cli.color);
     match commands::dispatch::run(cli) {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(commands::dispatch::CommandOutcome::Done) => ExitCode::SUCCESS,
+        Ok(commands::dispatch::CommandOutcome::Application { report, quiet }) => {
+            if json {
+                match serde_json::to_string_pretty(&report) {
+                    Ok(document) => println!("{document}"),
+                    Err(error) => {
+                        eprintln!("cannot render run report: {error}");
+                        return ExitCode::from(exit::INTERNAL);
+                    }
+                }
+            } else {
+                if !quiet {
+                    for path in report
+                        .artifacts
+                        .rpms
+                        .iter()
+                        .chain(&report.artifacts.srpms)
+                        .chain(&report.artifacts.sources)
+                    {
+                        println!("{}", path.display());
+                    }
+                }
+                if let Some(diagnostic) = &report.primary {
+                    eprintln!("{}: {}", diagnostic.code, diagnostic.message);
+                }
+                for diagnostic in &report.secondary {
+                    eprintln!("{}: {}", diagnostic.code, diagnostic.message);
+                }
+                if report.outcome == rpmx_application::RunOutcome::Incomplete {
+                    eprintln!("rpmx: required tests were not run; see run-report.json");
+                }
+            }
+            if report.success() {
+                ExitCode::SUCCESS
+            } else {
+                let code = report.primary.as_ref().and_then(|diagnostic| {
+                    rpmx_core::error::codes::ALL
+                        .iter()
+                        .copied()
+                        .find(|code| code.as_str() == diagnostic.code)
+                });
+                ExitCode::from(code.map(exit::code_for).unwrap_or(exit::TEST))
+            }
+        }
         Err(error) => {
             if error.reported {
                 return ExitCode::from(exit::code_for(error.code));

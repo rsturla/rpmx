@@ -19,7 +19,7 @@ fn bundle(directory: &Path) -> String {
     let root = directory.join("package.yaml");
     write(
         &root,
-        r#"schema: 1
+        r#"schema: 2
 include:
   - sources.yaml
   - build.yaml

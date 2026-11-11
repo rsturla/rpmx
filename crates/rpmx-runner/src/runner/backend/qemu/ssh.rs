@@ -52,6 +52,7 @@ fn take_stderr(child: &mut Child) -> Option<Receiver<std::io::Result<Vec<u8>>>> 
 
 pub(super) fn take_stderr_with_echo(
     child: &mut Child,
+    mut log: Option<std::fs::File>,
 ) -> Option<Receiver<std::io::Result<Vec<u8>>>> {
     child.stderr.take().map(|mut stderr| {
         let (done, finished) = mpsc::channel();
@@ -60,13 +61,19 @@ pub(super) fn take_stderr_with_echo(
             let mut clean = Vec::new();
             let mut sanitizer = Sanitizer::default();
             let mut chunk = [0u8; 8192];
+            let mut write_error = None;
             let result = loop {
                 match stderr.read(&mut chunk) {
-                    Ok(0) => break Ok(buffer),
+                    Ok(0) => break write_error.map_or(Ok(buffer), Err),
                     Ok(read) => {
                         clean.clear();
                         sanitizer.push(&chunk[..read], &mut clean);
                         let _ = std::io::stderr().write_all(&clean);
+                        if let Some(log) = &mut log {
+                            if let Err(error) = log.write_all(&clean) {
+                                write_error.get_or_insert(error);
+                            }
+                        }
                         retain_tail(&mut buffer, &clean);
                     }
                     Err(error) => break Err(error),
@@ -78,7 +85,10 @@ pub(super) fn take_stderr_with_echo(
     })
 }
 
-pub(super) fn take_stdout_echo(child: &mut Child) -> Option<Receiver<std::io::Result<()>>> {
+pub(super) fn take_stdout_echo(
+    child: &mut Child,
+    mut log: Option<std::fs::File>,
+) -> Option<Receiver<std::io::Result<()>>> {
     child.stdout.take().map(|mut stdout| {
         let (done, finished) = mpsc::channel();
         std::thread::spawn(move || {
@@ -97,6 +107,11 @@ pub(super) fn take_stdout_echo(child: &mut Child) -> Option<Receiver<std::io::Re
                     Ok(read) => {
                         clean.clear();
                         sanitizer.push(&chunk[..read], &mut clean);
+                        if let Some(log) = &mut log {
+                            if let Err(write) = log.write_all(&clean) {
+                                error.get_or_insert(write);
+                            }
+                        }
                         if let Err(write) = out.write_all(&clean) {
                             error.get_or_insert(write);
                         }
@@ -316,9 +331,18 @@ pub(super) fn stream_tar_out(
 pub(super) fn stream_command_output(
     mut child: Child,
     stdin: Option<&[u8]>,
+    logs: Option<&crate::runner::OutputLogs>,
 ) -> Result<(ExitStatus, Vec<u8>)> {
-    let stdout = take_stdout_echo(&mut child);
-    let stderr = take_stderr_with_echo(&mut child);
+    let stdout_log = logs
+        .map(|logs| logs.stdout.try_clone())
+        .transpose()
+        .map_err(|error| Error::new(codes::RUNNER_003, error.to_string()))?;
+    let stderr_log = logs
+        .map(|logs| logs.stderr.try_clone())
+        .transpose()
+        .map_err(|error| Error::new(codes::RUNNER_003, error.to_string()))?;
+    let stdout = take_stdout_echo(&mut child, stdout_log);
+    let stderr = take_stderr_with_echo(&mut child, stderr_log);
     let mut write_error = None;
     if let Some(bytes) = stdin {
         match child.stdin.take() {
@@ -339,7 +363,16 @@ pub(super) fn stream_command_output(
         .wait()
         .map_err(|error| Error::new(codes::RUNNER_003, format!("ssh failed: {error}")))?;
     let stderr = join_stderr(stderr)?;
-    drop(stdout);
+    if let Some(stdout) = stdout {
+        if let Ok(result) = stdout.recv_timeout(Duration::from_secs(2)) {
+            result.map_err(|error| {
+                Error::new(
+                    codes::RUNNER_003,
+                    format!("cannot record ssh stdout: {error}"),
+                )
+            })?;
+        }
+    }
     if let Some(error) = write_error {
         if status.success() {
             return Err(Error::new(
@@ -351,8 +384,11 @@ pub(super) fn stream_command_output(
     Ok((status, stderr))
 }
 
+/// Run the deadline supervisor in the transport appliance, outside the build
+/// chroot. Its coreutils package provides timeout/chroot independently of the
+/// package under test. GNU timeout owns and terminates the child process group.
 pub(super) fn step_script(request: &RunnerRequest<'_>) -> String {
-    let mut script = String::from("#!/bin/sh\nset +e\n");
+    let mut script = String::from("#!/bin/sh\nset +e\nif test \"$$\" -ne 1; then echo 'qemu payload requires an enforced private PID namespace (systemd 257+)' >&2; exit 125; fi\n");
     script.push_str(&format!("cd {}\n", shell_quote(request.cwd)));
     for (key, value) in request.env {
         script.push_str(&format!("export {}={}\n", key, shell_quote(value)));
@@ -385,6 +421,7 @@ pub(super) fn shell_quote(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::stream_command_output;
+
     use std::process::{Command, Stdio};
 
     fn piped(command: &str) -> std::process::Child {
@@ -417,16 +454,36 @@ mod tests {
     #[test]
     fn step_stderr_is_captured_for_the_error_message() {
         let child = piped("printf 'warning\\n' >&2");
-        let (status, stderr) = stream_command_output(child, None).expect("stream output");
+        let (status, stderr) = stream_command_output(child, None, None).expect("stream output");
         assert!(status.success());
         assert_eq!(stderr, b"warning\n");
+    }
+
+    #[test]
+    fn step_logs_preserve_both_streams() {
+        let directory = tempfile::tempdir().unwrap();
+        let logs = crate::runner::OutputLogs {
+            stdout: std::fs::File::create(directory.path().join("stdout")).unwrap(),
+            stderr: std::fs::File::create(directory.path().join("stderr")).unwrap(),
+        };
+        let child = piped("printf 'output\\n'; printf 'warning\\n' >&2");
+        let (status, _) = stream_command_output(child, None, Some(&logs)).unwrap();
+        assert!(status.success());
+        assert_eq!(
+            std::fs::read(directory.path().join("stdout")).unwrap(),
+            b"output\n"
+        );
+        assert_eq!(
+            std::fs::read(directory.path().join("stderr")).unwrap(),
+            b"warning\n"
+        );
     }
 
     #[test]
     fn step_stdin_is_forwarded() {
         let child = piped("wc -c >/dev/null");
         let payload = vec![b'x'; 256 * 1024];
-        let (status, _) = stream_command_output(child, Some(&payload)).expect("stream stdin");
+        let (status, _) = stream_command_output(child, Some(&payload), None).expect("stream stdin");
         assert!(status.success());
     }
 }

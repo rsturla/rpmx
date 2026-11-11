@@ -355,10 +355,10 @@ pub(crate) fn expand_tests(
     let mut planned = Vec::with_capacity(tests.len());
     for (index, test) in tests.into_iter().enumerate() {
         let at = format!("{path}[{index}]");
-        if test.name.contains("${") || test.stage.contains("${") {
+        if test.name.contains("${") {
             return Err(Error::new(
                 codes::TEMPLATE_007,
-                "a test name or stage cannot contain an executor placeholder",
+                "a test name cannot contain an executor placeholder",
             )
             .at(at));
         }
@@ -387,19 +387,24 @@ pub(crate) fn expand_tests(
                 format!("test '{}' is declared twice{owner}", test.name),
             ));
         }
-        let name = test.name;
-        let packages = expand_values(&test.packages, scope, &format!("{path}[{index}].packages"))?;
-        if test.stage != "installed" && !packages.is_empty() {
+        if let Some(files) = &test.files {
+            crate::test_files::validate_relative(files)?;
+        }
+        for artifact in &test.artifacts {
+            crate::test_files::validate_relative(artifact)?;
+        }
+        let argv = super::test_command::command(&test).map_err(|error| error.at(&at))?;
+        if argv.as_ref().is_some_and(Vec::is_empty)
+            || (argv.is_none() && test.pipeline.as_ref().is_none_or(Vec::is_empty))
+        {
             return Err(Error::new(
                 codes::TEST_004,
-                format!(
-                    "test '{name}' declares packages but uses stage '{}'; \
-                     test packages are installed into the disposable installed-stage root",
-                    test.stage
-                ),
+                "acceptance test needs a nonempty command or pipeline",
             )
-            .at(format!("{path}[{index}].packages")));
+            .at(&at));
         }
+        let name = test.name;
+        let packages = expand_values(&test.packages, scope, &format!("{path}[{index}].packages"))?;
         let environment = test
             .environment
             .iter()
@@ -412,11 +417,22 @@ pub(crate) fn expand_tests(
         let step_scope = owner
             .map(|output| format!("test:{output}/{name}"))
             .unwrap_or_else(|| format!("test:{name}"));
-        planned.push(PlannedTest {
+        let mut planned_test = PlannedTest {
             name,
+            cell_id: String::new(),
+            files: test.files,
+            artifacts: test.artifacts,
+            skip: test.skip.filter(|reason| !reason.trim().is_empty()),
             output: owner.map(str::to_string),
-            stage: test.stage,
-            argv: test.argv,
+            mode: test.mode,
+            network: test.network,
+            timeout_seconds: test
+                .timeout
+                .as_deref()
+                .map(super::timeout::parse)
+                .transpose()
+                .map_err(|error| error.at(format!("{at}.timeout")))?,
+            argv,
             pipeline: match test.pipeline {
                 Some(pipeline) => plan_steps(
                     &pipeline,
@@ -429,7 +445,36 @@ pub(crate) fn expand_tests(
             },
             packages,
             environment,
-        });
+        };
+        for step in &mut planned_test.pipeline {
+            super::test_command::strict_step(step);
+        }
+        if planned_test
+            .argv
+            .as_ref()
+            .is_some_and(|argv| argv.first().map(String::as_str) == Some("bash"))
+            || planned_test
+                .pipeline
+                .iter()
+                .any(|step| step.command.as_deref() == Some("bash"))
+        {
+            for tool in ["bash", "coreutils"] {
+                if !planned_test.packages.iter().any(|package| package == tool) {
+                    planned_test.packages.push(tool.to_string());
+                }
+            }
+        }
+        if planned_test.mode == crate::model::TestMode::Transaction
+            && !planned_test.packages.iter().any(|package| package == "rpm")
+        {
+            planned_test.packages.push("rpm".into());
+        }
+        for dependency in planned_test.pipeline.iter().flat_map(|step| &step.needs) {
+            if !planned_test.packages.contains(dependency) {
+                planned_test.packages.push(dependency.clone());
+            }
+        }
+        planned.push(planned_test);
     }
     Ok(planned)
 }

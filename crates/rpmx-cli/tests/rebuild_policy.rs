@@ -1,7 +1,7 @@
 use std::process::Command;
 
 const RECIPE: &str = r#"
-schema: 1
+schema: 2
 package:
   name: probe
   version: "1.0"
@@ -51,6 +51,8 @@ fn rebuild_uses_the_policy_recorded_in_the_srpm() {
 
     let mismatch = rpmx()
         .arg("rebuild")
+        .arg("--output")
+        .arg(work.path().join("rebuilt"))
         .arg(&srpm)
         .arg("--dist-tag")
         .arg("fc45")
@@ -69,6 +71,8 @@ fn rebuild_uses_the_policy_recorded_in_the_srpm() {
     // This build has no root, so it stops at the root requirement instead.
     let matching = rpmx()
         .arg("rebuild")
+        .arg("--output")
+        .arg(work.path().join("rebuilt"))
         .arg(&srpm)
         .output()
         .expect("run matching rebuild");

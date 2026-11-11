@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::num::NonZeroU64;
 
 use serde::Serialize;
 use serde_json::Value;
@@ -10,6 +11,8 @@ use crate::template;
 use rpmx_base::error::{codes, Error, Result};
 
 mod expand;
+mod test_command;
+mod timeout;
 
 use expand::{
     base_scope, base_scope_without_cell, expand_dependencies, expand_outputs, expand_pipeline,
@@ -23,7 +26,14 @@ use validate::{
     validate_step, validate_steps, validate_tool,
 };
 
-pub const SCHEMA_VERSION: u32 = 1;
+/// Distribution policy supplied to the planner.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PlanPolicy<'a> {
+    pub dist_tag: Option<&'a str>,
+    pub build_release: Option<u32>,
+}
+
+pub const SCHEMA_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Plan {
@@ -35,6 +45,42 @@ pub struct Plan {
     pub build_release: Option<u32>,
     pub source_assembly: Option<PlannedSourceAssembly>,
     pub cells: Vec<PlannedCell>,
+}
+
+/// Build-root and target-sysroot requirements, excluding all test-only tools.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BuildRequirements {
+    pub packages: BTreeSet<String>,
+    pub sysroot: BTreeSet<String>,
+}
+
+pub fn build_requirements(plan: &Plan) -> BuildRequirements {
+    fn add_step(requirements: &mut BuildRequirements, step: &PlannedStep) {
+        if step.needs_packages.is_empty() && step.needs_sysroot.is_empty() {
+            requirements.packages.extend(step.needs.iter().cloned());
+        } else {
+            requirements
+                .packages
+                .extend(step.needs_packages.iter().cloned());
+            requirements
+                .sysroot
+                .extend(step.needs_sysroot.iter().cloned());
+        }
+    }
+    let mut requirements = BuildRequirements::default();
+    if let Some(assembly) = &plan.source_assembly {
+        for step in &assembly.steps {
+            add_step(&mut requirements, step);
+        }
+    }
+    for cell in &plan.cells {
+        requirements.packages.extend(cell.packages.iter().cloned());
+        requirements.sysroot.extend(cell.sysroot.iter().cloned());
+        for step in &cell.pipeline {
+            add_step(&mut requirements, step);
+        }
+    }
+    requirements
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -64,12 +110,15 @@ pub struct PlannedCell {
     /// Packages installed into the target sysroot.
     pub sysroot: Vec<String>,
     pub pipeline: Vec<PlannedStep>,
+    pub build_tests: Vec<PlannedTest>,
     pub outputs: Vec<PlannedOutput>,
     pub tests: Vec<PlannedTest>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct PlannedStep {
+    pub files: Option<String>,
+    pub artifacts: Vec<String>,
     /// Stable display identity. Explicit `name`, then `uses`, then a stable
     /// ordinal such as `runs#2`; never derived from script content.
     pub label: String,
@@ -77,6 +126,9 @@ pub struct PlannedStep {
     pub command: Option<String>,
     pub args: Vec<String>,
     pub cwd: Option<String>,
+    /// Per-step wall-clock deadline in seconds; None inherits the runner default.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeout_seconds: Option<NonZeroU64>,
     pub env: BTreeMap<String, String>,
     /// Union of `needs_packages` and `needs_sysroot`, for native builds.
     pub needs: Vec<String>,
@@ -118,15 +170,25 @@ pub struct PlannedOutput {
 #[derive(Debug, Clone, Serialize)]
 pub struct PlannedTest {
     pub name: String,
+    /// Canonical matrix identity; empty for a recipe without a matrix.
+    pub cell_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub files: Option<String>,
+    pub artifacts: Vec<String>,
+    pub skip: Option<String>,
     /// Output that owns this test. `None` is a recipe-level test, which sees
     /// every output; `Some` is an output-level test, which sees that output
     /// and its runtime dependencies.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output: Option<String>,
-    pub stage: String,
+    pub mode: crate::model::TestMode,
+    pub network: bool,
+    /// Whole-case deadline; individual steps cannot extend it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeout_seconds: Option<NonZeroU64>,
     pub argv: Option<Vec<String>>,
     pub pipeline: Vec<PlannedStep>,
-    /// Packages that are installed only for this test's root.
+    /// Additional packages for this acceptance test's isolated root.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub packages: Vec<String>,
     /// Variables applied to every step of this test.
@@ -424,18 +486,30 @@ pub(crate) fn plan_steps(
     let mut planned = Vec::new();
     for (index, step) in steps.iter().enumerate() {
         let at = |field: &str| format!("{context}[{index}].{field}");
+        validate_step(step, format!("{context}[{index}]"))?;
         let label = labels[index].clone();
+        let timeout_seconds = step
+            .timeout
+            .as_deref()
+            .map(timeout::parse)
+            .transpose()
+            .map_err(|error| error.at(at("timeout")))?;
 
         if let Some(uses) = &step.uses {
             let resolved =
                 steps::resolve(uses, step_root, step.with.as_ref(), allow_builtin_override)?;
+            let mut env = resolved.env;
+            env.extend(step.env.clone().unwrap_or_default());
             planned.push(PlannedStep {
+                files: step.files.clone(),
+                artifacts: step.artifacts.clone(),
                 label,
                 uses: uses.clone(),
                 command: Some(resolved.command),
                 args: resolved.args,
-                cwd: resolved.cwd,
-                env: resolved.env,
+                cwd: step.cwd.clone().or(resolved.cwd),
+                timeout_seconds,
+                env,
                 needs: resolved.needs,
                 needs_packages: resolved.needs_packages,
                 needs_sysroot: resolved.needs_sysroot,
@@ -454,11 +528,14 @@ pub(crate) fn plan_steps(
                 Error::new(codes::STEP_002, "argv must not be empty").at(at("argv"))
             })?;
             planned.push(PlannedStep {
+                files: step.files.clone(),
+                artifacts: step.artifacts.clone(),
                 label,
                 uses: step.label(),
                 command: Some(command.clone()),
                 args: args.to_vec(),
                 cwd: step.cwd.clone(),
+                timeout_seconds,
                 env: step.env.clone().unwrap_or_default(),
                 needs: Vec::new(),
                 needs_packages: Vec::new(),
@@ -478,11 +555,14 @@ pub(crate) fn plan_steps(
             .as_ref()
             .ok_or_else(|| Error::new(codes::STEP_001, "step has no command").at(at("runs")))?;
         planned.push(PlannedStep {
+            files: step.files.clone(),
+            artifacts: step.artifacts.clone(),
             label,
             uses: step.label(),
             command: Some("sh".to_string()),
             args: vec!["-c".to_string(), runs.clone()],
             cwd: step.cwd.clone(),
+            timeout_seconds,
             env: step.env.clone().unwrap_or_default(),
             needs: Vec::new(),
             needs_packages: Vec::new(),
@@ -616,6 +696,22 @@ fn plan_cell(
             step.env.entry(key.clone()).or_insert(value);
         }
     }
+    let mut build_tests = expand_tests(
+        &recipe.build.tests,
+        &scope,
+        options.step_root,
+        options.allow_builtin_override,
+        None,
+        "build.tests",
+    )?;
+    for test in &mut build_tests {
+        test.cell_id = cell.id.clone();
+        for (key, value) in &recipe.build.environment {
+            test.environment
+                .entry(key.clone())
+                .or_insert(template::expand_string(value, &scope)?);
+        }
+    }
     let ExpandedOutputs {
         outputs,
         tests: output_tests,
@@ -635,6 +731,9 @@ fn plan_cell(
         "tests",
     )?;
     tests.extend(output_tests);
+    for test in &mut tests {
+        test.cell_id = cell.id.clone();
+    }
 
     Ok(PlannedCell {
         id: cell.id.clone(),
@@ -645,6 +744,7 @@ fn plan_cell(
         packages,
         sysroot,
         pipeline,
+        build_tests,
         outputs,
         tests,
     })
@@ -656,7 +756,7 @@ mod tests {
     use crate::model::Step;
 
     const TEST_RECIPE: &str = r#"
-schema: 1
+schema: 2
 package:
   name: probe
   version: "1.0"
@@ -671,7 +771,7 @@ outputs:
     metapackage: true
 tests:
   - name: installed
-    stage: installed
+    mode: installed
     packages: [python3, "${package.name}-test"]
     environment:
       HOME: /tmp
@@ -680,7 +780,7 @@ tests:
 "#;
 
     const OUTPUT_TEST_RECIPE: &str = r#"
-schema: 1
+schema: 2
 package:
   name: probe
   version: "1.0"
@@ -695,17 +795,17 @@ outputs:
     metapackage: true
     tests:
       - name: smoke
-        stage: installed
+        mode: installed
         argv: ["true"]
   - name: two
     metapackage: true
     tests:
       - name: smoke
-        stage: installed
+        mode: installed
         argv: ["true"]
 tests:
   - name: integration
-    stage: installed
+    mode: installed
     argv: ["true"]
 "#;
 
@@ -717,10 +817,48 @@ tests:
     }
 
     #[test]
+    fn recipe_and_output_tests_keep_their_matrix_cell_identity() {
+        let recipe = crate::parse_recipe(&OUTPUT_TEST_RECIPE
+            .replace(
+                "build:\n",
+                "matrix:\n  axes:\n    flavor: [first, second]\n  release-suffix: true\nbuild:\n",
+            )
+            .replace("name: one\n", "name: one-${matrix.flavor}\n")
+            .replace("name: two\n", "name: two-${matrix.flavor}\n"))
+        .unwrap();
+        let planned = plan(&recipe, "x86_64").unwrap();
+        assert_eq!(planned.cells.len(), 2);
+        for (cell, expected) in planned.cells.iter().zip(["flavor=first", "flavor=second"]) {
+            assert_eq!(cell.id, expected);
+            assert_eq!(cell.tests.len(), 3);
+            for test in &cell.tests {
+                assert_eq!(test.cell_id, cell.id);
+            }
+            let flavor = expected.strip_prefix("flavor=").unwrap();
+            assert_eq!(
+                cell.tests
+                    .iter()
+                    .map(|test| test.qualified_name())
+                    .collect::<Vec<_>>(),
+                [
+                    "integration".to_string(),
+                    format!("one-{flavor}/smoke"),
+                    format!("two-{flavor}/smoke")
+                ]
+            );
+        }
+        let singleton = plan(&crate::parse_recipe(OUTPUT_TEST_RECIPE).unwrap(), "x86_64").unwrap();
+        assert!(singleton.cells[0]
+            .tests
+            .iter()
+            .all(|test| test.cell_id.is_empty()));
+    }
+
+    #[test]
     fn the_first_output_may_use_the_main_package_fallback() {
         let recipe = crate::parse_recipe(
             r#"
-schema: 1
+schema: 2
 package:
   name: probe
   version: "1.0"
@@ -740,7 +878,7 @@ outputs:
     fn file_presets_expand_to_globs() {
         let recipe = crate::parse_recipe(
             r#"
-schema: 1
+schema: 2
 package:
   name: probe
   version: "1.0"
@@ -767,7 +905,7 @@ outputs:
     fn an_unknown_file_preset_is_actionable() {
         let recipe = crate::parse_recipe(
             r#"
-schema: 1
+schema: 2
 package:
   name: probe
   version: "1.0"
@@ -820,7 +958,10 @@ outputs:
         let recipe = crate::parse_recipe(TEST_RECIPE).expect("recipe");
         let plan = plan(&recipe, "x86_64").expect("plan");
         let test = &plan.cells[0].tests[0];
-        assert_eq!(test.packages, ["python3", "probe-test"]);
+        assert_eq!(
+            test.packages,
+            ["python3", "probe-test", "bash", "coreutils"]
+        );
         assert_eq!(
             test.environment.get("HOME").map(String::as_str),
             Some("/tmp")
@@ -828,16 +969,143 @@ outputs:
     }
 
     #[test]
-    fn test_packages_are_rejected_on_build_stage() {
-        let recipe = crate::parse_recipe(&TEST_RECIPE.replace("stage: installed", "stage: build"))
-            .expect("recipe");
-        let error = plan(&recipe, "x86_64").expect_err("build-stage packages");
-        assert_eq!(error.code, rpmx_base::error::codes::TEST_004);
-        assert!(
-            error.message.contains("installed-stage"),
-            "{}",
-            error.message
+    fn build_and_output_tests_share_commands_without_leaking_build_dependencies() {
+        let text = TEST_RECIPE.replacen(
+            "    - runs: \"true\"",
+            r#"    - runs: "true"
+  tests:
+    - name: upstream
+      packages: [dejagnu]
+      files: tests
+      artifacts: ["reports/${arch}"]
+      timeout: 4h
+      environment:
+        USER: test-user
+      pipeline:
+        - uses: make/check
+"#,
+            1,
         );
+        let recipe = crate::parse_recipe(&text).unwrap();
+        let plan = plan(&recipe, "aarch64").unwrap();
+        let cell = &plan.cells[0];
+        assert_eq!(cell.pipeline.len(), 1);
+        assert_eq!(cell.build_tests.len(), 1);
+        assert_eq!(cell.tests.len(), 1);
+        assert!(cell.packages.is_empty());
+        let test = &cell.build_tests[0];
+        assert_eq!(test.name, "upstream");
+        assert_eq!(test.files.as_deref(), Some("tests"));
+        assert_eq!(test.artifacts, ["reports/aarch64"]);
+        assert_eq!(test.timeout_seconds.unwrap().get(), 14400);
+        assert!(test.packages.iter().any(|package| package == "dejagnu"));
+        assert!(test.packages.iter().any(|package| package == "make"));
+        assert_eq!(
+            test.environment.get("USER").map(String::as_str),
+            Some("test-user")
+        );
+        assert_eq!(test.pipeline[0].command.as_deref(), Some("bash"));
+        assert!(!test.network);
+        assert!(!cell.tests[0].network);
+        assert_eq!(cell.tests[0].mode, crate::model::TestMode::Installed);
+    }
+
+    #[test]
+    fn build_requirements_separate_host_target_and_test_tools() {
+        let recipe = crate::parse_recipe(TEST_RECIPE).unwrap();
+        use super::{build_requirements, PlannedSourceAssembly};
+        use std::collections::BTreeSet;
+        let mut plan = plan(&recipe, "aarch64").unwrap();
+        let cell = &mut plan.cells[0];
+        cell.packages = vec!["build-tool".into()];
+        cell.sysroot = vec!["target-headers".into()];
+        cell.pipeline[0].needs = vec!["fallback-tool".into()];
+        cell.pipeline[0].needs_packages.clear();
+        cell.pipeline[0].needs_sysroot.clear();
+        let mut source_step = cell.pipeline[0].clone();
+        source_step.needs = vec!["unused-union".into()];
+        source_step.needs_packages = vec!["assembly-tool".into()];
+        source_step.needs_sysroot = vec!["assembly-headers".into()];
+        cell.tests[0].packages = vec!["acceptance-only".into()];
+        cell.build_tests = cell.tests.clone();
+        cell.build_tests[0].packages = vec!["source-test-only".into()];
+        plan.source_assembly = Some(PlannedSourceAssembly {
+            steps: vec![source_step],
+            tools: vec![],
+        });
+        let requirements = build_requirements(&plan);
+        assert_eq!(
+            requirements.packages,
+            BTreeSet::from([
+                "build-tool".into(),
+                "fallback-tool".into(),
+                "assembly-tool".into()
+            ])
+        );
+        assert_eq!(
+            requirements.sysroot,
+            BTreeSet::from(["target-headers".into(), "assembly-headers".into()])
+        );
+    }
+
+    #[test]
+    fn build_tests_reject_network_and_transactions_before_execution() {
+        for field in ["network: true", "mode: transaction"] {
+            let text = TEST_RECIPE.replacen("    - runs: \"true\"", &format!("    - runs: \"true\"\n  tests:\n    - name: upstream\n      script: echo okay\n      {field}"), 1);
+            let recipe = crate::parse_recipe(&text).unwrap();
+            let error = plan(&recipe, "x86_64").unwrap_err();
+            assert!(error.to_string().contains("build.tests[0]"), "{error}");
+        }
+        let recipe =
+            crate::parse_recipe(&TEST_RECIPE.replace("mode: installed", "network: true")).unwrap();
+        assert!(plan(&recipe, "x86_64").unwrap().cells[0].tests[0].network);
+        assert!(crate::parse_recipe(&TEST_RECIPE.replacen(
+            "  pipeline:",
+            "  check: []\n  pipeline:",
+            1
+        ))
+        .is_err());
+    }
+
+    #[test]
+    fn generic_step_fixture_and_artifact_paths_cannot_escape_the_workspace() {
+        for field in ["files", "artifacts"] {
+            for value in ["../outside", "/host", ".", "logs/*.txt", "logs/../private"] {
+                let value = if field == "artifacts" {
+                    format!("[\"{value}\"]")
+                } else {
+                    format!("\"{value}\"")
+                };
+                let text = TEST_RECIPE.replacen(
+                    "    - runs: \"true\"",
+                    &format!("    - runs: \"true\"\n      {field}: {value}"),
+                    1,
+                );
+                let recipe = crate::parse_recipe(&text).unwrap();
+                assert!(plan(&recipe, "x86_64").is_err(), "{field}: {value}");
+            }
+        }
+        let legacy =
+            crate::parse_recipe(&TEST_RECIPE.replacen("schema: 2", "schema: 1", 1)).unwrap();
+        assert!(plan(&legacy, "x86_64").is_err());
+    }
+
+    #[test]
+    fn legacy_build_test_stages_are_rejected() {
+        let error = crate::parse_recipe(&TEST_RECIPE.replace("mode: installed", "stage: build"))
+            .expect_err("source checks are not acceptance tests");
+        assert!(error.to_string().contains("stage"), "{error}");
+    }
+
+    #[test]
+    fn installed_pipeline_tools_join_the_test_packages() {
+        let recipe =
+            crate::parse_recipe(&TEST_RECIPE.replace("runs: \"true\"", "uses: make/check"))
+                .expect("recipe");
+        let plan = plan(&recipe, "x86_64").expect("plan");
+        assert!(plan.cells[0].tests[0]
+            .packages
+            .contains(&"make".to_string()));
     }
 
     #[test]

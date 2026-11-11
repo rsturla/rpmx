@@ -2,13 +2,13 @@
 
 ## Recipe reference
 
-A recipe is one YAML document with a closed schema, or a bundle of files composed with `include:`. Unknown fields are errors. `schema` must be `1` in the root file.
+A recipe is one YAML document with a closed schema, or a bundle of files composed with `include:`. Unknown fields are errors. `schema` must be `2` in the root file. Earlier recipe schemas are rejected.
 
 A recipe can also be split into one file per top-level section:
 
 ```yaml
 # package.yaml
-schema: 1
+schema: 2
 include:
   - sources.yaml
   - build.yaml
@@ -51,7 +51,7 @@ See [`examples/jq/`](../../examples/jq/) for a tested split recipe.
 ### 5.1 Package metadata
 
 ```yaml
-schema: 1
+schema: 2
 
 package:
   name: hello
@@ -91,7 +91,7 @@ A `rpmx-defaults.yaml` can supply package metadata and build environment that
 are identical for every recipe in a repository:
 
 ```yaml
-schema: 1
+schema: 2
 package:
   source-date-epoch: 1704067200  # fallback for packages with no source
   maintainers:
@@ -467,8 +467,8 @@ A pipeline is an ordered list. Each entry is exactly one of:
     python3 generate.py > generated.h
 ```
 
-Common fields on any entry: `name`, `cwd`, `env`, `timeout` (stored but not yet
-enforced per step; use `--step-timeout`), `reason`.
+Common fields on any entry: `name`, `cwd`, `env`, `timeout` (a positive whole-number duration with `s`, `m`, or `h` suffix,
+for example `1s`, `30m`, or `4h`), `reason`.
 
 `runs` is executed as `sh -c <script>` in the sandbox. It is not `-euo
 pipefail`; add `set -eu` when you need it. `argv` never goes through a shell.
@@ -556,8 +556,13 @@ is what you want. `strip` is a step. `go/build`, `go/test`, `go/vendor`,
 `python/install-wheel` are also available. `license/copy` copies one or more
 license files into `$STAGE$PREFIX/share/licenses/<output>/` for each output, so
 a split package does not duplicate the loop or accidentally share one path.
-`test/hardening-check` checks the staged ELF files for PIE, NX, RELRO,
+`test/hardening-check` checks candidate RPM payload ELF files for PIE, NX, RELRO,
 BIND_NOW, stack protector, fortify, CFI/branch protection and build IDs.
+`test/runtime-linkage` checks installed shared libraries with the installed ELF
+loader. Its required `libraries` input lists SONAME basename patterns in the
+profile's library directory. Each pattern must match an ELF library whose
+shared dependencies resolve. See [runtime library linkage](testing.md#runtime-library-linkage)
+for an output-scoped example.
 
 A named local step is a YAML file under `pipelines/`:
 
@@ -722,130 +727,59 @@ recipe's `CFLAGS` extend the cross flags rather than replacing them.
 
 ### 5.9 Tests
 
-Recipe-level tests live at the top level and see every output:
+Use the same named case syntax for source checks and package acceptance:
 
 ```yaml
-tests:
-  - name: unit
-    stage: build
-    argv: [ctest, --output-on-failure]
+build:
+  tests:
+    - name: upstream
+      packages: [cmake]
+      timeout: 2h
+      argv: [ctest, --output-on-failure, --test-dir, build]
 
-  - name: integration
-    stage: installed
-    argv: [hello, --version]
-```
-
-Output-level tests live under an output and see that output plus the sibling
-outputs that provide its runtime dependencies:
-
-```yaml
 outputs:
   - name: hello
-    files:
-      include: [/usr/bin/hello]
-    dependencies:
-      run: [hello-lib]
     tests:
-      - name: smoke
-        stage: installed
-        packages: [grep]
-        environment:
-          HOME: /tmp
-        argv: [sh, -c, "hello --version | grep -q hello"]
-
-  - name: hello-lib
-    files:
-      include: [/usr/lib64/libhello.so.1]
-    tests:
-      - name: exported
-        stage: installed
-        argv: [sh, -c, "test -e /usr/lib64/libhello.so.1"]
+      - name: behavior
+        argv: [hello]
+        expect:
+          stdout: "Hello, world!\n"
 ```
 
-- `stage: build` runs in the build sandbox, with the source workspace present.
-- `stage: installed` installs the built RPMs into a disposable test root and
-  runs there.
-- A recipe-level installed test installs every output, so it is an integration
-  test. An output-level installed test installs that output and the sibling
-  outputs needed by its RPM dependencies, not unrelated outputs. This catches a
-  missing `Requires` between outputs instead of masking it with the full output
-  set.
-- The test root contains `bash`, `coreutils`, the declared test environment,
-  and the external runtime requirements of the selected RPMs. Those
-  requirements are resolved from the same repositories as the test root;
-  capabilities provided by another selected output are installed from the
-  build output instead. Tools or data that are not runtime requirements of the
-  package go in that test's `packages`.
-- `stage: package` is not implemented yet.
-- Tests run with `rpmx build`, `rpmx rebuild` and `rpmx test`; `--no-tests`
-  skips them on a build.
-- `--test NAME` selects every test with that name; within one matrix cell the
-  bare name must be unique. Use `--test OUTPUT/NAME` when several outputs
-  declare the same test name. Test names must be unique within one `tests:`
-  block; the same name may be reused by different outputs or matrix cells. A
-  test name cannot contain `/`.
-- `--junit FILE` writes JUnit XML.
+`build.tests` runs in independent source-workspace copies and extends the pinned
+build closure with case-only tools. Output or recipe `tests` accepts existing
+RPMs through `rpmx test --install-dir DIR`. Build and acceptance are separate
+operations. `mode: transaction` enables private package-state changes; installed
+mode is the default. Cases support `script`, `argv`/`expect`, `pipeline`, `files`,
+`packages`, `environment`, whole-case `timeout` and failure `artifacts`.
 
-#### Hardening check
+Fixture directories are captured with the recipe, not read from a mutable checkout
+while a case runs. `TEST_FILES` points to the case copy. `TEST_PACKAGE_ROOT` exposes
+the read-only candidate payload for layout and ELF inspection. Ordinary build
+steps also support `files`/`artifacts`, with fixtures exposed as `RPMX_FILES`.
 
-A package can assert that its staged ELF files carry the profile's hardening:
+The hardening builtin checks actual candidate RPM contents:
 
 ```yaml
 tests:
   - name: hardening
-    stage: build
     pipeline:
-      - uses: test/hardening-check
-```
-
-The step walks all of `$STAGE` and fails if an executable or shared object is
-missing PIE, NX, RELRO, BIND_NOW, stack-protector, fortified libc, the target's
-CFI/branch-protection property, or a build ID. Narrow it with `paths` and opt
-out of individual checks with `skip`:
-
-```yaml
       - uses: test/hardening-check
         with:
           paths: [/usr/bin/hello]
-          skip: [fortify, cf-protection]
+          skip: [fortify]
 ```
 
-Use this for packages whose output should carry the full profile. It is not a
-distro-wide gate: packages with hand-written assembly, static binaries or
-language runtimes may legitimately need a skip, and a noarch package has no ELF
-to check.
+It checks PIE, NX, RELRO, BIND_NOW, stack protector, fortification, branch
+protection and build IDs. Narrow paths and exceptions need a package-specific
+reason. `test/compiler-hardening-check` instead compiles and runs a consumer
+through an explicitly selected `cc`; declare that compiler in case `packages`.
+Its controlled links check BTI/PAC or IBT/SHSTK without dependency startup
+objects. Compiler and libc packages must check their own startup objects.
 
-`test/compiler-hardening-check` is the companion for a package that supplies a
-compiler wrapper or spec. It compiles an executable and a shared object through
-the configured `cc`, then checks the resulting ELF properties:
-
-```yaml
-tests:
-  - name: compiler
-    stage: installed
-    pipeline:
-      - uses: test/compiler-hardening-check
-        with:
-          cc: gcc-13
-```
-
-The shared-object step matters: a wrapper that appends `-pie` to every link
-will fail a `-shared` link, while a wrapper that reads the link mode from a GCC
-spec can add `-pie` only to executables.
-- `tests[].packages` lists packages installed only for that test's root. This
-  mirrors Wolfi/melange test environments. Tests with the same output and
-  package set share a root; a different set gets a separate root. It is valid
-  only for `stage: installed`; build-stage tests run in the build sandbox and
-  use `build.packages`.
-- `tests[].environment` sets variables for every step of that test. A step's
-  own `env` entries win.
-- Real dependency checking is performed; the only retry is for a conflict with
-  a package the test root already has, which the package under test replaces.
-- A build writes one test-root lock per distinct environment:
-  `<name>-<version>-<release>.test-root.lock.json` for the first,
-  `.<n>.test-root.lock.json` for the others. `--save-test-root` and
-  `--test-root-lock` require a single environment; pass `--test NAME` or
-  `--test OUTPUT/NAME` to select one.
+See [testing](testing.md) for isolation, dependencies, transaction cases, profiles,
+replay, status reports and artifacts. Source cases reject network access and
+transaction mode. Acceptance networking defaults to false.
 
 ### 5.10 Matrix and variables
 
@@ -889,7 +823,7 @@ selects one cell for a per-cell command.
 ## Complete example
 
 ```yaml
-schema: 1
+schema: 2
 
 package:
   name: hello
@@ -943,7 +877,6 @@ outputs:
 
 tests:
   - name: smoke
-    stage: installed
     argv: ["hello"]
 ```
 

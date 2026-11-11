@@ -9,7 +9,7 @@ fn recipe(root: &Path) -> rpmx_language::Plan {
     let path = root.join("package.yaml");
     fs::write(
         &path,
-        r#"schema: 1
+        r#"schema: 2
 package:
   name: app
   version: "1.0"
@@ -254,7 +254,7 @@ fn recipe_declarations_and_output_directories_are_exposed() {
     let path = root.join("package.yaml");
     fs::write(
         &path,
-        r#"schema: 1
+        r#"schema: 2
 package:
   name: app
   version: "1.0"
@@ -688,7 +688,7 @@ fn python_self_metadata_with_rpm_prefix_is_skipped() {
     let path = root.join("package.yaml");
     fs::write(
         &path,
-        r#"schema: 1
+        r#"schema: 2
 package:
   name: python3-requests
   version: "1.0"

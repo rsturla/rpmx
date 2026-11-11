@@ -1,9 +1,16 @@
 name: cmake/check
-version: 1
+version: 2
 summary: Run CTest tests
+inputs:
+  dir:
+    type: string
+    default: build
+  args:
+    type: list<string>
+    default: []
 needs:
   packages: [cmake]
 run:
   cwd: "${source.dir}"
   runs: |
-    ctest --test-dir build --output-on-failure
+    ctest --test-dir "${inputs.dir}" --output-on-failure --no-tests=error ${inputs.args}

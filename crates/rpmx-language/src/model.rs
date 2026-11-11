@@ -173,6 +173,9 @@ pub struct Maintainer {
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Build {
+    /// Source-tree tests, isolated from the build and run before packaging.
+    #[serde(default)]
+    pub tests: Vec<Test>,
     #[serde(default)]
     pub pipeline: Vec<Step>,
     /// Packages installed into the build root.
@@ -293,6 +296,12 @@ pub struct RootBuilder {
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Step {
+    /// Package-local fixture directory, exposed to the step as RPMX_FILES.
+    #[serde(default)]
+    pub files: Option<String>,
+    /// Relative files or directories retained even when the step fails.
+    #[serde(default)]
+    pub artifacts: Vec<String>,
     #[serde(default)]
     pub name: Option<String>,
     #[serde(default)]
@@ -463,9 +472,8 @@ pub struct Output {
     pub lint: OutputLint,
     #[serde(default)]
     pub scriptlets: Scriptlets,
-    /// Tests for this output. An installed-stage test owned by an output is
-    /// prepared with that output and its runtime dependencies, not with every
-    /// sibling output.
+    /// Acceptance tests for this output use its runtime dependency closure,
+    /// instead of installing every sibling output.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tests: Vec<Test>,
 }
@@ -739,12 +747,52 @@ impl OutputDependencies {
     }
 }
 
+/// Package acceptance always exercises emitted RPMs, never a source build tree.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TestMode {
+    #[default]
+    Installed,
+    Transaction,
+}
+
+impl TestMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Installed => "installed",
+            Self::Transaction => "transaction",
+        }
+    }
+}
+
+impl std::fmt::Display for TestMode {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Test {
     pub name: String,
-    pub stage: String,
-    /// Packages installed only for this test's root.
+    #[serde(default)]
+    pub mode: TestMode,
+    /// Allow external network access for this acceptance case.
+    #[serde(default)]
+    pub network: bool,
+    /// Whole-case wall-clock deadline. Steps share the remaining time.
+    #[serde(default)]
+    pub timeout: Option<String>,
+    /// Directory of package-local test files, relative to the root recipe.
+    #[serde(default)]
+    pub files: Option<String>,
+    /// Relative files or directories to preserve after the test.
+    #[serde(default)]
+    pub artifacts: Vec<String>,
+    /// An explicit reason to skip this test.
+    #[serde(default)]
+    pub skip: Option<String>,
+    /// Additional packages for this acceptance test's isolated root.
     #[serde(default)]
     pub packages: Vec<String>,
     /// Variables applied to every step of this test. A step's own `env`
@@ -753,8 +801,25 @@ pub struct Test {
     pub environment: BTreeMap<String, String>,
     #[serde(default)]
     pub argv: Option<Vec<String>>,
+    /// A Bash script with error, unset-variable and pipeline checks.
+    #[serde(default)]
+    pub script: Option<String>,
+    /// Expected results for `argv`.
+    #[serde(default)]
+    pub expect: Option<TestExpectation>,
     #[serde(default)]
     pub pipeline: Option<Vec<Step>>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
+pub struct TestExpectation {
+    #[serde(default)]
+    pub exit_code: u8,
+    #[serde(default)]
+    pub stdout: Option<String>,
+    #[serde(default)]
+    pub stderr: Option<String>,
 }
 
 /// One YAML file in a recipe bundle.

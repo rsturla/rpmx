@@ -30,6 +30,7 @@ pub fn run(args: BumpArgs) -> Result<(), Error> {
     let mut texts: BTreeMap<std::path::PathBuf, String> = bundle
         .files
         .iter()
+        .filter(|file| file.path == package_path || sources_path.as_ref() == Some(&file.path))
         .map(|file| {
             let text = std::str::from_utf8(&file.bytes)
                 .map_err(|error| {
@@ -82,11 +83,10 @@ pub fn run(args: BumpArgs) -> Result<(), Error> {
     })?;
     let root_name = bundle.root_file().name.clone();
     for file in &bundle.files {
-        let text = texts.get(&file.path).unwrap_or_else(|| {
-            original
-                .get(&file.path)
-                .expect("every bundle file has text")
-        });
+        let bytes = texts
+            .get(&file.path)
+            .map(|text| text.as_bytes())
+            .unwrap_or(&file.bytes);
         let path = temporary.path().join(&file.name);
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|error| {
@@ -96,7 +96,7 @@ pub fn run(args: BumpArgs) -> Result<(), Error> {
                 )
             })?;
         }
-        std::fs::write(&path, text).map_err(|error| {
+        std::fs::write(&path, bytes).map_err(|error| {
             Error::new(
                 codes::IO_001,
                 format!("cannot write {}: {error}", path.display()),
@@ -146,7 +146,9 @@ pub fn run(args: BumpArgs) -> Result<(), Error> {
 
     let mut changed: Vec<(std::path::PathBuf, String)> = Vec::new();
     for file in &bundle.files {
-        let old = original.get(&file.path).expect("original text");
+        let Some(old) = original.get(&file.path) else {
+            continue;
+        };
         let new = texts.get(&file.path).expect("updated text");
         if old != new {
             changed.push((file.path.clone(), file.name.clone()));
@@ -156,7 +158,9 @@ pub fn run(args: BumpArgs) -> Result<(), Error> {
     if args.dry_run {
         let mut diff = String::new();
         for file in &bundle.files {
-            let old = original.get(&file.path).expect("original text");
+            let Some(old) = original.get(&file.path) else {
+                continue;
+            };
             let new = texts.get(&file.path).expect("updated text");
             if old != new {
                 diff.push_str(&format!("--- {}\n+++ {}\n", file.name, file.name));

@@ -8,7 +8,7 @@
 # contain aarch64 ELF objects, every DT_NEEDED must resolve inside the sysroot,
 # and the binary must run on an aarch64 machine.
 
-schema: 1
+schema: 2
 
 package:
   name: c-hello-cross
@@ -72,18 +72,11 @@ outputs:
       include: ["/usr/bin/c-hello-cross"]
 
 tests:
-  # A build-stage test runs in the build sandbox, so it can inspect the
-  # artefact without executing it.
+  # Inspect the actual candidate RPM payload without executing target code.
   - name: target-arch
-    stage: build
-    pipeline:
-      - runs: |
-          aarch64-linux-gnu-readelf -h c-hello-cross | grep -q 'AArch64'
-  # The installed test runs the target binary in a target test root, which
-  # proves the packaged dynamic links resolve on the real architecture.
+    packages:
+      - binutils
+      - grep
+    script: "readelf -h \"$TEST_PACKAGE_ROOT/usr/bin/c-hello-cross\" > header\ngrep -F AArch64 header\n"
   - name: installed
-    stage: installed
-    # The target test root needs the runtime library the binary links against.
-    packages: [zlib]
     argv: ["c-hello-cross"]
-

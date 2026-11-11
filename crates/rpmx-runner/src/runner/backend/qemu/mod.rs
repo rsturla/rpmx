@@ -9,19 +9,23 @@ use crate::runner::{Runner, RunnerAssetKind, RunnerConfig, RunnerRequest, Sessio
 use rpmx_base::arch::Arch;
 use rpmx_base::error::{codes, Error, Result};
 
+mod budget;
 mod disk;
 mod guest;
+mod policy;
 mod ssh;
 
+use budget::{seconds, Budget};
 use disk::{
     command_exists, find_initrd, find_kernel, free_port, make_disk, qemu_binary, start_vm,
     unpack_kernel,
 };
+use policy::{PayloadPolicy, PAYLOAD_SLICE};
 static QEMU_START_LOCK: Mutex<()> = Mutex::new(());
 
 use guest::{
     generate_ssh_key, inject_build_mount, inject_network, inject_ssh, known_hosts, APPLIANCE_LABEL,
-    BUILD_LABEL, BUILD_ROOT_MOUNT,
+    BUILD_LABEL,
 };
 use ssh::{shell_quote, step_script, stream_command_output, stream_tar_in, stream_tar_out};
 
@@ -41,7 +45,7 @@ impl Runner for QemuBackend<'_> {
     }
 
     fn start(&self, config: &RunnerConfig<'_>) -> Result<Box<dyn Session>> {
-        QemuSession::prepare(self.root, config)
+        Ok(Box::new(QemuSession::prepare(self.root, config)?))
     }
 }
 
@@ -57,10 +61,22 @@ struct QemuSession {
     build_port: u16,
     log: PathBuf,
     timeout: NonZeroU64,
+    budget: Budget,
+    policy: PayloadPolicy,
+    next_step: u64,
+    stopped: bool,
 }
 
 impl QemuSession {
-    fn prepare(root: &Path, config: &RunnerConfig<'_>) -> Result<Box<dyn Session>> {
+    fn prepare(root: &Path, config: &RunnerConfig<'_>) -> Result<Self> {
+        let budget = Budget {
+            deadline: config.policy.deadline,
+            default: Duration::from_secs(config.timeout.get()),
+        };
+        budget.remaining(budget.default, "starting qemu")?;
+        for mount in config.policy.readonly_mounts {
+            policy::input_target(mount.target)?;
+        }
         let appliance = config
             .assets
             .get(RunnerAssetKind::QemuAppliance)
@@ -70,7 +86,7 @@ impl QemuSession {
                     "the qemu runner needs an assembled transport appliance; resolve and assemble one first",
                 )
             })?;
-        let qemu = qemu_binary(config.target)?;
+        let qemu = qemu_binary(config.exec)?;
         if !command_exists(&qemu) {
             return Err(Error::new(
                 codes::RUNNER_002,
@@ -86,30 +102,40 @@ impl QemuSession {
         let kernel = unpack_kernel(&find_kernel(appliance)?, temp.path())?;
         let initrd = find_initrd(appliance)?;
         let appliance_disk = temp.path().join("appliance.img");
-        make_disk(appliance, &appliance_disk, APPLIANCE_LABEL)?;
+        make_disk(appliance, &appliance_disk, APPLIANCE_LABEL, budget)?;
         let build_disk = temp.path().join("root.img");
-        make_disk(root, &build_disk, BUILD_LABEL)?;
+        make_disk(root, &build_disk, BUILD_LABEL, budget)?;
 
         let ssh_key = temp.path().join("id_ed25519");
-        generate_ssh_key(&ssh_key)?;
+        generate_ssh_key(&ssh_key, budget)?;
         let host_key = temp.path().join("ssh_host_ed25519_key");
-        generate_ssh_key(&host_key)?;
+        generate_ssh_key(&host_key, budget)?;
         inject_ssh(
             appliance,
             &appliance_disk,
             &ssh_key.with_extension("pub"),
             &host_key,
             temp.path(),
+            budget,
         )?;
-        inject_network(appliance, &appliance_disk, temp.path())?;
-        inject_build_mount(&appliance_disk, temp.path())?;
+        inject_network(appliance, &appliance_disk, temp.path(), budget)?;
+        inject_build_mount(&appliance_disk, temp.path(), budget)?;
 
         // Port allocation is a probe-then-bind window. Serialize VM startup
         // within this process so two architecture workers cannot choose the
         // same forwarding port.
-        let _starting = QEMU_START_LOCK
-            .lock()
-            .map_err(|_| Error::new(codes::RUNNER_003, "qemu start lock is poisoned"))?;
+        let _starting = loop {
+            match QEMU_START_LOCK.try_lock() {
+                Ok(guard) => break guard,
+                Err(std::sync::TryLockError::Poisoned(_)) => {
+                    return Err(Error::new(codes::RUNNER_003, "qemu start lock is poisoned"))
+                }
+                Err(std::sync::TryLockError::WouldBlock) => {
+                    budget.remaining(budget.default, "waiting for qemu startup")?;
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+            }
+        };
         let control_port = free_port()?;
         let build_port = free_port()?;
         let known_hosts = known_hosts(
@@ -142,11 +168,49 @@ impl QemuSession {
             build_port,
             log,
             timeout: config.timeout,
+            budget,
+            policy: PayloadPolicy {
+                network: config.policy.network,
+                readonly_stage: config.policy.readonly_stage,
+                writable_root: config.writable_root,
+                mounts: Vec::new(),
+            },
+            next_step: 0,
+            stopped: false,
         };
         session.wait_for_ssh()?;
         session.copy_in(config.workspace, &Self::guest_build_path(), "workspace")?;
         session.copy_in(config.stage, &Self::guest_stage_path(), "stage")?;
-        Ok(Box::new(session))
+        session.control(
+            "systemctl start dbus.socket; test -S /run/dbus/system_bus_socket",
+            "starting qemu supervision bus",
+        )?;
+        session.control("command -v systemd-run >/dev/null && command -v timeout >/dev/null && test -f /sys/fs/cgroup/cgroup.controllers", "checking qemu payload supervisor")?;
+        session.control("systemctl start rpmx-payload.slice; mkdir -p /run/rpmx/inputs; printf 'nameserver 10.0.2.3\n' >/run/rpmx/resolv.conf; chown -R 65534:65534 /run/rpmx/workspace", "preparing qemu workspace identity")?;
+        if !config.policy.readonly_stage {
+            session.control(
+                "chown -R 65534:65534 /run/rpmx/stage",
+                "preparing qemu stage identity",
+            )?;
+        }
+        for (index, mount) in config.policy.readonly_mounts.iter().enumerate() {
+            let source = format!("/run/rpmx/inputs/{index}");
+            let source = session.copy_input(mount.source, &source)?;
+            session
+                .policy
+                .mounts
+                .push((source, mount.target.to_string()));
+        }
+        if let Some(sysroot) = config.sysroot {
+            let source = "/run/rpmx/sysroot";
+            session.copy_in(sysroot, source, "target sysroot")?;
+            session
+                .policy
+                .mounts
+                .push((source.to_string(), "/sysroot".to_string()));
+        }
+
+        Ok(session)
     }
 
     fn ssh_args(&self, port: u16) -> Vec<String> {
@@ -158,39 +222,32 @@ impl QemuSession {
         port: u16,
         command: &[&str],
         timeout: NonZeroU64,
-    ) -> Command {
+    ) -> Result<Command> {
+        let remaining = self
+            .budget
+            .remaining(Duration::from_secs(timeout.get()), "qemu SSH transport")?;
         let mut process = Command::new("timeout");
         process
             .arg("--signal=TERM")
             .arg("--kill-after=5")
-            .arg(timeout.get().to_string())
+            .arg(seconds(remaining))
             .arg("ssh");
         process.args(self.ssh_args(port)).args(command);
-        process
+        Ok(process)
     }
 
-    fn ssh_command(&self, port: u16, command: &[&str]) -> Command {
+    fn ssh_command(&self, port: u16, command: &[&str]) -> Result<Command> {
         self.ssh_command_with_timeout(port, command, self.timeout)
     }
 
     fn ssh_child(&self, port: u16, command: &[&str]) -> Result<Child> {
-        let mut process = self.ssh_command(port, command);
+        let mut process = self.ssh_command(port, command)?;
         process
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        process
-            .spawn()
+        super::process::spawn_inheriting_fds(process, &[])
             .map_err(|error| Error::new(codes::RUNNER_003, format!("cannot run ssh: {error}")))
-    }
-
-    fn ssh_run(
-        &self,
-        port: u16,
-        command: &[&str],
-        stdin: Option<&[u8]>,
-    ) -> Result<(std::process::ExitStatus, Vec<u8>)> {
-        self.ssh_run_with_timeout(port, command, stdin, self.timeout)
     }
 
     fn ssh_run_with_timeout(
@@ -199,8 +256,9 @@ impl QemuSession {
         command: &[&str],
         stdin: Option<&[u8]>,
         timeout: NonZeroU64,
+        logs: Option<&crate::runner::OutputLogs>,
     ) -> Result<(std::process::ExitStatus, Vec<u8>)> {
-        let mut process = self.ssh_command_with_timeout(port, command, timeout);
+        let mut process = self.ssh_command_with_timeout(port, command, timeout)?;
         process.stdin(if stdin.is_some() {
             Stdio::piped()
         } else {
@@ -208,14 +266,16 @@ impl QemuSession {
         });
         process.stdout(Stdio::piped());
         process.stderr(Stdio::piped());
-        let child = process
-            .spawn()
+        let child = super::process::spawn_inheriting_fds(process, &[])
             .map_err(|error| Error::new(codes::RUNNER_003, format!("cannot run ssh: {error}")))?;
-        stream_command_output(child, stdin)
+        stream_command_output(child, stdin, logs)
     }
 
     fn wait_for_ssh(&mut self) -> Result<()> {
-        let deadline = Instant::now() + Duration::from_secs(180);
+        let deadline = Instant::now()
+            + self
+                .budget
+                .remaining(Duration::from_secs(180), "booting qemu")?;
         loop {
             if let Some(status) = self.child.try_wait().map_err(|error| {
                 Error::new(codes::RUNNER_003, format!("cannot poll qemu: {error}"))
@@ -230,11 +290,11 @@ impl QemuSession {
             }
             let probe_timeout = NonZeroU64::new(15).expect("non-zero probe timeout");
             if let Ok((status, _)) =
-                self.ssh_run_with_timeout(self.control_port, &["true"], None, probe_timeout)
+                self.ssh_run_with_timeout(self.control_port, &["true"], None, probe_timeout, None)
             {
                 if status.success()
                     && self
-                        .ssh_run_with_timeout(self.build_port, &["true"], None, probe_timeout)
+                        .ssh_run_with_timeout(self.build_port, &["true"], None, probe_timeout, None)
                         .is_ok_and(|(status, _)| status.success())
                 {
                     return Ok(());
@@ -254,24 +314,80 @@ impl QemuSession {
     }
 
     fn guest_build_path() -> String {
-        format!("{BUILD_ROOT_MOUNT}{}", rpmx_base::guest::BUILD)
+        "/run/rpmx/workspace".to_string()
     }
 
     fn guest_stage_path() -> String {
-        format!("{BUILD_ROOT_MOUNT}{}", rpmx_base::guest::STAGE)
+        "/run/rpmx/stage".to_string()
     }
 
     fn copy_in(&self, source: &Path, destination: &str, label: &str) -> Result<()> {
         let destination = shell_quote(destination);
-        let command = format!(
-            "for p in /run/rpmx/root/tmp /run/rpmx/root/tmp/build /run/rpmx/root/tmp/stage; do \
-             [ -L \"$p\" ] && exit 1; done; mkdir -p {destination} && tar -C {destination} -xf -"
-        );
+        let command = format!("mkdir -p {destination} && tar -C {destination} -xf -");
         stream_tar_in(
             self.ssh_child(self.control_port, &[command.as_str()])?,
             source,
             label,
         )
+    }
+
+    fn copy_input(&self, source: &Path, destination: &str) -> Result<String> {
+        if source.is_dir() {
+            self.copy_in(source, destination, "read-only input")?;
+            return Ok(destination.to_string());
+        }
+        if source.is_file() {
+            let wrapper = tempfile::tempdir_in(self.temp.path())
+                .map_err(|error| Error::new(codes::RUNNER_003, error.to_string()))?;
+            std::fs::copy(source, wrapper.path().join("payload")).map_err(|error| {
+                Error::new(
+                    codes::RUNNER_003,
+                    format!("cannot snapshot qemu input {}: {error}", source.display()),
+                )
+            })?;
+            self.copy_in(wrapper.path(), destination, "read-only file")?;
+            return Ok(format!("{destination}/payload"));
+        }
+        Err(Error::new(
+            codes::RUNNER_004,
+            format!(
+                "qemu input {} must be a regular file or directory",
+                source.display()
+            ),
+        ))
+    }
+
+    fn control(&self, command: &str, label: &str) -> Result<()> {
+        let command = format!("set -eu; {command}");
+        let (status, stderr) =
+            self.ssh_run_with_timeout(self.control_port, &[&command], None, self.timeout, None)?;
+        if !status.success() {
+            return Err(Error::new(
+                codes::RUNNER_004,
+                format!("{label} failed: {}", String::from_utf8_lossy(&stderr)),
+            ));
+        }
+        Ok(())
+    }
+
+    fn supervisor_diagnostics(&self, unit: &str) -> String {
+        let mut command = Command::new("ssh");
+        command.args(self.ssh_args(self.control_port)).arg(format!(
+            "journalctl --no-pager -n 16 -u {}",
+            shell_quote(&format!("{unit}.service"))
+        ));
+        let budget = Budget {
+            default: Duration::from_secs(3),
+            ..self.budget
+        };
+        match budget.output(&mut command, "reading qemu supervisor diagnostics") {
+            Ok(output) => String::from_utf8_lossy(&output.stdout).trim().to_string(),
+            Err(_) => String::new(),
+        }
+    }
+
+    fn quiesce(&self) -> Result<()> {
+        self.control(&format!("set -eu; systemctl stop {PAYLOAD_SLICE}; p=/sys/fs/cgroup/rpmx.slice/{PAYLOAD_SLICE}/cgroup.events; if test -f \"$p\"; then ! grep -q '^populated 1$' \"$p\"; fi"), "stopping qemu payload writers")
     }
 
     fn sync_path(&self, remote: &str, host: &Path) -> Result<()> {
@@ -295,31 +411,152 @@ impl QemuSession {
         // partial tree behind. This trades memory for disk, not RAM.
         let quoted = shell_quote(remote);
         let command = format!("tar -C {quoted} -cf - .");
+        let incoming = tempfile::Builder::new()
+            .prefix(".rpmx-qemu-export-")
+            .tempdir_in(host.parent().ok_or_else(|| {
+                Error::new(codes::RUNNER_003, "qemu export requires an owned directory")
+            })?)
+            .map_err(|error| Error::new(codes::RUNNER_003, error.to_string()))?;
         stream_tar_out(
             self.ssh_child(self.control_port, &[command.as_str()])?,
             remote,
-            host,
+            incoming.path(),
             archive,
-        )
+        )?;
+        replace_export(incoming.path(), host)
     }
 }
 
+/// Publish a complete validated snapshot, including guest deletions. Only owned
+/// workspace/stage directories reach this function; an existing symlink is refused.
+fn replace_export(incoming: &Path, destination: &Path) -> Result<()> {
+    let metadata = std::fs::symlink_metadata(destination)
+        .map_err(|error| Error::new(codes::RUNNER_003, error.to_string()))?;
+    if !metadata.is_dir()
+        || std::fs::canonicalize(destination)
+            .map_err(|error| Error::new(codes::RUNNER_003, error.to_string()))?
+            == Path::new("/")
+    {
+        return Err(Error::new(
+            codes::RUNNER_003,
+            "qemu export requires an owned non-root directory",
+        ));
+    }
+    let backup = tempfile::Builder::new()
+        .prefix(".rpmx-qemu-previous-")
+        .tempdir_in(destination.parent().unwrap())
+        .map_err(|error| Error::new(codes::RUNNER_003, error.to_string()))?;
+    let previous = backup.path().join("tree");
+    std::fs::rename(destination, &previous).map_err(|error| {
+        Error::new(
+            codes::RUNNER_003,
+            format!("cannot retain previous qemu workspace: {error}"),
+        )
+    })?;
+    if let Err(error) = std::fs::rename(incoming, destination) {
+        let restored = std::fs::rename(&previous, destination);
+        return Err(Error::new(
+            codes::RUNNER_003,
+            format!(
+                "cannot publish qemu export: {error}; previous workspace restoration: {restored:?}"
+            ),
+        ));
+    }
+    writable_directories(&previous)
+        .and_then(|()| std::fs::remove_dir_all(&previous))
+        .map_err(|error| {
+            Error::new(
+                codes::RUNNER_003,
+                format!("cannot remove previous qemu workspace: {error}"),
+            )
+        })?;
+    Ok(())
+}
+
+fn writable_directories(path: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let metadata = std::fs::symlink_metadata(path)?;
+    if metadata.is_dir() {
+        std::fs::set_permissions(
+            path,
+            std::fs::Permissions::from_mode(metadata.permissions().mode() | 0o700),
+        )?;
+        for entry in std::fs::read_dir(path)? {
+            writable_directories(&entry?.path())?;
+        }
+    }
+    Ok(())
+}
+
+// SSH startup is part of the host elapsed time, but not the guest deadline.
+// A late ordinary failure must keep its command failure classification.
+fn step_timed_out(status: std::process::ExitStatus, elapsed: Duration, timeout: Duration) -> bool {
+    matches!(status.code(), Some(124 | 137)) && elapsed >= timeout
+}
+
 impl Session for QemuSession {
+    fn finish(&mut self) -> Result<()> {
+        if self.stopped {
+            return Ok(());
+        }
+        // Cleanup has its own small bound after a case deadline. Payload execution
+        // cannot borrow this grace period, and failed quiescence forbids export.
+        self.budget.deadline = Some(Instant::now() + Duration::from_secs(15));
+        let result = self.sync_out();
+        let stopped = self.stop();
+        match (result, stopped) {
+            (Err(error), _) | (_, Err(error)) => Err(error),
+            _ => Ok(()),
+        }
+    }
+
     fn run(&mut self, request: &RunnerRequest<'_>) -> Result<()> {
+        if self.stopped {
+            return Err(Error::new(
+                codes::RUNNER_004,
+                "qemu session is already stopped",
+            ));
+        }
+        let remaining = self
+            .budget
+            .remaining(Duration::from_secs(request.timeout.get()), request.label)?;
         let script = step_script(request);
-        let (status, stderr) =
-            self.ssh_run(self.build_port, &["sh", "-s"], Some(script.as_bytes()))?;
+        let unit = format!("rpmx-payload-{}", self.next_step);
+        self.next_step += 1;
+        let command = self.policy.command(remaining, &unit);
+        let transport_timeout = NonZeroU64::new(request.timeout.get().saturating_add(5))
+            .expect("positive transport timeout");
+        let started = Instant::now();
+        let (status, stderr) = self.ssh_run_with_timeout(
+            self.control_port,
+            &[&command],
+            Some(script.as_bytes()),
+            transport_timeout,
+            request.logs,
+        )?;
         if !status.success() {
+            let diagnostics = self.supervisor_diagnostics(&unit);
+            if !diagnostics.is_empty() {
+                eprintln!("{diagnostics}");
+            }
+            if step_timed_out(status, started.elapsed(), remaining) {
+                return Err(Error::new(
+                    codes::SANDBOX_004,
+                    format!("qemu step '{}' exceeded its deadline", request.label),
+                ));
+            }
             return Err(Error::new(
                 codes::SANDBOX_002,
                 format!(
-                    "qemu step '{}' ({}) failed with {}: {}",
+                    "qemu step '{}' failed with {:?}: {}",
                     request.label,
-                    request.command,
-                    status
-                        .code()
-                        .map_or_else(|| "a signal".to_string(), |code| format!("exit {code}")),
-                    String::from_utf8_lossy(&stderr).trim()
+                    status.code(),
+                    format!(
+                        "{}\n{}",
+                        String::from_utf8_lossy(&stderr).trim(),
+                        diagnostics
+                    )
+                    .trim()
                 ),
             ));
         }
@@ -327,12 +564,38 @@ impl Session for QemuSession {
     }
 
     fn sync_out(&mut self) -> Result<()> {
+        if self.stopped {
+            return Ok(());
+        }
+        self.quiesce()?;
         self.sync_path(&Self::guest_build_path(), &self.workspace)?;
-        self.sync_path(&Self::guest_stage_path(), &self.stage)
+        if !self.policy.readonly_stage {
+            self.sync_path(&Self::guest_stage_path(), &self.stage)?;
+        }
+        Ok(())
     }
 
     fn stop(&mut self) -> Result<()> {
-        Ok(())
+        if self.stopped {
+            return Ok(());
+        }
+        self.stopped = true;
+        match self.child.try_wait() {
+            Ok(Some(_)) => Ok(()),
+            Ok(None) => {
+                self.child.kill().map_err(|error| {
+                    Error::new(codes::RUNNER_003, format!("cannot stop qemu: {error}"))
+                })?;
+                self.child.wait().map_err(|error| {
+                    Error::new(codes::RUNNER_003, format!("cannot reap qemu: {error}"))
+                })?;
+                Ok(())
+            }
+            Err(error) => Err(Error::new(
+                codes::RUNNER_003,
+                format!("cannot inspect qemu: {error}"),
+            )),
+        }
     }
 }
 
@@ -418,11 +681,41 @@ fn secure_delete(path: &Path) {
 #[cfg(test)]
 mod tests {
     use super::ssh::{shell_quote, stream_tar_in, stream_tar_out};
-    use super::{secure_delete, ssh_args_for, QemuSession, RunnerConfig};
+    use super::{secure_delete, ssh_args_for, step_timed_out, QemuSession, RunnerConfig};
     use crate::runner::RunnerAssets;
     use rpmx_base::arch::Arch;
     use std::num::{NonZeroU32, NonZeroU64};
     use std::process::{Command, Stdio};
+
+    #[test]
+    fn a_delayed_ordinary_failure_is_not_a_step_timeout() {
+        let started = std::time::Instant::now();
+        let status = Command::new("sh")
+            .args(["-c", "sleep 1.1; exit 7"])
+            .status()
+            .unwrap();
+        assert!(started.elapsed() >= std::time::Duration::from_secs(1));
+        assert!(!step_timed_out(
+            status,
+            started.elapsed(),
+            std::time::Duration::from_secs(1)
+        ));
+    }
+
+    #[test]
+    fn supervisor_deadline_status_is_classified_as_timeout() {
+        let started = std::time::Instant::now();
+        let status = Command::new("timeout")
+            .args(["1", "sleep", "30"])
+            .status()
+            .unwrap();
+        assert_eq!(status.code(), Some(124));
+        assert!(step_timed_out(
+            status,
+            started.elapsed(),
+            std::time::Duration::from_secs(1)
+        ));
+    }
 
     #[test]
     fn ssh_uses_the_allocated_host_port() {
@@ -443,6 +736,8 @@ mod tests {
     #[test]
     fn a_missing_appliance_is_a_runner_error() {
         let config = RunnerConfig {
+            policy: Default::default(),
+            writable_root: false,
             host: Arch::X86_64,
             exec: Arch::X86_64,
             target: Arch::X86_64,
@@ -524,6 +819,43 @@ mod tests {
         assert_eq!(
             std::fs::read(host.join("nested/payload.txt")).expect("copied payload"),
             b"streamed\n"
+        );
+    }
+
+    #[test]
+    fn validated_export_replaces_deleted_files_and_refuses_symlink_destinations() {
+        let root = tempfile::tempdir().unwrap();
+        let remote = root.path().join("remote");
+        let host = root.path().join("host");
+        std::fs::create_dir(&remote).unwrap();
+        std::fs::create_dir(&host).unwrap();
+        std::fs::write(host.join("deleted-by-guest"), "stale").unwrap();
+        std::fs::write(remote.join("result"), "fresh").unwrap();
+        let incoming = tempfile::tempdir_in(root.path()).unwrap();
+        let child = piped(&format!(
+            "tar -C {} -cf - .",
+            shell_quote(remote.to_str().unwrap())
+        ));
+        stream_tar_out(
+            child,
+            "remote",
+            incoming.path(),
+            tempfile::tempfile().unwrap(),
+        )
+        .unwrap();
+        super::replace_export(incoming.path(), &host).unwrap();
+        assert!(!host.join("deleted-by-guest").exists());
+        assert_eq!(
+            std::fs::read_to_string(host.join("result")).unwrap(),
+            "fresh"
+        );
+        let symlink = root.path().join("alias");
+        std::os::unix::fs::symlink(&host, &symlink).unwrap();
+        let incoming = tempfile::tempdir_in(root.path()).unwrap();
+        assert!(super::replace_export(incoming.path(), &symlink).is_err());
+        assert_eq!(
+            std::fs::read_to_string(host.join("result")).unwrap(),
+            "fresh"
         );
     }
 
@@ -677,5 +1009,230 @@ mod tests {
             error.message
         );
         assert!(error.message.contains("warning"), "{}", error.message);
+    }
+}
+
+#[cfg(test)]
+mod policy_controls {
+    use super::*;
+    use crate::runner::{ExecutionPolicy, ReadOnlyMount, RunnerAssets};
+    use std::num::NonZeroU32;
+
+    fn run(session: &mut QemuSession, script: &str, timeout: u64) -> Result<()> {
+        session.run(&RunnerRequest {
+            command: "/bin/bash",
+            args: &["-euc".into(), script.into()],
+            cwd: "/tmp/build",
+            env: &std::collections::BTreeMap::new(),
+            timeout: NonZeroU64::new(timeout).unwrap(),
+            label: "qemu policy control",
+            logs: None,
+        })
+    }
+
+    #[test]
+    #[ignore = "requires RPMX_QEMU_APPLIANCE pointing to an assembled native appliance, qemu-system, native cc with static libc, and KVM or TCG"]
+    fn real_vm_enforces_inputs_identity_network_quiescence_and_case_deadline() {
+        use std::os::unix::fs::PermissionsExt;
+        let appliance = PathBuf::from(
+            std::env::var_os("RPMX_QEMU_APPLIANCE")
+                .expect("set RPMX_QEMU_APPLIANCE to the assembled native appliance"),
+        );
+        let scratch = tempfile::tempdir().unwrap();
+        let workspace = scratch.path().join("workspace");
+        let stage = scratch.path().join("stage");
+        let fixture = scratch.path().join("fixture");
+        for directory in [&workspace, &stage, &fixture] {
+            std::fs::create_dir(directory).unwrap();
+        }
+        // Compile a dependency-free native consumer: the isolated network must
+        // still support a service and client in the same test invocation.
+        let source = scratch.path().join("loopback.c");
+        std::fs::write(
+            &source,
+            r#"
+#include <arpa/inet.h>
+#include <assert.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <sys/wait.h>
+#include <unistd.h>
+int main(void) {
+    int listener = socket(AF_INET, SOCK_STREAM, 0);
+    assert(listener >= 0);
+    struct sockaddr_in address = { .sin_family = AF_INET,
+        .sin_addr.s_addr = htonl(INADDR_LOOPBACK) };
+    assert(bind(listener, (struct sockaddr *)&address, sizeof(address)) == 0);
+    assert(listen(listener, 1) == 0);
+    socklen_t length = sizeof(address);
+    assert(getsockname(listener, (struct sockaddr *)&address, &length) == 0);
+    pid_t child = fork();
+    assert(child >= 0);
+    if (child == 0) {
+        close(listener);
+        int client = socket(AF_INET, SOCK_STREAM, 0);
+        assert(client >= 0);
+        assert(connect(client, (struct sockaddr *)&address, length) == 0);
+        assert(write(client, "ping", 4) == 4);
+        char reply[4];
+        assert(recv(client, reply, 4, MSG_WAITALL) == 4 && memcmp(reply, "pong", 4) == 0);
+        close(client);
+        _exit(0);
+    }
+    int connection = accept(listener, 0, 0);
+    assert(connection >= 0);
+    char request[4];
+    assert(recv(connection, request, 4, MSG_WAITALL) == 4 && memcmp(request, "ping", 4) == 0);
+    assert(write(connection, "pong", 4) == 4);
+    close(connection);
+    close(listener);
+    int status;
+    assert(waitpid(child, &status, 0) == child);
+    assert(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+    return 0;
+}
+"#,
+        )
+        .unwrap();
+        let compile = Command::new("cc")
+            .args(["-static", "-Wall", "-Wextra", "-Werror"])
+            .arg(&source)
+            .arg("-o")
+            .arg(workspace.join("loopback"))
+            .output()
+            .expect("native C compiler with static libc is required for the real VM control");
+        assert!(
+            compile.status.success(),
+            "{}",
+            String::from_utf8_lossy(&compile.stderr)
+        );
+        std::fs::write(workspace.join("delete-me"), "stale").unwrap();
+        std::fs::write(stage.join("payload"), "original").unwrap();
+        std::fs::write(fixture.join("value"), "fixture").unwrap();
+        std::fs::set_permissions(
+            stage.join("payload"),
+            std::fs::Permissions::from_mode(0o666),
+        )
+        .unwrap();
+        std::fs::set_permissions(
+            fixture.join("value"),
+            std::fs::Permissions::from_mode(0o666),
+        )
+        .unwrap();
+        let mounts = [ReadOnlyMount {
+            source: &fixture,
+            target: "/tmp/rpmx-inputs/fixture",
+        }];
+        let arch = Arch::current().unwrap();
+        let config = RunnerConfig {
+            policy: ExecutionPolicy {
+                readonly_stage: true,
+                readonly_mounts: &mounts,
+                deadline: Some(Instant::now() + Duration::from_secs(180)),
+                ..Default::default()
+            },
+            writable_root: false,
+            host: arch,
+            exec: arch,
+            target: arch,
+            sysroot: None,
+            workspace: &workspace,
+            stage: &stage,
+            assets: RunnerAssets::new(Some(&appliance), &[]),
+            jobs: NonZeroU32::new(2).unwrap(),
+            timeout: NonZeroU64::new(180).unwrap(),
+        };
+        let mut session = QemuSession::prepare(&appliance, &config).unwrap();
+        run(
+            &mut session,
+            r#"
+test "$(id -u)" = 65534
+grep -Eq '^CapEff:[[:space:]]+0000000000000000$' /proc/self/status
+grep -Eq '^NoNewPrivs:[[:space:]]+1$' /proc/self/status
+test "$(wc -l </proc/net/route)" = 1
+./loopback
+test "$(cat /tmp/rpmx-inputs/fixture/value)" = fixture
+if (printf bad >/tmp/rpmx-inputs/fixture/value); then exit 61; fi
+if (printf bad >/tmp/stage/payload); then exit 62; fi
+rm delete-me
+printf initial >late-writer
+(sleep 1; printf late >>late-writer) &
+printf workspace-ok >result
+"#,
+            20,
+        )
+        .unwrap();
+        session.finish().unwrap();
+        assert!(
+            session.child.try_wait().unwrap().is_some(),
+            "finish must reap the VM"
+        );
+        assert!(
+            !workspace.join("delete-me").exists(),
+            "guest deletions must not survive as stale artifacts"
+        );
+        assert_eq!(
+            std::fs::read_to_string(workspace.join("result")).unwrap(),
+            "workspace-ok"
+        );
+        assert_eq!(
+            std::fs::read_to_string(workspace.join("late-writer")).unwrap(),
+            "initial"
+        );
+        assert_eq!(
+            std::fs::read_to_string(stage.join("payload")).unwrap(),
+            "original"
+        );
+        assert_eq!(
+            std::fs::read_to_string(fixture.join("value")).unwrap(),
+            "fixture"
+        );
+        std::thread::sleep(Duration::from_millis(1200));
+        assert_eq!(
+            std::fs::read_to_string(workspace.join("late-writer")).unwrap(),
+            "initial"
+        );
+
+        let transaction_config = RunnerConfig {
+            writable_root: true,
+            ..config
+        };
+        let mut transaction = QemuSession::prepare(&appliance, &transaction_config).unwrap();
+        run(
+            &mut transaction,
+            r#"
+test "$(id -u)" = 0
+printf protected >/tmp/build/protected
+chmod 000 /tmp/build/protected
+test "$(cat /tmp/build/protected)" = protected
+chmod 600 /tmp/build/protected
+if (printf bad >/tmp/rpmx-inputs/fixture/value); then exit 63; fi
+if (printf bad >/tmp/stage/payload); then exit 64; fi
+"#,
+            20,
+        )
+        .unwrap();
+        transaction.budget.deadline = Some(Instant::now() + Duration::from_millis(1500));
+        run(&mut transaction, "sleep 0.8", 10).unwrap();
+        let started = Instant::now();
+        let error = run(&mut transaction, "sleep 30", 10).unwrap_err();
+        assert_eq!(error.code, codes::SANDBOX_004);
+        assert!(started.elapsed() < Duration::from_secs(6));
+        transaction.finish().unwrap();
+        assert!(transaction.child.try_wait().unwrap().is_some());
+
+        let network_config = RunnerConfig {
+            policy: ExecutionPolicy {
+                network: true,
+                ..config.policy
+            },
+            ..config
+        };
+        let mut network = QemuSession::prepare(&appliance, &network_config).unwrap();
+        run(&mut network, "test \"$(wc -l </proc/net/route)\" -gt 1; getent ahostsv4 registry.fedoraproject.org >dns-result; test -s dns-result", 20).unwrap();
+        network.finish().unwrap();
+        assert!(!std::fs::read(workspace.join("dns-result"))
+            .unwrap()
+            .is_empty());
     }
 }

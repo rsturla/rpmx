@@ -1,7 +1,7 @@
 use std::process::{Command, Output};
 
 const WEAK: &str = r#"
-schema: 1
+schema: 2
 package:
   name: probe
   version: "1.0"
@@ -18,7 +18,7 @@ outputs:
 "#;
 
 const CLEAN: &str = r#"
-schema: 1
+schema: 2
 package:
   name: probe
   version: "1.0"
@@ -48,6 +48,18 @@ fn recipe(text: &str) -> (tempfile::TempDir, String) {
     std::fs::write(&path, text).expect("recipe");
     let path = path.display().to_string();
     (directory, path)
+}
+
+#[test]
+fn strict_scripts_are_valid_and_shell_argv_is_rejected() {
+    for (fields, valid) in [
+        ("argv: [sh, -c, \"false\\ntrue\"]", false),
+        ("script: \"false\\ntrue\"", true),
+    ] {
+        let (_directory, path) = recipe(&format!("{CLEAN}tests:\n  - name: probe\n    {fields}\n"));
+        let output = rpmx(&["lint", &path]);
+        assert_eq!(output.status.success(), valid, "{output:?}");
+    }
 }
 
 #[test]

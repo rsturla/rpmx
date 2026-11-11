@@ -1,5 +1,5 @@
 use std::io::{self, Read, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::error::{Code, Error, Result};
 
@@ -96,5 +96,52 @@ mod tests {
         let mut bytes = Vec::new();
         let error = reader.read_to_end(&mut bytes).expect_err("over limit");
         assert!(error.to_string().contains("4-byte limit"));
+    }
+}
+
+/// A temporary workspace retained only when the process output policy requests it.
+pub struct WorkDir {
+    path: PathBuf,
+    _temporary: Option<tempfile::TempDir>,
+}
+impl WorkDir {
+    pub fn new(context: &str) -> Result<Self> {
+        let temporary = tempfile::tempdir().map_err(|e| {
+            Error::new(
+                crate::error::codes::BUILD_005,
+                format!("cannot create work directory: {e}"),
+            )
+        })?;
+        if crate::output::keep_workdir() {
+            let path = temporary.keep();
+            crate::output::phase("work", format!("{context}: {}", path.display()));
+            Ok(Self {
+                path,
+                _temporary: None,
+            })
+        } else {
+            Ok(Self {
+                path: temporary.path().into(),
+                _temporary: Some(temporary),
+            })
+        }
+    }
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+#[cfg(test)]
+mod workspace_tests {
+    use super::WorkDir;
+
+    #[test]
+    fn workspace_exists_until_its_owner_is_dropped() {
+        let work = WorkDir::new("workspace-contract").expect("create workspace");
+        let path = work.path().to_path_buf();
+        std::fs::write(path.join("evidence"), b"owned").expect("write workspace");
+        assert!(path.join("evidence").is_file());
+        drop(work);
+        assert!(!path.exists(), "temporary workspace survived its owner");
     }
 }

@@ -1,4 +1,4 @@
-schema: 1
+schema: 2
 package:
   name: gcc
   version: "1.0"

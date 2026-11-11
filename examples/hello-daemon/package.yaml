@@ -1,4 +1,4 @@
-schema: 1
+schema: 2
 package:
   name: hello-daemon
   version: "1.0"
@@ -98,7 +98,6 @@ outputs:
         systemctl daemon-reload >/dev/null 2>&1 || :
 tests:
   - name: installed
-    stage: installed
     argv:
       - /usr/bin/hello-daemon
       - --version

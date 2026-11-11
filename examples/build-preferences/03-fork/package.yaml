@@ -6,7 +6,7 @@
 # script. There is no configure phase, no compile phase and no install phase
 # for a package override to target.
 
-schema: 1
+schema: 2
 
 package:
   name: toolbox
@@ -46,5 +46,4 @@ outputs:
 
 tests:
   - name: installed
-    stage: installed
     argv: ["toolbox", "--version"]

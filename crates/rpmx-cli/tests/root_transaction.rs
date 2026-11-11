@@ -99,7 +99,9 @@ fn exact_package_requests_and_dependencies_form_one_installable_transaction() {
         .find(|package| package.name == "demo-lib")
         .unwrap();
     assert_eq!(library.evr, "2-1");
-    assert_eq!(library.repo_id, "published");
+    assert!(
+        matches!(&library.origin, rpmx_core::root::PackageOrigin::Repository { repository, .. } if repository == "published")
+    );
 
     std::fs::write(
         root.join("profile.yaml"),
@@ -130,7 +132,9 @@ fn exact_package_requests_and_dependencies_form_one_installable_transaction() {
         .find(|package| package.name == "demo-lib")
         .unwrap();
     assert_eq!(library.evr, "1-1");
-    assert_eq!(library.repo_id, "under-test");
+    assert!(
+        matches!(&library.origin, rpmx_core::root::PackageOrigin::Repository { repository, .. } if repository == "under-test")
+    );
     run(
         root,
         &[
@@ -186,4 +190,119 @@ fn exact_package_requests_and_dependencies_form_one_installable_transaction() {
         "incompatible exact requirements must fail"
     );
     assert!(!root.join("unsatisfiable.lock.yaml").exists());
+}
+
+#[test]
+#[ignore = "requires rootless podman and the Fedora 44 builder image"]
+fn generic_requests_select_the_newest_compatible_dependency_closure() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    std::fs::create_dir(root.join("stage")).unwrap();
+    package(root, "fixture-tool", "1", "repository", &[]);
+    package(root, "fixture-tool", "2", "repository", &[]);
+    package(
+        root,
+        "fixture-selector",
+        "1",
+        "repository",
+        &["fixture-tool = 1-1"],
+    );
+    package(
+        root,
+        "fixture-broken-selector",
+        "1",
+        "repository",
+        &["fixture-missing-dependency = 1"],
+    );
+    let repository = root.join("repository").join(std::env::consts::ARCH);
+    run(
+        root,
+        &[
+            "repo",
+            "--rpms",
+            repository.to_str().unwrap(),
+            "--output",
+            repository.to_str().unwrap(),
+        ],
+    );
+    let mut profile = serde_json::json!({
+        "document": "rpmx-profile", "version": 1, "name": "compatible-candidates",
+        "releasever": "44", "archs": [std::env::consts::ARCH],
+        "builder": {"image": "registry.fedoraproject.org/fedora:44"},
+        "repositories": [{"id": "fixture", "baseurl": format!("file://{}", repository.display())}],
+        "packages": {"install": ["fixture-tool"]},
+        "options": {"weak_deps": false},
+    });
+    let resolve = |profile: &serde_json::Value, output: &str| {
+        std::fs::write(
+            root.join("profile.yaml"),
+            serde_yaml_ng::to_string(profile).unwrap(),
+        )
+        .unwrap();
+        Command::new(env!("CARGO_BIN_EXE_rpmx"))
+            .current_dir(root)
+            .args([
+                "root",
+                "resolve",
+                "profile.yaml",
+                "--output",
+                output,
+                "--cache",
+                "cache",
+            ])
+            .output()
+            .unwrap()
+    };
+
+    let latest = resolve(&profile, "latest.lock.yaml");
+    assert!(latest.status.success(), "{latest:?}");
+    let latest = rpmx_core::root::load_lock(&root.join("latest.lock.yaml")).unwrap();
+    let packages: Vec<_> = latest.packages.values().flatten().collect();
+    assert_eq!(packages.len(), 1);
+    assert_eq!(packages[0].name, "fixture-tool");
+    assert_eq!(packages[0].evr, "2-1");
+
+    // A selector's exact requirement makes version 1 the newest compatible
+    // tool. The generic request must not force an incompatible version 2.
+    profile["packages"]["install"] = serde_json::json!(["fixture-tool", "fixture-selector"]);
+    let compatible = resolve(&profile, "compatible.lock.yaml");
+    assert!(
+        compatible.status.success(),
+        "the valid lower-version closure was rejected: {}",
+        String::from_utf8_lossy(&compatible.stderr)
+    );
+    let compatible = rpmx_core::root::load_lock(&root.join("compatible.lock.yaml")).unwrap();
+    let packages: Vec<_> = compatible.packages.values().flatten().collect();
+    assert_eq!(packages.len(), 2);
+    assert!(packages
+        .iter()
+        .any(|package| { package.name == "fixture-tool" && package.evr == "1-1" }));
+    assert!(packages
+        .iter()
+        .any(|package| { package.name == "fixture-selector" && package.evr == "1-1" }));
+    run(
+        root,
+        &[
+            "root",
+            "assemble",
+            "compatible.lock.yaml",
+            "--root",
+            "installed",
+            "--cache",
+            "cache",
+            "--output",
+            "assembled.lock.yaml",
+        ],
+    );
+
+    // Relaxing version preference must not omit a requested package or ignore
+    // a genuinely missing dependency.
+    profile["packages"]["install"] = serde_json::json!(["fixture-tool", "fixture-broken-selector"]);
+    let missing = resolve(&profile, "missing.lock.yaml");
+    assert!(!missing.status.success(), "{missing:?}");
+    assert!(
+        String::from_utf8_lossy(&missing.stderr).contains("fixture-missing-dependency"),
+        "{missing:?}"
+    );
+    assert!(!root.join("missing.lock.yaml").exists());
 }

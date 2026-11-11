@@ -18,7 +18,7 @@ fn spec() -> SourcePackageSpec {
         files: vec![
             SourcePackageFile {
                 path: "package.yaml".to_string(),
-                data: b"schema: 1\n".to_vec(),
+                data: b"schema: 2\n".to_vec(),
                 mode: 0o644,
             },
             SourcePackageFile {

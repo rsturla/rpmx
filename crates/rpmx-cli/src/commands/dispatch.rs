@@ -2,7 +2,15 @@ use crate::cli::{self, Cli, Command};
 use crate::commands;
 use rpmx_core::Error;
 
-pub fn run(cli: Cli) -> Result<(), Error> {
+pub enum CommandOutcome {
+    Done,
+    Application {
+        report: Box<rpmx_application::RunReport>,
+        quiet: bool,
+    },
+}
+
+pub fn run(cli: Cli) -> Result<CommandOutcome, Error> {
     let Cli {
         pipeline_dir,
         keep_workdir: _,
@@ -12,9 +20,16 @@ pub fn run(cli: Cli) -> Result<(), Error> {
         color: _,
         command,
     } = cli;
-    match command {
+    let result = match command {
         Command::Explain(args) => commands::explain::run(args, pipeline_dir.as_deref()),
-        Command::Shell(args) => commands::shell::run(args, pipeline_dir.as_deref()),
+        Command::Shell(args) => {
+            return commands::shell::run(args, pipeline_dir.as_deref()).map(|report| {
+                CommandOutcome::Application {
+                    report: Box::new(report),
+                    quiet: true,
+                }
+            })
+        }
         Command::Steps { command } => match command {
             cli::StepsCommand::List(args) => commands::steps::list(args),
             cli::StepsCommand::Show(args) => commands::steps::show(args),
@@ -39,16 +54,53 @@ pub fn run(cli: Cli) -> Result<(), Error> {
             cli::RunnerCommand::Inspect(args) => commands::appliance::inspect(args),
         },
         Command::Fetch(args) => commands::fetch::run(args),
-        Command::Source(args) => commands::source::run(args, pipeline_dir.as_deref()).map(|_| ()),
-        Command::Srpm(args) => commands::srpm::run(args, pipeline_dir.as_deref()).map(|_| ()),
-        Command::Rebuild(args) => commands::rebuild::run(args).map(|_| ()),
-        Command::Build(args) => commands::build::run(args, pipeline_dir.as_deref()).map(|_| ()),
-        Command::Test(args) => commands::testcmd::run(args, pipeline_dir.as_deref()),
+        Command::Source(args) => {
+            let quiet = args.quiet;
+            return commands::source::run(args, pipeline_dir.as_deref()).map(|report| {
+                CommandOutcome::Application {
+                    report: Box::new(report),
+                    quiet,
+                }
+            });
+        }
+        Command::Srpm(args) => {
+            let quiet = args.quiet;
+            return commands::srpm::run(args, pipeline_dir.as_deref()).map(|report| {
+                CommandOutcome::Application {
+                    report: Box::new(report),
+                    quiet,
+                }
+            });
+        }
+        Command::Rebuild(args) => {
+            let quiet = args.quiet;
+            return commands::rebuild::run(args).map(|report| CommandOutcome::Application {
+                report: Box::new(report),
+                quiet,
+            });
+        }
+        Command::Build(args) => {
+            return commands::build::run(args, pipeline_dir.as_deref()).map(|report| {
+                CommandOutcome::Application {
+                    report: Box::new(report),
+                    quiet: false,
+                }
+            })
+        }
+        Command::Test(args) => {
+            return commands::testcmd::run(args, pipeline_dir.as_deref()).map(|report| {
+                CommandOutcome::Application {
+                    report: Box::new(report),
+                    quiet: false,
+                }
+            })
+        }
         Command::Repo(args) => commands::repo::run(args),
         Command::Cache { command } => match command {
             cli::CacheCommand::Gc(args) => commands::cache::gc(args),
         },
         Command::Keygen(args) => commands::sign::keygen(args),
         Command::Sign(args) => commands::sign::run(args),
-    }
+    };
+    result.map(|()| CommandOutcome::Done)
 }

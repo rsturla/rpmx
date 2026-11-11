@@ -1,55 +1,54 @@
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
-use rpmx_core::error::codes;
-use rpmx_core::root::{load_lock, RootSelection};
-use rpmx_core::srpm::load_lock_file;
-use rpmx_core::steps::validate_name;
-use rpmx_core::Error;
+use crate::domain::error::codes;
+use crate::domain::root::{load_lock, RootSelection};
+use crate::domain::srpm::load_lock_file;
+use crate::domain::steps::validate_name;
+use crate::domain::Error;
 use rpmx_rpm::extract::extract_srpm;
 
-use crate::commands::{load_plan, reconcile_policy, PlanPolicy};
+use crate::support::{load_plan, reconcile_policy, PlanPolicy};
 
-use super::RebuildRequest;
+use super::RebuildContext;
 
 pub(super) struct RebuildState {
-    pub(super) work: crate::commands::WorkDir,
+    pub(super) work: crate::support::WorkDir,
     pub(super) extracted: rpmx_rpm::extract::ExtractedSrpm,
-    pub(super) package_lock: rpmx_core::srpm::PackageLock,
-    pub(super) bundled: rpmx_core::components::Inventory,
-    pub(super) bundle: rpmx_core::RecipeBundle,
-    pub(super) recipe: rpmx_core::Recipe,
-    pub(super) plan: rpmx_core::Plan,
-    pub(super) cell: rpmx_core::plan::PlannedCell,
+    pub(super) package_lock: crate::domain::srpm::PackageLock,
+    pub(super) bundled: crate::domain::components::Inventory,
+    pub(super) bundle: crate::domain::RecipeBundle,
+    pub(super) recipe: crate::domain::Recipe,
+    pub(super) plan: crate::domain::Plan,
+    pub(super) cell: crate::domain::plan::PlannedCell,
     pub(super) pipelines: PathBuf,
     pub(super) build: PathBuf,
     pub(super) stage: PathBuf,
-    pub(super) active_lock: Option<rpmx_core::root::RootLock>,
-    pub(super) builder_image: Option<String>,
+    pub(super) active_lock: Option<crate::domain::root::RootLock>,
     pub(super) locked_packages: BTreeSet<String>,
-    pub(super) assembled_root: Option<PathBuf>,
+    pub(super) assembled_root: Option<RootSelection>,
     pub(super) assembled_appliance: Option<PathBuf>,
     pub(super) signature_timestamp: Option<u32>,
     /// Where the steps run: the host for a cross SRPM.
-    pub(super) exec: rpmx_core::Arch,
+    pub(super) exec: crate::domain::Arch,
     /// Assembled target sysroot for a cross SRPM.
     pub(super) sysroot: Option<PathBuf>,
     /// Toolchain recorded in the SRPM's cross block.
-    pub(super) cross: Option<rpmx_core::guest::CrossToolchain>,
+    pub(super) cross: Option<crate::domain::guest::CrossToolchain>,
     /// The sysroot lock, for the dependency check and installed tests.
-    pub(super) sysroot_lock: Option<rpmx_core::root::RootLock>,
+    pub(super) sysroot_lock: Option<crate::domain::root::RootLock>,
     /// Architecture the package is for: the sysroot's for a cross SRPM.
     pub(super) target: String,
     /// Old embedded roots replaced by `rpmx bootstrap rebuild`.
-    pub(super) replaced: Option<rpmx_core::srpm::ReplacedLock>,
+    pub(super) replaced: Option<crate::domain::srpm::ReplacedLock>,
 }
 
 pub(super) fn prepare(
-    request: &RebuildRequest<'_>,
+    request: &RebuildContext<'_>,
     signing: Option<&rpmx_rpm::sign::SigningKey>,
 ) -> Result<RebuildState, Error> {
-    let work = crate::commands::WorkDir::new("rebuild")?;
-    let extracted = extract_srpm(request.file, work.path())?;
+    let work = crate::support::WorkDir::new("rebuild")?;
+    let extracted = extract_srpm(request.input.srpm.as_path(), work.path())?;
     // Read the authoritative lock before unpacking the snapshot. The snapshot
     // is user-controlled recipe data and must not be able to replace it.
     let package_lock = load_lock_file(&work.path().join("package.lock.json"))?;
@@ -65,7 +64,7 @@ pub(super) fn prepare(
                     format!("cannot read the embedded sysroot lock: {error}"),
                 )
             })?;
-            let digest = rpmx_core::srpm::sha512_hex(&bytes);
+            let digest = crate::domain::srpm::sha512_hex(&bytes);
             if digest != recorded.sysroot.digest {
                 return Err(Error::new(
                     codes::SRPM_006,
@@ -76,7 +75,7 @@ pub(super) fn prepare(
             let arch = lock.archs.first().ok_or_else(|| {
                 Error::new(codes::ROOT_015, "the sysroot lock declares no architecture")
             })?;
-            let arch = rpmx_core::profile::normalize_arch(arch)?.to_string();
+            let arch = crate::domain::profile::normalize_arch(arch)?.to_string();
             Some((lock, arch))
         }
         None => None,
@@ -87,7 +86,7 @@ pub(super) fn prepare(
         .unwrap_or_else(|| request.arch.to_string());
     // The SRPM header is what `rpm` thinks the package is; packaging it for a
     // different architecture would silently mislabel it.
-    let header_arch = rpmx_rpm::package_arch(request.file)?;
+    let header_arch = rpmx_rpm::package_arch(request.input.srpm.as_path())?;
     if header_arch != "noarch" && header_arch != target_arch {
         return Err(Error::new(
             codes::SRPM_006,
@@ -97,8 +96,8 @@ pub(super) fn prepare(
             ),
         ));
     }
-    let signature_timestamp = crate::commands::signature_timestamp(
-        request.signing.signing_timestamp,
+    let signature_timestamp = crate::support::signature_timestamp(
+        request.config.signing.signing_timestamp,
         extracted.source_date_epoch,
         signing,
     )?;
@@ -111,10 +110,10 @@ pub(super) fn prepare(
     })?;
     let snapshot = work.path().join("RPMX-SOURCE.tar.gz");
     if snapshot.exists() {
-        rpmx_core::source::unpack_snapshot(&snapshot, &build)?;
+        crate::domain::source::unpack_snapshot(&snapshot, &build)?;
     }
-    let bundled = rpmx_core::components::Inventory::read(
-        &work.path().join(rpmx_core::components::INVENTORY_FILE),
+    let bundled = crate::domain::components::Inventory::read(
+        &work.path().join(crate::domain::components::INVENTORY_FILE),
     )?;
 
     let pipelines = work.path().join("pipelines");
@@ -122,7 +121,7 @@ pub(super) fn prepare(
         // Built-in steps may be single-segment (`make`, `cmake`), while local
         // pipeline files must be namespaced. The digest check below still
         // pins their content.
-        if rpmx_core::steps::builtin_source(name).is_none() {
+        if crate::domain::steps::builtin_source(name).is_none() {
             validate_name(name)?;
         }
         let path = pipelines.join(format!("{name}.yaml"));
@@ -157,14 +156,17 @@ pub(super) fn prepare(
         false,
         policy,
     )?;
-    let cells: Vec<_> = match request.cell {
+    let cells: Vec<_> = match request.input.cell.as_deref() {
         Some(id) => plan.cells.iter().filter(|cell| cell.id == id).collect(),
         None => plan.cells.iter().collect(),
     };
     if cells.is_empty() {
         return Err(Error::new(
             codes::BUILD_002,
-            format!("no such cell '{}'", request.cell.unwrap_or_default()),
+            format!(
+                "no such cell '{}'",
+                request.input.cell.as_deref().unwrap_or_default()
+            ),
         ));
     }
     if cells.len() > 1 {
@@ -189,8 +191,8 @@ pub(super) fn prepare(
     }
 
     let selected_cell = cells[0].clone();
-    if !request.quiet {
-        rpmx_core::output::phase(
+    if !request.config.quiet {
+        crate::domain::output::phase(
             "prepare",
             format!(
                 "{} {}-{} · {}",
@@ -208,7 +210,6 @@ pub(super) fn prepare(
     })?;
 
     let mut locked_packages: BTreeSet<String> = BTreeSet::new();
-    let mut builder_image: Option<String> = request.root_image.map(str::to_string);
     let embedded_lock = {
         let path = work.path().join("root.lock.json");
         if path.exists() {
@@ -217,7 +218,7 @@ pub(super) fn prepare(
             None
         }
     };
-    let requested_lock = match request.root_lock {
+    let requested_lock = match request.config.root.lock() {
         Some(path) => Some(load_lock(path)?),
         None => None,
     };
@@ -229,15 +230,15 @@ pub(super) fn prepare(
         _ => false,
     };
     if let (Some(requested), Some(embedded)) = (&requested_lock, &embedded_lock) {
-        if root_differs && !request.replace_root_lock {
+        if root_differs && !request.input.replace_root_lock {
             return Err(Error::new(
                 codes::ROOT_016,
                 "--root-lock differs from the root lock embedded in the SRPM \
                  (closure or root digest)",
             ));
         }
-        if root_differs && request.replace_root_lock {
-            rpmx_core::output::warning(
+        if root_differs && request.input.replace_root_lock {
+            crate::domain::output::warning(
                 "bootstrap",
                 format!(
                     "replacing embedded root lock {} with {}",
@@ -255,93 +256,80 @@ pub(super) fn prepare(
     let allow_appliance_resolve = requested_lock.is_some();
     let active_lock = requested_lock.or(embedded_lock);
     if let Some(lock) = &active_lock {
-        crate::commands::autoroot::report_root(lock, &lock.profile, "from lock");
+        crate::support::autoroot::report_root(lock, &lock.profile, "from lock");
     }
     // A cross SRPM records its toolchain and sysroot, so rebuild runs the
     // compiler on this host instead of executing the target's.
     let exec = if embedded_cross.is_some() {
-        rpmx_core::Arch::current()?
+        crate::domain::Arch::current()?
     } else {
-        request.exec
+        crate::domain::Arch::parse(&target_arch)?
     };
 
     let mut assembled_appliance: Option<PathBuf> = None;
-    let assembled_root: Option<PathBuf> = if let Some(lock) = &active_lock {
-        if request.root_image.is_some() {
-            return Err(Error::new(
-                codes::ROOT_016,
-                "a root lock cannot be combined with --root-image",
-            ));
-        }
-        builder_image = lock.builder.as_ref().map(|builder| builder.image.clone());
+    let assembled_root: Option<RootSelection> = if let Some(lock) = &active_lock {
         for entries in lock.packages.values() {
             for package in entries {
                 locked_packages.insert(package.name.clone());
             }
         }
-        let runner_kind = request.runner.parse::<rpmx_core::runner::RunnerKind>()?;
+        let runner_kind = request
+            .config
+            .runner
+            .as_str()
+            .parse::<crate::domain::runner::RunnerKind>()?;
         // The root is where steps run: a cross build resolves and verifies a
         // host-architecture build root, not the target root.
         let exec_name = exec.as_str();
-        let needs_appliance = rpmx_core::appliance::Policy::Auto.should_resolve(
-            rpmx_core::Arch::current()?,
+        let needs_appliance = crate::domain::appliance::Policy::Auto.should_resolve(
+            crate::domain::Arch::current()?,
             exec,
             runner_kind,
         );
-        let path = match request.root {
-            Some(root_path) if request.verify_root => {
-                RootSelection::verify(lock, root_path, exec_name)?.path
-            }
-            Some(root_path) => {
-                lock.require_target(exec_name)?;
-                lock.require_digest()?;
-                std::fs::canonicalize(root_path).map_err(|error| {
-                    Error::new(
-                        codes::ROOT_017,
-                        format!("cannot resolve {}: {error}", root_path.display()),
-                    )
-                })?
-            }
-            None => {
-                let roots = crate::commands::autoroot::ensure_from_lock(
-                    lock,
-                    request.cache,
-                    request.offline,
-                    exec_name,
-                    needs_appliance,
-                    request.runner_asset_root,
-                    allow_appliance_resolve,
-                    embedded_cross.is_some(),
-                )?;
-                assembled_appliance = roots.appliance;
-                roots.root
-            }
+        let selection = if request.prepared.is_some() {
+            assembled_appliance = request.prepared.and_then(|env| env.appliance.clone());
+            None
+        } else {
+            let path = match request.config.root.path() {
+                Some(root_path) => root_path.to_path_buf(),
+                None => {
+                    let roots = crate::autoroot::ensure_from_lock(
+                        lock,
+                        request.config.cache.as_deref(),
+                        request.config.offline,
+                        exec_name,
+                        needs_appliance,
+                        request.config.runner_assets.as_deref(),
+                        allow_appliance_resolve,
+                        embedded_cross.is_some(),
+                    )?;
+                    assembled_appliance = roots.appliance;
+                    roots.root
+                }
+            };
+            Some(RootSelection::verify(lock, &path, exec_name)?)
         };
-        if request.root.is_some() {
-            assembled_appliance = crate::commands::autoroot::appliance_for(
+        if request.prepared.is_none() && request.config.root.path().is_some() {
+            assembled_appliance = crate::support::autoroot::appliance_for(
                 lock,
-                request.cache,
-                request.offline,
+                request.config.cache.as_deref(),
+                request.config.offline,
                 runner_kind,
                 request.arch,
-                request.runner_asset_root,
+                request.config.runner_assets.as_deref(),
                 allow_appliance_resolve,
             )?;
         }
-        Some(path)
+        selection
     } else {
-        if request.root.is_some() {
+        if request.config.root.path().is_some() {
             return Err(Error::new(
                 codes::ROOT_016,
                 "--root requires a root lock: pass --root-lock or use an SRPM with root.lock.json",
             ));
         }
-        if request.root_image.is_none() {
-            return Err(Error::new(
-                codes::ROOT_016,
-                "no root available: the SRPM has no root.lock.json and --root-lock was not given; \
-                 pass --root-lock, or --root-image for the image backend",
-            ));
+        if !request.config.root.unsafe_host() {
+            return Err(Error::new(codes::ROOT_016, "no root available: the SRPM has no embedded root lock and no explicit lock was selected"));
         }
         None
     };
@@ -349,16 +337,20 @@ pub(super) fn prepare(
     let replaced_sysroot = cross_lock_and_arch.as_ref().map(|(lock, _)| lock.clone());
     let (sysroot, cross, sysroot_lock) = match (&embedded_cross, cross_lock_and_arch) {
         (Some(recorded), Some((lock, arch))) => {
-            let root = crate::commands::autoroot::ensure_sysroot_from_lock(
-                &lock,
-                request.cache,
-                request.offline,
-                &arch,
-            )?;
-            let mut toolchain = if recorded.native {
-                rpmx_core::guest::CrossToolchain::native(&recorded.triple)
+            let root = if let Some(root) = request.prepared.and_then(|env| env.sysroot.as_ref()) {
+                root.path().to_path_buf()
             } else {
-                rpmx_core::guest::CrossToolchain::new(&recorded.triple)
+                crate::support::autoroot::ensure_sysroot_from_lock(
+                    &lock,
+                    request.config.cache.as_deref(),
+                    request.config.offline,
+                    &arch,
+                )?
+            };
+            let mut toolchain = if recorded.native {
+                crate::domain::guest::CrossToolchain::native(&recorded.triple)
+            } else {
+                crate::domain::guest::CrossToolchain::new(&recorded.triple)
             };
             toolchain.cflags = recorded.cflags.clone();
             toolchain.cxxflags = recorded.cxxflags.clone();
@@ -368,13 +360,13 @@ pub(super) fn prepare(
         _ => (None, None, None),
     };
 
-    let replaced = if request.replace_root_lock {
+    let replaced = if request.input.replace_root_lock {
         let root = replaced_root.as_ref().map(lock_identity);
         let cross = replaced_sysroot.as_ref().map(lock_identity);
         if root.is_none() && cross.is_none() {
             None
         } else {
-            Some(rpmx_core::srpm::ReplacedLock { root, cross })
+            Some(crate::domain::srpm::ReplacedLock { root, cross })
         }
     } else {
         None
@@ -394,7 +386,6 @@ pub(super) fn prepare(
         build,
         stage,
         active_lock,
-        builder_image,
         locked_packages,
         assembled_root,
         assembled_appliance,
@@ -408,8 +399,8 @@ pub(super) fn prepare(
     })
 }
 
-fn lock_identity(lock: &rpmx_core::root::RootLock) -> rpmx_core::srpm::LockIdentity {
-    rpmx_core::srpm::LockIdentity {
+fn lock_identity(lock: &crate::domain::root::RootLock) -> crate::domain::srpm::LockIdentity {
+    crate::domain::srpm::LockIdentity {
         closure_digest: lock.closure_digest.clone(),
         root_digest: lock.root_digest.clone(),
         profile: Some(lock.profile.clone()),

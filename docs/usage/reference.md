@@ -193,15 +193,14 @@ A profile with a `cross` block also exports:
   shebang requires `/usr/bin/env`, not `name`, and scriptlet dependencies are
   not generated.
 - Multi-arch `build` rejects `--locked`, `--stage`, `--root`, `--root-lock`,
-  `--test-root-lock`, `--junit` and `--sbom` until per-arch lock and evidence
-  aggregation lands. `--run-tests` and `--cell` work per architecture.
+  `--junit` and `--sbom` until per-arch lock and evidence
+  aggregation lands. Source cases and `--cell` work per architecture.
 - Repository snapshots, module streams and seccomp/cgroup enforcement are not
   implemented.
 - CPE is emitted in SBOMs, not in the RPM header.
 - The language pipelines are partial: Cargo, npm, Go and Python have
   build/vendor steps, but not every ecosystem has a complete source path.
-- Step-level `timeout` is parsed but not enforced individually; use
-  `--step-timeout`.
+- Step deadlines and whole-case test deadlines are enforced by the runner.
 - Local `file://` repository paths are host-specific and not portable.
 - There is no config file yet; use flags and profiles.
 

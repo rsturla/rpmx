@@ -5,6 +5,7 @@ pub mod model;
 pub mod plan;
 pub mod steps;
 pub mod template;
+pub mod test_files;
 
 use std::path::Path;
 
@@ -15,7 +16,7 @@ pub use bootstrap::{
     PlannedStage, Stage,
 };
 pub use bundle::{load_recipe_bundle, BundleFile, RecipeBundle};
-pub use model::Recipe;
+pub use model::{Recipe, TestMode};
 pub use plan::{
     normalize_dist_tag, plan, plan_with_options, Plan, PlanOptions, PlannedCell, PlannedOutput,
     PlannedStep, PlannedTest,

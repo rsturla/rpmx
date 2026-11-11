@@ -68,6 +68,7 @@ pub fn check_build_tools(
         command: Some("sh".to_string()),
         args,
         cwd: None,
+        timeout_seconds: None,
         env: BTreeMap::new(),
         needs: Vec::new(),
         needs_packages: Vec::new(),
@@ -78,6 +79,8 @@ pub fn check_build_tools(
         inputs: BTreeMap::new(),
         input: None,
         input_file: None,
+        files: None,
+        artifacts: Vec::new(),
     };
     sandbox.run(&step).map_err(|error| {
         Error::new(

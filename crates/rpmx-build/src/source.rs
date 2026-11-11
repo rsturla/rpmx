@@ -11,6 +11,7 @@ use rpmx_runner::sandbox::{Sandbox, SandboxConfig};
 
 pub struct SourceOptions<'a> {
     pub recipe: &'a Recipe,
+    pub logs: &'a rpmx_runner::runner::OutputLogs,
     pub plan: &'a Plan,
     pub cache: &'a Path,
     pub proxy: Option<&'a str>,
@@ -57,12 +58,30 @@ pub fn resolve_source_date_epoch(
         .unwrap_or(0)
 }
 
+/// Command failure and cleanup failure are separate diagnostics. A failed
+/// source assembly never loses its original error when quiescence also fails.
+#[derive(Debug)]
+pub struct SourceAssemblyFailure {
+    pub primary: Box<Error>,
+    pub secondary: Vec<Error>,
+}
+impl From<Error> for SourceAssemblyFailure {
+    fn from(primary: Error) -> Self {
+        Self {
+            primary: Box::new(primary),
+            secondary: Vec::new(),
+        }
+    }
+}
+
 pub struct AssembledSource {
     pub snapshot: PathBuf,
     pub source_date_epoch: u32,
 }
 
-pub fn assemble(options: SourceOptions<'_>) -> Result<AssembledSource> {
+pub fn assemble(
+    options: SourceOptions<'_>,
+) -> std::result::Result<AssembledSource, SourceAssemblyFailure> {
     let fetched = fetch_sources(
         options.recipe,
         FetchOptions {
@@ -90,7 +109,7 @@ pub fn assemble_fetched(
     options: &SourceOptions<'_>,
     fetched: &[FetchedSource],
     source_date_epoch: u32,
-) -> Result<PathBuf> {
+) -> std::result::Result<PathBuf, SourceAssemblyFailure> {
     std::fs::create_dir_all(options.workspace).map_err(|error| {
         Error::new(
             codes::SOURCE_030,
@@ -122,6 +141,7 @@ pub fn assemble_fetched(
     let host_arch = rpmx_base::arch::Arch::current()?;
     let target_arch = rpmx_base::arch::Arch::parse(&options.plan.arch)?;
     let sandbox = Sandbox::new(SandboxConfig {
+        writable_root: false,
         runner: options.runner.parse::<RunnerKind>()?,
         host: host_arch,
         exec: options.exec,
@@ -138,26 +158,35 @@ pub fn assemble_fetched(
         source_date_epoch,
         jobs: options.jobs,
         timeout: options.step_timeout,
-    })?;
+    })?
+    .recording(options.logs);
 
     let cells = options.plan.cells.iter().collect::<Vec<_>>();
     rpmx_components::prepare_output_dirs(options.workspace, &cells)?;
 
-    apply_patches(
-        &sandbox,
-        options.recipe_dir,
-        &options.recipe.patches,
-        options.workspace,
-    )?;
-
-    if let Some(source_assembly) = &options.plan.source_assembly {
-        let total = source_assembly.steps.len();
-        for (index, step) in source_assembly.steps.iter().enumerate() {
-            sandbox.run_numbered(step, index + 1, total)?;
+    let commands = (|| -> Result<()> {
+        apply_patches(
+            &sandbox,
+            options.recipe_dir,
+            &options.recipe.patches,
+            options.workspace,
+        )?;
+        if let Some(source_assembly) = &options.plan.source_assembly {
+            let total = source_assembly.steps.len();
+            for (index, step) in source_assembly.steps.iter().enumerate() {
+                sandbox.run_numbered(step, index + 1, total)?;
+            }
         }
+        Ok(())
+    })();
+    let finished = sandbox.finish();
+    if let Err(primary) = commands {
+        return Err(SourceAssemblyFailure {
+            primary: Box::new(primary),
+            secondary: finished.err().into_iter().collect(),
+        });
     }
-
-    sandbox.sync()?;
+    finished?;
 
     std::fs::create_dir_all(options.output).map_err(|error| {
         Error::new(
@@ -226,6 +255,7 @@ pub fn apply_patches(
                 format!("{}/.rpmx-patches/{name}", rpmx_base::guest::BUILD),
             ],
             cwd: None,
+            timeout_seconds: None,
             env: std::collections::BTreeMap::new(),
             needs: Vec::new(),
             needs_packages: Vec::new(),
@@ -236,6 +266,8 @@ pub fn apply_patches(
             inputs: std::collections::BTreeMap::new(),
             input: None,
             input_file: None,
+            files: None,
+            artifacts: Vec::new(),
         };
         sandbox.run(&step)?;
     }
@@ -788,7 +820,7 @@ mod tests {
 
     fn recipe(source_date_epoch: Option<u32>) -> Recipe {
         Recipe {
-            schema: 1,
+            schema: 2,
             package: Package {
                 name: "demo".to_string(),
                 epoch: None,
@@ -852,4 +884,9 @@ mod tests {
             10
         );
     }
+}
+
+/// Select the explicit reproducible timestamp, then recipe metadata, otherwise zero.
+pub fn source_date_epoch(recipe: &Recipe, explicit: Option<u32>) -> u32 {
+    explicit.or(recipe.package.source_date_epoch).unwrap_or(0)
 }

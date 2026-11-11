@@ -2,9 +2,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use rpmx_core::error::codes;
-use rpmx_core::package_spec::BinaryPackageSpec;
-use rpmx_core::Error;
+use crate::package_spec::BinaryPackageSpec;
+use rpmx_base::error::codes;
+use rpmx_base::Error;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Severity {
@@ -357,10 +357,10 @@ pub fn enforce(findings: &[Finding]) -> Result<(), Error> {
     for finding in findings {
         match finding.severity {
             Severity::Error => {
-                rpmx_core::output::error(format!("lint: {} [RPMX-POLICY-001]", finding.message))
+                rpmx_base::output::error(format!("lint: {} [RPMX-POLICY-001]", finding.message))
             }
             Severity::Warning => {
-                rpmx_core::output::warning("lint", format!("{} [RPMX-POLICY-001]", finding.message))
+                rpmx_base::output::warning("lint", format!("{} [RPMX-POLICY-001]", finding.message))
             }
         }
     }
@@ -381,7 +381,7 @@ pub fn enforce(findings: &[Finding]) -> Result<(), Error> {
 #[cfg(test)]
 mod tests {
     use super::{check, check_file, check_main_package, Severity};
-    use rpmx_core::package_spec::{BinaryPackageFile, BinaryPackageSpec};
+    use crate::package_spec::{BinaryPackageFile, BinaryPackageSpec};
 
     fn package(name: &str, files: &[&str], requires: &[&str]) -> BinaryPackageSpec {
         BinaryPackageSpec {
@@ -413,7 +413,7 @@ mod tests {
                 })
                 .collect(),
             directories: Vec::new(),
-            dependencies: rpmx_core::model::DependencySet {
+            dependencies: rpmx_language::model::DependencySet {
                 requires: requires.iter().map(|value| (*value).to_string()).collect(),
                 ..Default::default()
             },
@@ -446,7 +446,7 @@ mod tests {
             source_date_epoch: 1,
             files: Vec::new(),
             directories: Vec::new(),
-            dependencies: rpmx_core::model::DependencySet {
+            dependencies: rpmx_language::model::DependencySet {
                 requires: vec!["bundled(zlib)".to_string()],
                 ..Default::default()
             },
@@ -486,7 +486,7 @@ mod tests {
                 caps: None,
             }],
             directories: Vec::new(),
-            dependencies: rpmx_core::model::DependencySet::default(),
+            dependencies: rpmx_language::model::DependencySet::default(),
             lint: Default::default(),
             scriptlets: Default::default(),
         };
@@ -525,7 +525,7 @@ mod tests {
                 caps: None,
             }],
             directories: Vec::new(),
-            dependencies: rpmx_core::model::DependencySet::default(),
+            dependencies: rpmx_language::model::DependencySet::default(),
             lint: Default::default(),
             scriptlets: Default::default(),
         };

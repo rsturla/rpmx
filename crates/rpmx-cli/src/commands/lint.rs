@@ -327,6 +327,15 @@ fn check(
                 .collect::<Vec<_>>(),
         ),
     ];
+    named_sections.push((
+        "build.tests".into(),
+        recipe
+            .build
+            .tests
+            .iter()
+            .map(|test| test.name.clone())
+            .collect(),
+    ));
     named_sections.extend(recipe.outputs.iter().enumerate().map(|(index, output)| {
         (
             format!("outputs[{index}].tests"),
@@ -417,7 +426,12 @@ fn check(
     }
 
     for (scope, tests) in
-        std::iter::once(("tests".to_string(), recipe.tests.as_slice())).chain(
+        [
+            ("tests".to_string(), recipe.tests.as_slice()),
+            ("build.tests".to_string(), recipe.build.tests.as_slice()),
+        ]
+        .into_iter()
+        .chain(
             recipe.outputs.iter().enumerate().map(|(index, output)| {
                 (format!("outputs[{index}].tests"), output.tests.as_slice())
             }),
@@ -429,12 +443,16 @@ fn check(
                 .pipeline
                 .as_ref()
                 .is_some_and(|steps| !steps.is_empty());
-            if !has_argv && !has_pipeline {
+            let has_script = test
+                .script
+                .as_ref()
+                .is_some_and(|script| !script.trim().is_empty());
+            if !has_argv && !has_pipeline && !has_script {
                 diagnostics.push(
                     Diagnostic::error(
                         codes::LINT_020,
                         "tests/empty",
-                        format!("test '{}' has neither argv nor pipeline", test.name),
+                        format!("test '{}' has no argv, script or pipeline", test.name),
                     )
                     .at(scope.clone()),
                 );
@@ -525,7 +543,7 @@ mod tests {
     use rpmx_core::error::codes;
 
     const RECIPE: &str = r#"
-schema: 1
+schema: 2
 package:
   name: probe
   version: "1.0"
@@ -547,8 +565,8 @@ outputs:
   - name: probe
     metapackage: true
 tests:
-  - name: broken
-    stage: build
+  - name: behavior
+    argv: [true]
 "#;
 
     fn diagnostics(recipe: &str) -> Vec<super::Diagnostic> {
@@ -591,7 +609,6 @@ tests:
             .collect();
         assert!(codes.contains(&codes::LINT_014.as_str()), "{codes:?}");
         assert!(codes.contains(&codes::LINT_016.as_str()), "{codes:?}");
-        assert!(codes.contains(&codes::LINT_020.as_str()), "{codes:?}");
     }
 
     #[test]
@@ -615,11 +632,7 @@ tests:
     fn a_clean_recipe_has_no_diagnostics() {
         let clean = RECIPE
             .replace("packages: [gcc, gcc]", "packages: [gcc]")
-            .replace("  unused: \"x\"\n", "")
-            .replace(
-                "tests:\n  - name: broken\n    stage: build\n",
-                "tests:\n  - name: smoke\n    stage: build\n    argv: [\"true\"]\n",
-            );
+            .replace("  unused: \"x\"\n", "");
         let diagnostics = diagnostics(&clean);
         assert!(diagnostics.is_empty(), "{diagnostics:?}");
     }

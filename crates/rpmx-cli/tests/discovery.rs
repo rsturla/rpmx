@@ -1,7 +1,7 @@
 use std::process::{Command, Output};
 
 const RECIPE: &str = r#"
-schema: 1
+schema: 2
 package:
   name: probe
   version: "1.0"
@@ -71,45 +71,45 @@ fn doctor_reports_checks_as_json() {
 }
 
 #[test]
-fn shell_enters_the_build_mount_layout() {
-    if std::process::Command::new("bwrap")
-        .arg("--version")
-        .output()
-        .is_err()
-    {
-        eprintln!("bubblewrap is not installed; skipping");
-        return;
-    }
-    let workspace = tempfile::tempdir().expect("workspace");
-    let stage = tempfile::tempdir().expect("stage");
+fn shell_rejects_an_unbound_root_before_running_a_command() {
+    let directory = tempfile::tempdir().expect("directory");
+    let marker = directory.path().join("executed");
     let output = rpmx(&[
         "shell",
         "--root",
         "/",
-        "--workspace",
-        workspace.path().to_str().unwrap(),
-        "--stage",
-        stage.path().to_str().unwrap(),
         "--command",
-        "pwd",
+        &format!("touch {}", marker.display()),
     ]);
-    assert!(output.status.success(), "{output:?}");
-    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "/tmp/build");
+    assert_eq!(output.status.code(), Some(4), "{output:?}");
+    assert!(String::from_utf8_lossy(&output.stderr).contains("--root requires --root-lock"));
+    assert!(
+        !marker.exists(),
+        "command ran without verified root evidence"
+    );
 }
 
 #[test]
-fn shell_defaults_the_workspace_and_stage() {
-    if std::process::Command::new("bwrap")
-        .arg("--version")
-        .output()
-        .is_err()
-    {
-        eprintln!("bubblewrap is not installed; skipping");
-        return;
-    }
-    let output = rpmx(&["shell", "--root", "/", "--command", "pwd"]);
+fn plain_plan_displays_source_and_acceptance_cases() {
+    let directory = tempfile::tempdir().expect("directory");
+    let recipe = directory.path().join("package.yaml");
+    let text = RECIPE.replace("build:\n", "build:\n  tests:\n    - name: upstream\n      packages: [make]\n      script: make check\n").replace("    metapackage: true", "    metapackage: true\n    tests:\n      - name: behavior\n        argv: [true]");
+    std::fs::write(&recipe, text).expect("recipe");
+    let output = rpmx(&["plan", recipe.to_str().unwrap()]);
     assert!(output.status.success(), "{output:?}");
-    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "/tmp/build");
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        text.contains("build test") && text.contains("upstream"),
+        "{text}"
+    );
+    assert!(
+        text.contains("behavior") && text.contains("(installed)"),
+        "{text}"
+    );
+    assert!(
+        text.contains("make check") && text.contains("argv   true"),
+        "{text}"
+    );
 }
 
 #[test]

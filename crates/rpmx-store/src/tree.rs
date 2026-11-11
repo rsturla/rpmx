@@ -13,8 +13,8 @@ const SKIP_TOP: &[&str] = &["dev", "proc", "run", "sys", "tmp"];
 
 /// State written by package managers or at boot, not by the package payload.
 ///
-/// The installed package set is verified separately against the lock, so
-/// excluding the rpmdb does not weaken the closure check.
+/// Assembly verifies the installed package set against the lock. Saved roots
+/// additionally bind the authoritative database through [`rpmdb_digest`].
 const SKIP: &[&str] = &[
     "etc/machine-id",
     // JKS trust stores embed salt, so update-ca-trust produces a different
@@ -241,5 +241,118 @@ pub fn digest_root(root: &Path) -> Result<String> {
             }
             Err(direct)
         }
+    }
+}
+
+/// Bind the installed RPM database without hashing query-created lock or SQLite
+/// shared-memory files. WAL and rollback journals contain authoritative state
+/// and remain covered. This proof is recorded only after package verification.
+pub fn rpmdb_digest(root: &Path) -> Result<String> {
+    let root =
+        fs::canonicalize(root).map_err(|error| Error::new(codes::ROOT_014, error.to_string()))?;
+    let mut records = Vec::new();
+    for relative in ["usr/lib/sysimage/rpm", "var/lib/rpm"] {
+        let path = root.join(relative);
+        match fs::symlink_metadata(&path) {
+            Ok(_) => database_records(&root, &path, relative, &mut records)?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(Error::new(
+                    codes::ROOT_014,
+                    format!("cannot inspect RPM database {}: {error}", path.display()),
+                ))
+            }
+        }
+    }
+    records.sort();
+    let mut hasher = Sha512::new();
+    for record in records {
+        hasher.update(record.as_bytes());
+        hasher.update(b"\n");
+    }
+    Ok(format!("sha512:{:x}", hasher.finalize()))
+}
+
+fn database_records(root: &Path, path: &Path, name: &str, records: &mut Vec<String>) -> Result<()> {
+    let resolved = fs::canonicalize(path).map_err(|error| {
+        Error::new(
+            codes::ROOT_014,
+            format!("cannot read RPM database {}: {error}", path.display()),
+        )
+    })?;
+    if !resolved.starts_with(root) {
+        return Err(Error::new(
+            codes::ROOT_014,
+            format!("RPM database path escapes root: {}", path.display()),
+        ));
+    }
+    let metadata = fs::symlink_metadata(&resolved)
+        .map_err(|error| Error::new(codes::ROOT_014, error.to_string()))?;
+    if metadata.is_dir() {
+        records.push(format!("d|{name}"));
+        for entry in rpmx_base::io::sorted_entries(&resolved, codes::ROOT_014)? {
+            let filename = entry.file_name();
+            let filename = filename.to_str().ok_or_else(|| {
+                Error::new(codes::ROOT_014, "RPM database contains a non-UTF8 filename")
+            })?;
+            if filename == ".rpm.lock" || filename.ends_with("-shm") {
+                continue;
+            }
+            if entry
+                .file_type()
+                .map_err(|error| Error::new(codes::ROOT_014, error.to_string()))?
+                .is_symlink()
+            {
+                return Err(Error::new(
+                    codes::ROOT_014,
+                    "RPM database contains an unexpected nested symlink",
+                ));
+            }
+            database_records(root, &entry.path(), &format!("{name}/{filename}"), records)?;
+        }
+    } else if metadata.is_file() {
+        records.push(format!(
+            "f|{name}|{}",
+            file_digest(&resolved, codes::ROOT_014)?
+        ));
+    } else {
+        return Err(Error::new(
+            codes::ROOT_014,
+            "RPM database contains a special file",
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod rpmdb_tests {
+    use super::*;
+
+    #[test]
+    fn database_proof_covers_headers_and_wal_but_not_query_locks() {
+        let root = tempfile::tempdir().unwrap();
+        let db = root.path().join("usr/lib/sysimage/rpm");
+        fs::create_dir_all(&db).unwrap();
+        fs::write(db.join("rpmdb.sqlite"), "headers").unwrap();
+        let original = rpmdb_digest(root.path()).unwrap();
+        fs::write(db.join(".rpm.lock"), "lock").unwrap();
+        fs::write(db.join("rpmdb.sqlite-shm"), "shared memory").unwrap();
+        assert_eq!(original, rpmdb_digest(root.path()).unwrap());
+        fs::write(db.join("rpmdb.sqlite-wal"), "new transaction").unwrap();
+        assert_ne!(original, rpmdb_digest(root.path()).unwrap());
+        fs::remove_file(db.join("rpmdb.sqlite-wal")).unwrap();
+        fs::write(db.join("rpmdb.sqlite"), "same NEVRA, changed headers").unwrap();
+        assert_ne!(original, rpmdb_digest(root.path()).unwrap());
+    }
+
+    #[test]
+    fn database_aliases_must_remain_inside_root() {
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir_all(root.path().join("var/lib")).unwrap();
+        std::os::unix::fs::symlink("/tmp", root.path().join("var/lib/rpm")).unwrap();
+        assert!(rpmdb_digest(root.path())
+            .unwrap_err()
+            .message
+            .contains("escapes root"));
     }
 }

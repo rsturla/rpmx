@@ -25,8 +25,8 @@ into OCI images.
   locks, sources, patches and steps; `rpmx rebuild` starts from it.
 - **Locked, offline builds.** The root closure is pinned by NEVRA and SHA-512
   digest and builds run in a sandbox with no network.
-- **Tests by default.** Build- and installed-stage tests run on every build,
-  the latter in a fresh root with real dependency checking.
+- **Explicit test phases.** Source cases run during builds. Standalone acceptance
+  checks existing RPMs in isolated roots with real dependency checking.
 - **Generated metadata.** Dependencies from ELF sonames, pkgconfig, shebangs,
   Python, Perl and desktop/AppStream data; SPDX SBOMs; optional OpenPGP signing
   and repository metadata.
@@ -49,7 +49,7 @@ cd hello
 
 rpmx lint     # every rule, one pass
 rpmx build    # resolve root, source, SRPM, build, test, package, index
-rpmx test     # build- and installed-stage tests
+rpmx test --install-dir packages/x86_64  # accept existing RPMs
 ```
 
 The first build resolves the root over the network; later builds reuse the
@@ -68,7 +68,7 @@ it with the Autotools and Make steps, copy the license, strip, and test the
 installed package.
 
 ```yaml
-schema: 1
+schema: 2
 
 package:
   name: hello
@@ -121,13 +121,12 @@ outputs:
 
 tests:
   - name: installed
-    stage: installed
     argv: ["hello", "--version"]
 ```
 
 Every field is documented in [`docs/usage/recipes.md`](docs/usage/recipes.md).
-[`examples/`](examples/) has tested recipes for libraries, CMake, Go, Python,
-systemd and more.
+[`examples/`](examples/) contains runnable recipes for libraries, Go, Python,
+systemd and more, plus clearly marked historical design sketches.
 
 ## Documentation
 
@@ -137,7 +136,7 @@ systemd and more.
 | [Recipes](docs/usage/recipes.md) | The complete `package.yaml` reference |
 | [Profiles and roots](docs/usage/profiles-and-roots.md) | Repositories, authentication, resolution |
 | [Building](docs/usage/building.md) | Artifacts, locks, signing, repositories, SRPMs |
-| [Testing](docs/usage/testing.md) | Build and installed stages, selection, JUnit |
+| [Testing](docs/usage/testing.md) | Source and package cases, fixtures, replay, reports |
 | [Cross-compilation](docs/usage/cross-compilation.md) | Native toolchain, target sysroot |
 | [Bootstrap](docs/usage/bootstrap.md) | Seed-based toolchain ladders |
 | [Debugging](docs/usage/debugging.md) · [Troubleshooting](docs/usage/troubleshooting.md) · [Reference](docs/usage/reference.md) | `plan`, `explain`, `doctor`, errors, limits |

@@ -8,7 +8,7 @@ use rpmx_core::{load_recipe, plan_with_options, PlanOptions};
 
 fn recipe(files: &str) -> String {
     format!(
-        "schema: 1\npackage:\n  name: demo\n  version: \"1.0\"\n  release: 1\n  summary: demo\n  license: MIT\noutputs:\n  - name: demo\n    files:\n      include:\n        - /usr/bin/demo\n{files}"
+        "schema: 2\npackage:\n  name: demo\n  version: \"1.0\"\n  release: 1\n  summary: demo\n  license: MIT\noutputs:\n  - name: demo\n    files:\n      include:\n        - /usr/bin/demo\n{files}"
     )
 }
 

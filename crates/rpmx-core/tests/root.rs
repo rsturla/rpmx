@@ -2,7 +2,9 @@ use std::collections::BTreeMap;
 
 use rpmx_core::pkgmanifest;
 use rpmx_core::profile::{parse_profile, Repository, ResolveOptions};
-use rpmx_core::root::{closure_digest, load_lock, write_lock, LockedPackage, RootLock};
+use rpmx_core::root::{
+    closure_digest, load_lock, write_lock, LockedPackage, PackageOrigin, RootLock,
+};
 
 fn options() -> ResolveOptions {
     ResolveOptions::default()
@@ -11,13 +13,18 @@ fn options() -> ResolveOptions {
 fn package(name: &str, checksum: &str) -> LockedPackage {
     LockedPackage {
         name: name.to_string(),
-        repo_id: "fedora".to_string(),
+        origin: PackageOrigin::Repository {
+            repository: "fedora".into(),
+            location: None,
+        },
         evr: "1-1".to_string(),
-        checksum: checksum.to_string(),
+        checksum: format!(
+            "sha512:{}",
+            checksum.strip_prefix("sha512:").unwrap().repeat(64)
+        ),
         size: 10,
         srpm: None,
         module: None,
-        location: None,
     }
 }
 
@@ -44,7 +51,7 @@ fn lock() -> RootLock {
     let digest = closure_digest("44", &archs, &repositories, &packages);
     RootLock {
         document: "rpmx-root-lock".to_string(),
-        version: 1,
+        version: rpmx_core::root::VERSION,
         profile: "fedora-44".to_string(),
         archs,
         releasever: "44".to_string(),
@@ -57,6 +64,7 @@ fn lock() -> RootLock {
         packages,
         closure_digest: digest,
         root_digest: None,
+        rpmdb_digest: None,
         builder: None,
         seed: None,
         generation: None,
@@ -111,7 +119,7 @@ fn closure_digest_changes_with_releasever() {
 #[test]
 fn lock_round_trips_through_pkgmanifest_without_losing_the_closure() {
     let original = lock();
-    let manifest = pkgmanifest::from_lock(&original);
+    let manifest = pkgmanifest::from_lock(&original).unwrap();
     let text = serde_yaml_ng::to_string(&manifest).unwrap();
     let parsed: pkgmanifest::RpmPackageManifest = serde_yaml_ng::from_str(&text).unwrap();
     let imported = pkgmanifest::to_lock(&parsed, "fedora-44", Some("x86_64"), "44").unwrap();
@@ -127,8 +135,13 @@ fn load_lock_rejects_a_tampered_closure() {
     write_lock(&path, &tampered).unwrap();
     assert!(load_lock(&path).is_ok());
 
-    tampered.packages.get_mut("x86_64").unwrap()[0].checksum = "sha512:cc".to_string();
-    write_lock(&path, &tampered).unwrap();
+    tampered.packages.get_mut("x86_64").unwrap()[0].checksum =
+        format!("sha512:{}", "cc".repeat(64));
+    assert!(
+        write_lock(&path, &tampered).is_err(),
+        "writers must reject an invalid closure too"
+    );
+    std::fs::write(&path, serde_yaml_ng::to_string(&tampered).unwrap()).unwrap();
     let error = load_lock(&path).unwrap_err();
     assert_eq!(error.code, "RPMX-ROOT-006");
     assert!(error.message.contains("closure digest mismatch"));

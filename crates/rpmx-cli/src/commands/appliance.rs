@@ -100,7 +100,6 @@ pub fn assemble(args: ApplianceAssembleArgs) -> Result<(), Error> {
                     cache: &cache,
                     work: work.path(),
                     root: &path,
-                    extra_rpms: &[],
                 },
             )?
         }

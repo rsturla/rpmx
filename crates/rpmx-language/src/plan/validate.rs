@@ -258,6 +258,25 @@ pub(crate) fn validate_steps(recipe: &Recipe) -> Result<()> {
     for (index, step) in recipe.build.pipeline.iter().enumerate() {
         validate_step(step, format!("build.pipeline[{index}]"))?;
     }
+    for (index, test) in recipe.build.tests.iter().enumerate() {
+        if test.network {
+            return Err(
+                Error::new(codes::TEST_004, "build tests cannot request network access")
+                    .at(format!("build.tests[{index}].network")),
+            );
+        }
+        if test.mode == crate::model::TestMode::Transaction {
+            return Err(
+                Error::new(codes::TEST_004, "build tests cannot use transaction mode")
+                    .at(format!("build.tests[{index}].mode")),
+            );
+        }
+        if let Some(pipeline) = &test.pipeline {
+            for (step_index, step) in pipeline.iter().enumerate() {
+                validate_step(step, format!("build.tests[{index}].pipeline[{step_index}]"))?;
+            }
+        }
+    }
     for (index, test) in recipe.tests.iter().enumerate() {
         if let Some(pipeline) = &test.pipeline {
             for (step_index, step) in pipeline.iter().enumerate() {
@@ -283,6 +302,14 @@ pub(crate) fn validate_steps(recipe: &Recipe) -> Result<()> {
 }
 
 pub(crate) fn validate_step(step: &Step, path: String) -> Result<()> {
+    if let Some(files) = &step.files {
+        crate::test_files::validate_relative(files)
+            .map_err(|error| error.at(format!("{path}.files")))?;
+    }
+    for artifact in &step.artifacts {
+        crate::test_files::validate_relative(artifact)
+            .map_err(|error| error.at(format!("{path}.artifacts")))?;
+    }
     let forms = [
         step.uses.is_some(),
         step.argv.is_some(),

@@ -346,3 +346,20 @@ mod tests {
         );
     }
 }
+
+/// Parallelism used when the caller does not choose a job count.
+pub fn default_jobs() -> std::num::NonZeroU32 {
+    let count = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1)
+        .clamp(1, 64);
+    std::num::NonZeroU32::new(count as u32).unwrap()
+}
+
+#[cfg(test)]
+mod jobs_tests {
+    #[test]
+    fn default_jobs_stays_within_the_supported_range() {
+        assert!((1..=64).contains(&super::default_jobs().get()));
+    }
+}

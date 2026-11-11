@@ -3,7 +3,7 @@
 # A shared library with a devel subpackage, pkgconfig metadata and an installed
 # test that compiles a consumer against the packaged headers and library.
 
-schema: 1
+schema: 2
 
 package:
   name: libgreet
@@ -70,10 +70,8 @@ outputs:
         - /usr/lib64/pkgconfig/libgreet.pc
 
 tests:
-  - name: build
-    stage: build
-    argv: ["sh", "-c", "test -s libgreet.so.1.0.0"]
+  - name: payload
+    script: "test -s \"$TEST_PACKAGE_ROOT/usr/lib64/libgreet.so.1.0.0\""
   - name: installed
-    stage: installed
     packages: [gcc]
-    argv: ["sh", "-c", "printf '#include <greet.h>\\nint main(void){return greet() != 42;}\\n' > /tmp/t.c && cc /tmp/t.c -o /tmp/t -lgreet && /tmp/t"]
+    script: "printf '#include <greet.h>\\nint main(void){return greet() != 42;}\\n' > /tmp/t.c && cc /tmp/t.c -o /tmp/t -lgreet && /tmp/t"

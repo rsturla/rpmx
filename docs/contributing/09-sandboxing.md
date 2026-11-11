@@ -1,5 +1,9 @@
 # Build sandboxing: contract, backends and threats
 
+> Historical design record. Some schema and execution examples describe earlier
+> proposals. Use [current recipes](../usage/recipes.md) and
+> [testing](../usage/testing.md) for the supported schema 2 interface.
+
 ## 1. Why this is the next layer
 
 The source and SRPM model decides *what* gets built. The sandbox decides *what the build can do while it runs*. A malicious recipe, a compromised dependency, or a malicious generator gets arbitrary code execution before the package exists. Namespaces are not a security policy by themselves; the policy is the combination of filesystem, network, user, syscall, resource and lifetime controls.

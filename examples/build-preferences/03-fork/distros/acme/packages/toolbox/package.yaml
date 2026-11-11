@@ -9,7 +9,7 @@
 # There is no `pipeline: replace`, no delta and no identity field in a delta.
 # Because this fork may ship beside the upstream package, its release differs.
 
-schema: 1
+schema: 2
 
 package:
   name: toolbox
@@ -64,5 +64,4 @@ outputs:
 
 tests:
   - name: installed
-    stage: installed
     argv: ["toolbox", "--version"]
