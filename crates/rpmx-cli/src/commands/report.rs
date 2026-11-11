@@ -87,6 +87,7 @@ pub fn print(
 #[derive(Debug, Clone)]
 pub struct TestOutcome {
     pub name: String,
+    pub cell_id: String,
     pub stage: String,
     pub error: Option<String>,
     pub duration: std::time::Duration,
@@ -99,6 +100,7 @@ impl TestOutcome {
     pub fn setup(error: &Error) -> Self {
         Self {
             name: "environment".into(),
+            cell_id: String::new(),
             stage: "setup".into(),
             error: Some(error.message.clone()),
             duration: std::time::Duration::ZERO,
@@ -115,6 +117,7 @@ impl TestOutcome {
     ) -> Self {
         Self {
             name: test.qualified_name(),
+            cell_id: test.cell_id.clone(),
             stage: test.stage.clone(),
             error: result.as_ref().err().map(|error| error.message.clone()),
             infrastructure: result
@@ -169,10 +172,15 @@ pub fn write_junit(path: &std::path::Path, outcomes: &[TestOutcome]) -> std::io:
         if outcome.skipped.is_some() {
             skipped += 1;
         }
+        let classname = if outcome.cell_id.is_empty() {
+            outcome.stage.clone()
+        } else {
+            format!("{}.{}", outcome.stage, outcome.cell_id)
+        };
         cases.push_str(&format!(
             "  <testcase name=\"{}\" classname=\"{}\" time=\"{:.3}\">",
             xml_escape(&outcome.name),
-            xml_escape(&outcome.stage),
+            xml_escape(&classname),
             outcome.duration.as_secs_f64()
         ));
         if let Some(error) = &outcome.error {
@@ -227,6 +235,7 @@ pub fn test_document(outcomes: &[TestOutcome]) -> serde_json::Value {
         "command": "test",
         "tests": outcomes.iter().map(|outcome| serde_json::json!({
             "name": outcome.name,
+            "cell_id": outcome.cell_id,
             "stage": outcome.stage,
             "status": outcome.status(),
             "duration_ms": outcome.duration.as_millis() as u64,

@@ -271,7 +271,15 @@ fn prepare_files(
 }
 
 pub fn result_dir(base: &Path, test: &rpmx_language::PlannedTest) -> std::path::PathBuf {
-    let digest = rpmx_base::hash::sha512_hex(test.qualified_name().as_bytes());
+    // Frame the cell separately so separators in user-provided names cannot
+    // make two different (cell, test) pairs share the same identity.
+    let identity = format!(
+        "{}:{}{}",
+        test.cell_id.len(),
+        test.cell_id,
+        test.qualified_name()
+    );
+    let digest = rpmx_base::hash::sha512_hex(identity.as_bytes());
     base.join(&digest.trim_start_matches("sha512:")[..24])
 }
 

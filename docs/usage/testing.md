@@ -58,6 +58,11 @@ Use a native prepared root that contains Bash, coreutils and RPM.
 For existing RPMs or saved roots, use `rpmx test --test-output DIR`.
 The default directory for these standalone runs is `./test-results`.
 Each test has separate `stdout.log` and `stderr.log` files. Output still appears while commands run.
+Result directories are keyed by the matrix cell and qualified test name, so
+different cells keep separate logs and artifacts. JSON results identify each
+instance with `cell_id`; it is empty for recipes without a matrix. JUnit
+class names include the stage and matrix cell identity. Test names and
+`--test` selectors remain the names declared by the recipe.
 
 Before preparing each installed-test environment, `rpmx test` prints its group
 number, output and explicit tools to stderr. JSON results stay on stdout.
@@ -286,7 +291,7 @@ rpmx test --install-dir packages/x86_64 --json --junit report.xml
 - `--test-root DIR` runs against a saved test root instead of preparing one.
   The root is self-contained: no build root, no RPMs, no cache, no profile and
   no network. `DIR.lock.yaml` beside it is read automatically.
-- JSON: `{schema, ok, command: "test", tests: [{name, stage, status, duration_ms,
+- JSON: `{schema, ok, command: "test", tests: [{name, cell_id, stage, status, duration_ms,
   message, skip_reason, results}]}`. An output-level test uses its qualified name, `output/test`.
 - Exit 6 on failure.
 
