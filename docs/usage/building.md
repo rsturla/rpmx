@@ -156,13 +156,15 @@ To update: `rpmx lock`, review the diff, then `--locked`.
 ```console
 rpmx bump 1.5.8                 # downloads sources, updates version/URLs/digests
 rpmx bump 1.5.8 --dry-run
-rpmx bump 1.5.8 --no-fetch      # version and URLs only
+rpmx bump 1.5.8 --no-fetch      # version, release and URLs only
 rpmx bump 1.5.8 --json --dry-run
 ```
 
-`bump` rewrites the `package.version` scalar (preserving quoting and comments),
-updates `url:` lines inside `sources:`, downloads each source and updates its
-own digest. It writes atomically. If the new recipe does not parse back to the
+`bump` rewrites `package.version` and resets `package.release` to `1`, preserving
+quoting and comments. It updates `url:` lines inside `sources:`, then downloads
+each source from the updated locators and updates its digest. Relative file
+locators still resolve against the original recipe directory. It writes each
+changed file atomically. If the new recipe does not parse back to the
 requested version, it refuses to write. A 404 or digest failure leaves the
 recipe unchanged. Flow-style locators and URLs outside `sources:` are not
 rewritten; edit those by hand.

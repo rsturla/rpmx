@@ -68,12 +68,7 @@ pub fn run(args: BumpArgs) -> Result<(), Error> {
                 ),
             )
         })?;
-        let mut updated = replace_url_versions(text, &old_version, &args.version);
-        if !args.no_fetch && !bundle.recipe.sources.is_empty() {
-            let base = bundle.root.parent().unwrap_or_else(|| Path::new("."));
-            let cache = default_cache()?;
-            updated = update_digests(updated, &bundle.recipe.sources, base, &cache)?;
-        }
+        let updated = replace_url_versions(text, &old_version, &args.version);
         texts.insert(sources_path.to_path_buf(), updated);
     }
 
@@ -108,7 +103,37 @@ pub fn run(args: BumpArgs) -> Result<(), Error> {
             )
         })?;
     }
-    let parsed = rpmx_core::load_recipe_bundle(temporary.path().join(&root_name))?;
+    let candidate_path = temporary.path().join(&root_name);
+    let mut parsed = rpmx_core::load_recipe_bundle(&candidate_path)?;
+    if let Some(sources_path) = sources_path.as_deref() {
+        if !args.no_fetch && !parsed.recipe.sources.is_empty() {
+            // Fetch the rewritten locators, using the original directory for
+            // relative file sources. No recipe files change on a fetch error.
+            let base = bundle.root.parent().unwrap_or_else(|| Path::new("."));
+            let cache = default_cache()?;
+            let updated = update_digests(
+                texts.get(sources_path).expect("source text").clone(),
+                &parsed.recipe.sources,
+                base,
+                &cache,
+            )?;
+            let source_file = bundle
+                .files
+                .iter()
+                .find(|file| file.path == sources_path)
+                .expect("source owner belongs to bundle");
+            std::fs::write(temporary.path().join(&source_file.name), &updated).map_err(
+                |error| {
+                    Error::new(
+                        codes::IO_001,
+                        format!("cannot stage source digests: {error}"),
+                    )
+                },
+            )?;
+            texts.insert(sources_path.to_path_buf(), updated);
+            parsed = rpmx_core::load_recipe_bundle(&candidate_path)?;
+        }
+    }
     if parsed.recipe.package.version != args.version {
         return Err(Error::new(
             codes::INIT_001,
@@ -227,7 +252,8 @@ fn replace_version(text: &str, old: &str, new: &str) -> Result<String, Error> {
         if in_package && trimmed.starts_with("version:") {
             *line = replace_scalar(line, "version", new);
             replaced = true;
-            break;
+        } else if in_package && trimmed.starts_with("release:") {
+            *line = replace_scalar(line, "release", "1");
         }
     }
     if !replaced {
