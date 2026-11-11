@@ -7,6 +7,13 @@ Local repositories, authenticated repositories, downloaded RPMs and previous
 transactions are not shared through this metadata cache. Corrupt snapshots
 cause a cold resolution and are repaired after a successful download.
 
+Resolution prefers the newest compatible versions within repository policy.
+A generic package request can select an older version when another package
+requires it exactly. Exact requests and all package dependencies remain
+mandatory. An unsatisfiable profile fails; the resolver does not skip broken
+packages to produce a partial root. This policy is explicit and does not depend
+on the builder image's DNF defaults.
+
 ## Profiles
 
 A profile is root policy, not a recipe:
