@@ -32,6 +32,13 @@ The three things to remember:
 - Rust 1.88+ to build rpmx (the vendored rpm crate requires it).
 - `bubblewrap` for native steps, or `podman` for root resolution and
   image-backed rebuilds.
+- For bubblewrap: util-linux `unshare` with `--map-auto`, `newuidmap` and
+  `newgidmap` (the `uidmap` or `shadow-utils` package), and at least 65,536
+  subordinate IDs allocated to your user in both `/etc/subuid` and `/etc/subgid`.
+  Run rpmx as a regular user. `rpmx doctor --strict` verifies this setup.
+  Host security policy must also permit `CAP_DAC_OVERRIDE` in private RPM
+  transactions. Doctor verifies a real read and write to a disposable mode-000
+  file; creating a namespace alone does not establish this prerequisite.
 - `dnf5` in the builder image used for root resolution.
 - `tar`, `findutils`, `binutils` and the usual build tools inside the root.
 - For emulated foreign-architecture builds: `qemu-user-static` with an enabled

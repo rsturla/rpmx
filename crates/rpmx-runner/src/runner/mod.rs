@@ -9,6 +9,11 @@ mod backend;
 
 use backend::{BwrapBackend, PodmanBackend, QemuBackend};
 
+/// Verify delegated ID maps and actual private transaction access on this host.
+pub fn check_bwrap_environment() -> Result<()> {
+    backend::check_bwrap_environment()
+}
+
 /// A runner-owned artifact that is locked separately from the build root.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum RunnerAssetKind {

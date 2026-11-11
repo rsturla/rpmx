@@ -93,10 +93,11 @@ tests:
     files: fixtures
     script: |
       if rpm -q lifecycle-probe; then exit 1; fi
-      rpm -i "$TEST_FILES/previous.rpm"
+      # These fixture RPMs are generated locally without signing keys.
+      rpm -i --nosignature "$TEST_FILES/previous.rpm"
       test "$(cat /var/lib/lifecycle-probe.post)" = 1
       printf 'user-value\n' > /etc/lifecycle-probe.conf
-      rpm -U "$TEST_RPMS"/lifecycle-probe-2-*.rpm
+      rpm -U --nosignature "$TEST_RPMS"/lifecycle-probe-2-*.rpm
       test "$(rpm -q --qf '%{VERSION}' lifecycle-probe)" = 2
       test "$(cat /etc/lifecycle-probe.conf)" = user-value
       test "$(cat /etc/lifecycle-probe.conf.rpmnew)" = default-2
