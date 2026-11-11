@@ -51,6 +51,20 @@ fn recipe(text: &str) -> (tempfile::TempDir, String) {
 }
 
 #[test]
+fn strict_scripts_are_valid_and_shell_argv_is_rejected() {
+    for (fields, valid) in [
+        ("argv: [sh, -c, \"false\\ntrue\"]", false),
+        ("script: \"false\\ntrue\"", true),
+    ] {
+        let (_directory, path) = recipe(&format!(
+            "{CLEAN}tests:\n  - name: probe\n    stage: build\n    {fields}\n"
+        ));
+        let output = rpmx(&["lint", &path]);
+        assert_eq!(output.status.success(), valid, "{output:?}");
+    }
+}
+
+#[test]
 fn lint_reports_every_rule_in_one_run() {
     let (_directory, path) = recipe(WEAK);
     let output = rpmx(&["lint", &path]);

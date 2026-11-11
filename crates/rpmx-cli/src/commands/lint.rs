@@ -429,12 +429,16 @@ fn check(
                 .pipeline
                 .as_ref()
                 .is_some_and(|steps| !steps.is_empty());
-            if !has_argv && !has_pipeline {
+            let has_script = test
+                .script
+                .as_ref()
+                .is_some_and(|script| !script.trim().is_empty());
+            if !has_argv && !has_pipeline && !has_script {
                 diagnostics.push(
                     Diagnostic::error(
                         codes::LINT_020,
                         "tests/empty",
-                        format!("test '{}' has neither argv nor pipeline", test.name),
+                        format!("test '{}' has no argv, script or pipeline", test.name),
                     )
                     .at(scope.clone()),
                 );

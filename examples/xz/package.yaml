@@ -48,4 +48,4 @@ outputs:
 tests:
   - name: installed
     stage: installed
-    argv: ["sh", "-c", "xz --version >/dev/null && echo hello | xz -q | unxz -q"]
+    script: "xz --version >/dev/null && echo hello | xz -q | unxz -q"

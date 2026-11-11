@@ -387,6 +387,7 @@ pub(crate) fn expand_tests(
                 format!("test '{}' is declared twice{owner}", test.name),
             ));
         }
+        let argv = super::test_command::command(&test).map_err(|error| error.at(&at))?;
         let name = test.name;
         let packages = expand_values(&test.packages, scope, &format!("{path}[{index}].packages"))?;
         if test.stage != "installed" && !packages.is_empty() {
@@ -412,11 +413,11 @@ pub(crate) fn expand_tests(
         let step_scope = owner
             .map(|output| format!("test:{output}/{name}"))
             .unwrap_or_else(|| format!("test:{name}"));
-        planned.push(PlannedTest {
+        let mut planned_test = PlannedTest {
             name,
             output: owner.map(str::to_string),
             stage: test.stage,
-            argv: test.argv,
+            argv,
             pipeline: match test.pipeline {
                 Some(pipeline) => plan_steps(
                     &pipeline,
@@ -429,7 +430,11 @@ pub(crate) fn expand_tests(
             },
             packages,
             environment,
-        });
+        };
+        for step in &mut planned_test.pipeline {
+            super::test_command::strict_step(step);
+        }
+        planned.push(planned_test);
     }
     Ok(planned)
 }

@@ -10,6 +10,7 @@ use crate::template;
 use rpmx_base::error::{codes, Error, Result};
 
 mod expand;
+mod test_command;
 
 use expand::{
     base_scope, base_scope_without_cell, expand_dependencies, expand_outputs, expand_pipeline,
