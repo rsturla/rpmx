@@ -294,6 +294,7 @@ mod tests {
     fn test_for(output: Option<&str>, name: &str, packages: &[&str]) -> PlannedTest {
         PlannedTest {
             name: name.to_string(),
+            cell_id: String::new(),
             files: None,
             artifacts: Vec::new(),
             skip: None,

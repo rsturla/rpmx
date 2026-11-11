@@ -124,6 +124,8 @@ pub struct PlannedOutput {
 #[derive(Debug, Clone, Serialize)]
 pub struct PlannedTest {
     pub name: String,
+    /// Canonical matrix identity; empty for a recipe without a matrix.
+    pub cell_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub files: Option<String>,
     pub artifacts: Vec<String>,
@@ -654,6 +656,9 @@ fn plan_cell(
         "tests",
     )?;
     tests.extend(output_tests);
+    for test in &mut tests {
+        test.cell_id = cell.id.clone();
+    }
 
     Ok(PlannedCell {
         id: cell.id.clone(),
@@ -733,6 +738,44 @@ tests:
             runs: Some(text.to_string()),
             ..Step::default()
         }
+    }
+
+    #[test]
+    fn recipe_and_output_tests_keep_their_matrix_cell_identity() {
+        let recipe = crate::parse_recipe(&OUTPUT_TEST_RECIPE
+            .replace(
+                "build:\n",
+                "matrix:\n  axes:\n    flavor: [first, second]\n  release-suffix: true\nbuild:\n",
+            )
+            .replace("name: one\n", "name: one-${matrix.flavor}\n")
+            .replace("name: two\n", "name: two-${matrix.flavor}\n"))
+        .unwrap();
+        let planned = plan(&recipe, "x86_64").unwrap();
+        assert_eq!(planned.cells.len(), 2);
+        for (cell, expected) in planned.cells.iter().zip(["flavor=first", "flavor=second"]) {
+            assert_eq!(cell.id, expected);
+            assert_eq!(cell.tests.len(), 3);
+            for test in &cell.tests {
+                assert_eq!(test.cell_id, cell.id);
+            }
+            let flavor = expected.strip_prefix("flavor=").unwrap();
+            assert_eq!(
+                cell.tests
+                    .iter()
+                    .map(|test| test.qualified_name())
+                    .collect::<Vec<_>>(),
+                [
+                    "integration".to_string(),
+                    format!("one-{flavor}/smoke"),
+                    format!("two-{flavor}/smoke")
+                ]
+            );
+        }
+        let singleton = plan(&crate::parse_recipe(OUTPUT_TEST_RECIPE).unwrap(), "x86_64").unwrap();
+        assert!(singleton.cells[0]
+            .tests
+            .iter()
+            .all(|test| test.cell_id.is_empty()));
     }
 
     #[test]

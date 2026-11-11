@@ -156,6 +156,110 @@ fn installed_tests_compile_external_files_in_separate_workspaces() {
 }
 
 #[test]
+fn matrix_cells_keep_distinct_logs_artifacts_and_report_metadata() {
+    if !Command::new("bwrap")
+        .args(["--unshare-all", "--ro-bind", "/", "/", "--", "true"])
+        .output()
+        .is_ok_and(|output| output.status.success())
+    {
+        eprintln!("bubblewrap is unavailable; skip the execution test");
+        return;
+    }
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("package.yaml");
+    std::fs::write(
+        &path,
+        r#"schema: 1
+package:
+  name: matrix-probe-${matrix.flavor}
+  version: "1"
+  release: 1
+  summary: Matrix report probe
+  license: MIT
+  source-date-epoch: 1704067200
+matrix:
+  axes:
+    flavor: [first, second]
+outputs:
+  - name: matrix-probe-${matrix.flavor}
+    metapackage: true
+tests:
+  - name: shared
+    stage: installed
+    artifacts: [marker.txt]
+    script: |
+      printf 'stdout-${matrix.flavor}\n'
+      printf 'stderr-${matrix.flavor}\n' >&2
+      printf 'artifact-${matrix.flavor}\n' > marker.txt
+"#,
+    )
+    .unwrap();
+    let lock = directory.path().join("root.lock.yaml");
+    host_lock(&lock);
+    let junit = directory.path().join("junit.xml");
+    let output = rpmx(&[
+        "test",
+        path.to_str().unwrap(),
+        "--test",
+        "shared",
+        "--test-root",
+        "/",
+        "--test-root-lock",
+        lock.to_str().unwrap(),
+        "--test-output",
+        directory.path().join("results").to_str().unwrap(),
+        "--junit",
+        junit.to_str().unwrap(),
+        "--runner",
+        "bwrap",
+        "--offline",
+        "--json",
+    ]);
+    assert!(output.status.success(), "{output:?}");
+    let document: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let tests = document["tests"].as_array().unwrap();
+    assert_eq!(tests.len(), 2);
+    assert_ne!(tests[0]["results"], tests[1]["results"]);
+    let xml = std::fs::read_to_string(junit).unwrap();
+    assert_eq!(xml.matches("<testcase ").count(), 2);
+    let mut cells = std::collections::BTreeSet::new();
+    for test in tests {
+        assert_eq!(test["name"], "shared", "selectors keep their recipe names");
+        assert_eq!(test["status"], "passed");
+        let cell = test["cell_id"].as_str().unwrap();
+        cells.insert(cell);
+        let flavor = cell.strip_prefix("flavor=").unwrap();
+        assert!(["first", "second"].contains(&flavor));
+        let other = if flavor == "first" { "second" } else { "first" };
+        let results = Path::new(test["results"].as_str().unwrap());
+        assert_eq!(
+            std::fs::read_to_string(results.join("stdout.log")).unwrap(),
+            format!("stdout-{flavor}\n")
+        );
+        let stderr = std::fs::read_to_string(results.join("stderr.log")).unwrap();
+        assert!(stderr.contains(&format!("stderr-{flavor}\n")));
+        assert!(!stderr.contains(&format!("stderr-{other}\n")));
+        assert_eq!(
+            std::fs::read_to_string(results.join("artifacts/marker.txt")).unwrap(),
+            format!("artifact-{flavor}\n")
+        );
+        let case = xml
+            .split("<testcase ")
+            .skip(1)
+            .find(|case| case.contains(&format!("classname=\"installed.{cell}\"")))
+            .expect("JUnit identifies the matrix cell");
+        assert!(case.contains(&format!("<system-out>stdout-{flavor}\n</system-out>")));
+        assert!(case.contains(&format!("stderr-{flavor}\n")));
+        assert!(!case.contains(&format!("stdout-{other}\n")));
+        assert!(!case.contains(&format!("stderr-{other}\n")));
+    }
+    assert_eq!(
+        cells,
+        std::collections::BTreeSet::from(["flavor=first", "flavor=second"])
+    );
+}
+
+#[test]
 fn reports_keep_logs_artifacts_and_distinct_outcomes() {
     if !Command::new("bwrap")
         .args(["--unshare-all", "--ro-bind", "/", "/", "--", "true"])
