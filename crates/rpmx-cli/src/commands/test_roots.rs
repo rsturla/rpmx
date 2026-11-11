@@ -291,6 +291,7 @@ mod tests {
     fn test_for(output: Option<&str>, name: &str, packages: &[&str]) -> PlannedTest {
         PlannedTest {
             name: name.to_string(),
+            files: None,
             output: output.map(str::to_string),
             stage: "installed".to_string(),
             argv: None,

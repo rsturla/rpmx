@@ -158,6 +158,32 @@ pub fn load_recipe_bundle(path: impl AsRef<Path>) -> Result<RecipeBundle> {
         .map_err(|error| Error::new(codes::INCLUDE_003, error.to_string()))?;
     let _ = parse_recipe(&canonical)?;
 
+    for test in recipe
+        .tests
+        .iter()
+        .chain(recipe.outputs.iter().flat_map(|output| &output.tests))
+    {
+        if let Some(directory) = &test.files {
+            for path in crate::test_files::entries(&root_dir, directory)? {
+                if files.iter().any(|file| file.path == path) {
+                    continue;
+                }
+                let bytes = std::fs::read(&path)
+                    .map_err(|error| Error::new(codes::TEST_004, error.to_string()))?;
+                files.push(BundleFile {
+                    name: path
+                        .strip_prefix(&root_dir)
+                        .expect("test file in recipe")
+                        .to_string_lossy()
+                        .replace('\\', "/"),
+                    digest: sha512_hex(&bytes),
+                    bytes,
+                    path,
+                });
+            }
+        }
+    }
+
     let mut entries: Vec<(String, String)> = files
         .iter()
         .map(|file| (file.name.clone(), file.digest.clone()))

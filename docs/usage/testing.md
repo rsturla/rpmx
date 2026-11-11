@@ -2,6 +2,52 @@
 
 ## Tests
 
+### External test files
+
+Keep compiler probes, headers and expected output in a package-local directory:
+
+```text
+gcc-16/
+  package.yaml
+  tests/
+    arithmetic.c
+    threads.c
+    cpp/containers.cc
+    include/test.h
+```
+
+Declare the directory on each test that uses it:
+
+```yaml
+tests:
+  - name: c-programs
+    stage: installed
+    files: tests
+    script: |
+      for source in "$TEST_FILES"/*.c; do
+        gcc-16 -I"$TEST_FILES/include" "$source" -o probe
+        ./probe
+      done
+```
+
+`files` names a literal directory relative to the root recipe, including for split recipes.
+rpmx copies all regular files recursively and preserves subdirectories.
+`TEST_FILES` points to the writable copy inside the test workspace.
+The original files do not change when a test writes to its copy.
+Invoke shell fixture files with `bash "$TEST_FILES/run.sh"`.
+Fixture files do not require executable permission.
+
+The recipe digest and SRPM include the file contents. A fixture change invalidates the recipe lock.
+An SRPM rebuild needs no checkout. `--install-dir` and `--test-root` use the files beside the supplied recipe.
+Copy the recipe and its fixture directories when you transfer a saved test root.
+Use pinned source archives for externally maintained suites. `files` does not fetch URLs or read arbitrary host paths.
+Missing directories, empty directories, parent traversal and symlinks are errors.
+
+Each installed test gets a fresh writable workspace and an empty staging directory.
+It cannot see the source workspace or staged package files.
+Tests with the same dependencies still share prepared root data.
+`--keep-workdir` preserves test workspaces for inspection.
+
 ### Scripts and command assertions
 
 Use `script` for a test with several shell commands:

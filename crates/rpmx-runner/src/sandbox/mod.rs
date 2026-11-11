@@ -81,6 +81,15 @@ pub struct Sandbox<'a> {
 }
 
 impl<'a> Sandbox<'a> {
+    /// Restart after host-side workspace changes, including new test files.
+    pub(crate) fn restart(&self) -> Result<()> {
+        if let Some(mut session) = self.session.borrow_mut().take() {
+            session.sync_out()?;
+            session.stop()?;
+        }
+        Ok(())
+    }
+
     /// Resolve the configured runner kind and prepare a sandbox.
     pub fn new(config: SandboxConfig<'a>) -> Result<Self> {
         if config.root.is_some() && config.image.is_some() {

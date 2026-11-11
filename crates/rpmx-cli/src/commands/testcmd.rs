@@ -457,6 +457,7 @@ fn run_installed(
     let settings = TestSandboxConfig {
         workspace: &workspace,
         stage: &stage,
+        fixture_root: args.file.parent().unwrap_or_else(|| Path::new(".")),
         host_arch: host,
         target_arch: target,
         runner,

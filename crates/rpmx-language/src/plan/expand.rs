@@ -411,6 +411,7 @@ pub(crate) fn expand_tests(
             .unwrap_or_else(|| format!("test:{name}"));
         let mut planned_test = PlannedTest {
             name,
+            files: test.files,
             output: owner.map(str::to_string),
             stage: test.stage,
             argv,
@@ -429,6 +430,21 @@ pub(crate) fn expand_tests(
         };
         for step in &mut planned_test.pipeline {
             super::test_command::strict_step(step);
+        }
+        if planned_test
+            .argv
+            .as_ref()
+            .is_some_and(|argv| argv.first().map(String::as_str) == Some("bash"))
+            || planned_test
+                .pipeline
+                .iter()
+                .any(|step| step.command.as_deref() == Some("bash"))
+        {
+            for tool in ["bash", "coreutils"] {
+                if !planned_test.packages.iter().any(|package| package == tool) {
+                    planned_test.packages.push(tool.to_string());
+                }
+            }
         }
         if planned_test.stage == "installed" {
             for dependency in planned_test.pipeline.iter().flat_map(|step| &step.needs) {

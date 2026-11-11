@@ -443,6 +443,7 @@ pub fn execute(request: RebuildRequest<'_>) -> Result<RebuildOutput, Error> {
             work: work.path(),
             build: &build,
             stage: &stage,
+            fixture_root: bundle.root.parent().expect("recipe directory"),
             active_lock: active_lock.as_ref(),
             sysroot_lock: sysroot_lock.as_ref(),
             builder_image: builder_image.as_deref(),
