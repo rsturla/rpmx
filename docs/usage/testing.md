@@ -264,6 +264,23 @@ from the root's repositories in one transaction. A test never has to name the
 libraries the package links. `packages` is only for tools the test itself runs,
 such as a shell or `grep`.
 
+The supplied RPM wins when a repository already publishes the same name,
+epoch, version, release and architecture. rpmx excludes that exact package
+from the other test-root repositories. Other versions remain available for
+dependency resolution, and normal repository provenance checks still apply.
+
+The resolver regression builds a package, publishes an identical copy in a
+local repository, and runs its installed test through a fresh test root:
+
+```console
+RPMX_TEST_RESOLUTION_LOCK=/path/to/native-root.lock.yaml \
+  cargo test -p rpmx --test published_tests -- --ignored
+```
+
+The root lock needs a builder image and reachable repositories for Bash,
+coreutils and their runtime dependencies. This test uses Podman and can
+download repository metadata and packages.
+
 `--save-test-root`, `--test-root` and `--test-root-lock` need a single test
 environment. If a recipe has several, select one with `--test NAME` or
 `--test OUTPUT/NAME`.

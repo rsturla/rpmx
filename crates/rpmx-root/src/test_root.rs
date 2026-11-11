@@ -90,6 +90,18 @@ fn under_test_repository(repo: &Path) -> Repository {
     }
 }
 
+/// Prefer the supplied RPM over an identical published NEVRA. Keep other
+/// versions available, and retain normal provenance checks for dependencies.
+fn exclude_published_test_packages(repositories: &mut [Repository], packages: &[(String, String)]) {
+    for repository in repositories {
+        for (_, spec) in packages {
+            if !repository.exclude.contains(spec) {
+                repository.exclude.push(spec.clone());
+            }
+        }
+    }
+}
+
 /// Drop the packages that came from the under-test repository.
 ///
 /// The lock describes the disposable root: the packages that came from a
@@ -152,7 +164,9 @@ pub fn prepare(options: TestRootOptions<'_>) -> Result<PreparedTestRoot> {
     // and a packager never has to spell out the libraries a package links.
     let mut repositories = lock.repositories.clone();
     if options.pinned.is_none() {
-        add_under_test(&mut install, under_test_packages(options.rpms)?);
+        let packages = under_test_packages(options.rpms)?;
+        exclude_published_test_packages(&mut repositories, &packages);
+        add_under_test(&mut install, packages);
         repositories.insert(0, under_test_repository(options.repo));
     }
 
@@ -297,6 +311,23 @@ mod tests {
             vec![("coreutils".into(), "coreutils-1-1.x86_64".into())],
         );
         assert_eq!(install, ["bash", "python3", "coreutils-1-1.x86_64"]);
+    }
+
+    #[test]
+    fn published_test_nevras_are_excluded_without_excluding_other_versions() {
+        let mut published = super::under_test_repository(std::path::Path::new("/published"));
+        published.id = "published".into();
+        published.exclude = vec!["existing-exclusion".into()];
+        let mut repositories = vec![published];
+        let packages = vec![("probe".into(), "probe-2:1.0-1.x86_64".into())];
+        super::exclude_published_test_packages(&mut repositories, &packages);
+        super::exclude_published_test_packages(&mut repositories, &packages);
+        assert_eq!(
+            repositories[0].exclude,
+            ["existing-exclusion", "probe-2:1.0-1.x86_64"]
+        );
+        let candidate = super::under_test_repository(std::path::Path::new("/candidate"));
+        assert!(candidate.exclude.is_empty());
     }
 
     #[test]
