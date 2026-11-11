@@ -12,6 +12,7 @@ use rpmx_language::plan::PlannedStep;
 pub struct TestSandboxConfig<'a> {
     pub workspace: &'a Path,
     pub stage: &'a Path,
+    pub fixture_root: &'a Path,
     pub host_arch: Arch,
     pub target_arch: Arch,
     pub runner: RunnerKind,
@@ -51,7 +52,28 @@ pub fn run_planned_tests(
     }
 
     for test in build_tests {
-        run_one_test(sandbox, test)?;
+        if test.files.is_some() {
+            sandbox.restart()?;
+            let files = tempfile::Builder::new()
+                .prefix(".rpmx-test-")
+                .tempdir_in(settings.workspace)
+                .map_err(file_error)?;
+            let mut test = test.clone();
+            prepare_files(
+                &mut test,
+                settings.fixture_root,
+                files.path(),
+                settings.workspace,
+            )?;
+            let result = run_one_test(sandbox, &test);
+            sandbox.sync()?;
+            if rpmx_base::output::keep_workdir() {
+                rpmx_base::output::wrote(&files.keep());
+            }
+            result?;
+        } else {
+            run_one_test(sandbox, test)?;
+        }
     }
     if installed_tests.is_empty() {
         return Ok(());
@@ -62,27 +84,82 @@ pub fn run_planned_tests(
             "installed-stage tests need a test root, which requires a root lock",
         )
     })?;
-    let test_sandbox = Sandbox::new(SandboxConfig {
-        runner: settings.runner,
-        host: settings.host_arch,
-        exec: settings.target_arch,
-        target: settings.target_arch,
-        sysroot: None,
-        cross: None,
-        workspace: settings.workspace,
-        stage: settings.stage,
-        root: Some(root),
-        assets: settings.assets,
-        image: None,
-        source_date_epoch: settings.source_date_epoch,
-        jobs: settings.jobs,
-        timeout: settings.timeout,
-        prefix: settings.prefix,
-        libdir: settings.libdir,
-    })?;
     for test in installed_tests {
-        run_one_test(&test_sandbox, test)?;
+        let work = tempfile::tempdir().map_err(file_error)?;
+        let workspace = work.path().join("build");
+        let stage = work.path().join("stage");
+        std::fs::create_dir_all(&workspace).map_err(file_error)?;
+        std::fs::create_dir_all(&stage).map_err(file_error)?;
+        let mut test = test.clone();
+        prepare_files(
+            &mut test,
+            settings.fixture_root,
+            &workspace.join("files"),
+            &workspace,
+        )?;
+        let test_sandbox = Sandbox::new(SandboxConfig {
+            runner: settings.runner,
+            host: settings.host_arch,
+            exec: settings.target_arch,
+            target: settings.target_arch,
+            sysroot: None,
+            cross: None,
+            workspace: &workspace,
+            stage: &stage,
+            root: Some(root),
+            assets: settings.assets,
+            image: None,
+            source_date_epoch: settings.source_date_epoch,
+            jobs: settings.jobs,
+            timeout: settings.timeout,
+            prefix: settings.prefix,
+            libdir: settings.libdir,
+        })?;
+        let result = run_one_test(&test_sandbox, &test);
+        test_sandbox.sync()?;
+        if rpmx_base::output::keep_workdir() {
+            rpmx_base::output::wrote(&work.keep());
+        }
+        result?;
     }
+    Ok(())
+}
+
+fn file_error(error: std::io::Error) -> Error {
+    Error::new(
+        codes::TEST_004,
+        format!("cannot prepare test workspace: {error}"),
+    )
+}
+
+fn prepare_files(
+    test: &mut rpmx_language::PlannedTest,
+    recipe_dir: &Path,
+    destination: &Path,
+    workspace: &Path,
+) -> Result<()> {
+    let Some(directory) = &test.files else {
+        return Ok(());
+    };
+    std::fs::create_dir_all(destination).map_err(file_error)?;
+    let source = recipe_dir.join(directory);
+    for path in rpmx_language::test_files::entries(recipe_dir, directory)? {
+        let target = destination.join(
+            path.strip_prefix(&source)
+                .expect("file below fixture directory"),
+        );
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent).map_err(file_error)?;
+        }
+        std::fs::copy(path, target).map_err(file_error)?;
+    }
+    let relative = destination
+        .strip_prefix(workspace)
+        .expect("files in test workspace");
+    test.environment.insert(
+        "TEST_FILES".into(),
+        format!("{}/{}", rpmx_base::guest::BUILD, relative.display()),
+    );
     Ok(())
 }
 

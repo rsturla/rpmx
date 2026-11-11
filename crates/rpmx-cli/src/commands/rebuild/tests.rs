@@ -24,6 +24,7 @@ pub(super) struct TestRunOptions<'a> {
     pub(super) work: &'a Path,
     pub(super) build: &'a Path,
     pub(super) stage: &'a Path,
+    pub(super) fixture_root: &'a Path,
     pub(super) active_lock: Option<&'a RootLock>,
     /// Target sysroot lock for a cross build; installed tests run there.
     pub(super) sysroot_lock: Option<&'a RootLock>,
@@ -121,6 +122,7 @@ pub(super) fn run(options: TestRunOptions<'_>) -> Result<Vec<PathBuf>, Error> {
     let settings = TestSandboxConfig {
         workspace: options.build,
         stage: options.stage,
+        fixture_root: options.fixture_root,
         host_arch: rpmx_core::arch::Arch::current()?,
         target_arch: rpmx_core::arch::Arch::parse(options.arch)?,
         runner: options.runner,

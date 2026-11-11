@@ -744,6 +744,9 @@ impl OutputDependencies {
 pub struct Test {
     pub name: String,
     pub stage: String,
+    /// Directory of package-local test files, relative to the root recipe.
+    #[serde(default)]
+    pub files: Option<String>,
     /// Build-test tools or packages for an installed test's root.
     #[serde(default)]
     pub packages: Vec<String>,

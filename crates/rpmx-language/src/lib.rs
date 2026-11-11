@@ -5,6 +5,7 @@ pub mod model;
 pub mod plan;
 pub mod steps;
 pub mod template;
+pub mod test_files;
 
 use std::path::Path;
 

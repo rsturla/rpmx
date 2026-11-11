@@ -119,6 +119,8 @@ pub struct PlannedOutput {
 #[derive(Debug, Clone, Serialize)]
 pub struct PlannedTest {
     pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub files: Option<String>,
     /// Output that owns this test. `None` is a recipe-level test, which sees
     /// every output; `Some` is an output-level test, which sees that output
     /// and its runtime dependencies.
@@ -821,7 +823,10 @@ outputs:
         let recipe = crate::parse_recipe(TEST_RECIPE).expect("recipe");
         let plan = plan(&recipe, "x86_64").expect("plan");
         let test = &plan.cells[0].tests[0];
-        assert_eq!(test.packages, ["python3", "probe-test"]);
+        assert_eq!(
+            test.packages,
+            ["python3", "probe-test", "bash", "coreutils"]
+        );
         assert_eq!(
             test.environment.get("HOME").map(String::as_str),
             Some("/tmp")
@@ -833,7 +838,10 @@ outputs:
         let recipe = crate::parse_recipe(&TEST_RECIPE.replace("stage: installed", "stage: build"))
             .expect("recipe");
         let plan = plan(&recipe, "x86_64").expect("build-stage packages");
-        assert_eq!(plan.cells[0].tests[0].packages, ["python3", "probe-test"]);
+        assert_eq!(
+            plan.cells[0].tests[0].packages,
+            ["python3", "probe-test", "bash", "coreutils"]
+        );
     }
 
     #[test]
