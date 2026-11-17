@@ -204,25 +204,60 @@ pub fn load_recipe_bundle(path: impl AsRef<Path>) -> Result<RecipeBundle> {
                 .flat_map(|test| test.pipeline.iter().flatten())
                 .filter_map(|step| step.files.as_deref()),
         );
+    let mut local_inputs = Vec::new();
     for directory in directories {
-        for path in crate::test_files::entries(&root_dir, directory)? {
-            if files.iter().any(|file| file.path == path) {
-                continue;
-            }
-            let bytes = std::fs::read(&path)
-                .map_err(|error| Error::new(codes::TEST_004, error.to_string()))?;
-            files.push(BundleFile {
-                name: path
-                    .strip_prefix(&root_dir)
-                    .expect("test file in recipe")
-                    .to_string_lossy()
-                    .replace('\\', "/"),
-                digest: sha512_hex(&bytes),
-                mode: file_mode(&path)?,
-                bytes,
-                path,
-            });
+        local_inputs.extend(crate::test_files::entries(&root_dir, directory)?);
+    }
+    for patch in &recipe.patches {
+        if patch.file.is_empty()
+            || Path::new(&patch.file)
+                .components()
+                .any(|part| !matches!(part, std::path::Component::Normal(_)))
+        {
+            return Err(Error::new(
+                codes::SOURCE_031,
+                format!(
+                    "patch '{}' must be a relative path inside the recipe directory",
+                    patch.file
+                ),
+            ));
         }
+        local_inputs.push(root_dir.join(&patch.file));
+    }
+    for input in local_inputs {
+        let name = input
+            .strip_prefix(&root_dir)
+            .expect("local input in recipe")
+            .to_string_lossy()
+            .replace('\\', "/");
+        if files.iter().any(|file| file.name == name) {
+            continue;
+        }
+        let path = std::fs::canonicalize(&input).map_err(|error| {
+            Error::new(
+                codes::INCLUDE_001,
+                format!("cannot resolve local input {}: {error}", input.display()),
+            )
+        })?;
+        if !path.starts_with(&root_dir) {
+            return Err(Error::new(
+                codes::INCLUDE_004,
+                format!("local input '{}' escapes the recipe directory", name),
+            ));
+        }
+        let bytes = std::fs::read(&path).map_err(|error| {
+            Error::new(
+                codes::INCLUDE_001,
+                format!("cannot read local input {}: {error}", input.display()),
+            )
+        })?;
+        files.push(BundleFile {
+            name,
+            digest: sha512_hex(&bytes),
+            mode: file_mode(&path)?,
+            bytes,
+            path,
+        });
     }
 
     let mut entries: Vec<(String, String, u32)> = files
@@ -586,6 +621,43 @@ mod tests {
     }
 
     const PACKAGE: &str = "schema: 2\npackage:\n  name: probe\n  version: \"1.0\"\n  release: 1\n  summary: probe\n  license: MIT\n";
+
+    #[test]
+    fn native_patch_paths_are_literal_and_errors_name_the_file() {
+        let directory = tempfile::tempdir().expect("recipe");
+        let path = directory.path().join("package.yaml");
+        write(&directory.path().join("literal[1].patch"), "patch bytes");
+        write(
+            &path,
+            &format!("{PACKAGE}patches:\n  - file: literal[1].patch\n"),
+        );
+        assert!(load_recipe_bundle(&path)
+            .expect("literal filename")
+            .files
+            .iter()
+            .any(|file| file.name == "literal[1].patch"));
+        for name in ["../outside.patch", "/absolute.patch", "missing.patch"] {
+            write(&path, &format!("{PACKAGE}patches:\n  - file: {name}\n"));
+            let error = load_recipe_bundle(&path).expect_err("invalid or missing patch");
+            assert!(error.message.contains(name), "{error:?}");
+        }
+    }
+
+    #[test]
+    fn native_patches_cannot_read_a_symlink_outside_the_recipe() {
+        let directory = tempfile::tempdir().expect("recipe");
+        let outside = tempfile::tempdir().expect("outside");
+        write(&outside.path().join("private.patch"), "outside bytes");
+        std::os::unix::fs::symlink(
+            outside.path().join("private.patch"),
+            directory.path().join("fix.patch"),
+        )
+        .expect("symlink");
+        let path = directory.path().join("package.yaml");
+        write(&path, &format!("{PACKAGE}patches:\n  - file: fix.patch\n"));
+        let error = load_recipe_bundle(&path).expect_err("escaping patch must fail");
+        assert_eq!(error.code, codes::INCLUDE_004);
+    }
 
     #[test]
     fn a_single_file_is_a_bundle() {

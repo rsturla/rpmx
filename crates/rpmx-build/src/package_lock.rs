@@ -587,6 +587,35 @@ outputs:
     }
 
     #[test]
+    fn a_lock_records_native_patch_bytes_once() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let path = directory.path().join("package.yaml");
+        fs::write(
+            &path,
+            RECIPE.replace(
+                "build:",
+                "patches:\n  - file: fix.patch\n  - file: fix.patch\nbuild:",
+            ),
+        )
+        .expect("recipe");
+        fs::write(directory.path().join("fix.patch"), b"first patch bytes").expect("patch");
+        let first = plan_and_build(&path);
+        assert_eq!(
+            first
+                .recipe_files
+                .iter()
+                .filter(|file| file.path == "fix.patch")
+                .count(),
+            1
+        );
+        assert_eq!(first, plan_and_build(&path));
+        fs::write(directory.path().join("fix.patch"), b"changed patch bytes").expect("patch");
+        let changed = plan_and_build(&path);
+        assert_ne!(first.recipe_digest, changed.recipe_digest);
+        assert_ne!(first.recipe_files, changed.recipe_files);
+    }
+
+    #[test]
     fn a_lock_records_the_context_tree_digest() {
         let directory = tempfile::tempdir().expect("tempdir");
         let context = directory.path().join("files");

@@ -454,6 +454,16 @@ patches:
     reason: Backport of upstream commit abc123
 ```
 
+Patch files must stay inside the recipe directory. Their bytes and permissions
+join the recipe bundle, package lock and SRPM, so `rpmx lock --check` detects
+changed patch inputs. Patch application uses the bytes captured when the recipe
+bundle loads.
+
+Native patches run noninteractively with `--batch --forward --fuzz=0`.
+Every context line must match. Reversed or already applied patches fail instead
+of being reversed or skipped. Matching hunks may move to a different line number;
+zero fuzz rejects dropped context, not line offsets.
+
 The patched tree is part of the source snapshot, so a rebuild does not reapply
 patches.
 

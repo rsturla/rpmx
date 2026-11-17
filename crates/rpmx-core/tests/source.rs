@@ -132,11 +132,12 @@ fn snapshot_with_an_oversized_extension_header_is_rejected() {
     );
 }
 
-#[test]
-fn patches_are_applied_and_removed_from_the_workspace() {
-    use rpmx_core::model::Patch;
-    use rpmx_core::runner::RunnerKind;
-    use rpmx_core::sandbox::{Sandbox, SandboxConfig};
+fn apply_patch_fixture(
+    source: &[u8],
+    patches: &[&str],
+    mutate_after_load: bool,
+) -> Option<(tempfile::TempDir, rpmx_core::error::Result<()>)> {
+    use rpmx_core::source::{assemble_fetched, SourceOptions};
 
     if std::process::Command::new("bwrap")
         .arg("--version")
@@ -144,7 +145,7 @@ fn patches_are_applied_and_removed_from_the_workspace() {
         .is_err()
     {
         eprintln!("bwrap not installed; skipping patch test");
-        return;
+        return None;
     }
     if std::process::Command::new("patch")
         .arg("--version")
@@ -152,56 +153,163 @@ fn patches_are_applied_and_removed_from_the_workspace() {
         .is_err()
     {
         eprintln!("patch not installed; skipping patch test");
-        return;
+        return None;
     }
 
     let work = tempfile::tempdir().expect("work");
     let stage = tempfile::tempdir().expect("stage");
     let recipe = tempfile::tempdir().expect("recipe");
-    fs::write(work.path().join("file.txt"), b"old\n").expect("source");
-    fs::write(
-        recipe.path().join("fix.patch"),
-        b"--- a/file.txt\n+++ b/file.txt\n@@ -1 +1 @@\n-old\n+new\n",
+    fs::write(work.path().join("file.txt"), source).expect("source");
+    let mut yaml = String::from("schema: 2\npackage:\n  name: probe\n  version: '1'\n  release: 1\n  summary: probe\n  license: MIT\npatches:\n");
+    for (index, contents) in patches.iter().enumerate() {
+        let file = format!("fix-{index}.patch");
+        fs::write(recipe.path().join(&file), contents).expect("patch");
+        yaml.push_str(&format!("  - file: {file}\n    strip: 1\n"));
+    }
+    yaml.push_str("outputs:\n  - name: probe\n    metapackage: true\n");
+    let recipe_path = recipe.path().join("package.yaml");
+    fs::write(&recipe_path, yaml).expect("recipe");
+    if mutate_after_load {
+        // A contained symlink keeps the declared name distinct from its canonical target.
+        fs::rename(
+            recipe.path().join("fix-0.patch"),
+            recipe.path().join("target.patch"),
+        )
+        .expect("patch target");
+        std::os::unix::fs::symlink("target.patch", recipe.path().join("fix-0.patch"))
+            .expect("contained patch symlink");
+    }
+    let bundle = rpmx_core::load_recipe_bundle(&recipe_path).expect("capture recipe");
+    let arch = rpmx_core::arch::Arch::current().expect("host arch");
+    let plan = rpmx_core::plan_with_options(
+        &bundle.recipe,
+        rpmx_core::PlanOptions {
+            arch: arch.as_str(),
+            step_root: None,
+            allow_builtin_override: false,
+            dist_tag: None,
+            build_release: None,
+        },
     )
-    .expect("patch");
-
-    let sandbox = Sandbox::new(SandboxConfig {
-        writable_root: false,
-        runner: RunnerKind::Bwrap,
-        host: rpmx_core::arch::Arch::current().expect("host arch"),
-        exec: rpmx_core::arch::Arch::current().expect("exec arch"),
-        target: rpmx_core::arch::Arch::current().expect("target arch"),
-        sysroot: None,
-        cross: None,
-        workspace: work.path(),
-        stage: stage.path(),
-        root: None,
-        assets: rpmx_core::runner::RunnerAssets::default(),
-        image: None,
-        prefix: "/usr",
-        libdir: "/usr/lib64",
-        source_date_epoch: 1_700_000_000,
-        jobs: NonZeroU32::new(1).expect("jobs"),
-        timeout: NonZeroU64::new(3600).expect("timeout"),
+    .expect("plan");
+    if mutate_after_load {
+        // This valid replacement would produce different source if assembly reopened it.
+        fs::write(
+            recipe.path().join("fix-0.patch"),
+            "--- a/file.txt\n+++ b/file.txt\n@@ -1 +1 @@\n-old\n+changed-after-load\n",
+        )
+        .expect("mutate live checkout");
+    }
+    let output = tempfile::tempdir().expect("output");
+    let logs = rpmx_core::runner::OutputLogs {
+        stdout: fs::File::create(output.path().join("stdout.log")).expect("stdout"),
+        stderr: fs::File::create(output.path().join("stderr.log")).expect("stderr"),
+    };
+    let result = assemble_fetched(
+        &SourceOptions {
+            recipe: &bundle.recipe,
+            recipe_files: &bundle.files,
+            logs: &logs,
+            plan: &plan,
+            cache: output.path(),
+            proxy: None,
+            offline: true,
+            base_dir: recipe.path(),
+            workspace: work.path(),
+            stage: stage.path(),
+            prefix: "/usr",
+            libdir: "/usr/lib64",
+            output: output.path(),
+            source_date_epoch: Some(1_700_000_000),
+            source_date_epoch_default: None,
+            jobs: NonZeroU32::new(1).expect("jobs"),
+            step_timeout: NonZeroU64::new(30).expect("timeout"),
+            root: None,
+            appliance: None,
+            exec: arch,
+            sysroot: None,
+            cross: None,
+            runner: "bwrap",
+            recipe_dir: recipe.path(),
+        },
+        &[],
+        1_700_000_000,
+    )
+    .map(|snapshot| {
+        let restored = tempfile::tempdir().expect("restore snapshot");
+        unpack_snapshot(&snapshot, restored.path()).expect("snapshot");
+        assert_eq!(
+            fs::read(restored.path().join("file.txt")).expect("snapshot bytes"),
+            fs::read(work.path().join("file.txt")).expect("workspace bytes")
+        );
     })
-    .expect("sandbox");
-    rpmx_core::source::apply_patches(
-        &sandbox,
-        recipe.path(),
-        &[Patch {
-            file: "fix.patch".to_string(),
-            strip: 1,
-            reason: None,
-        }],
-        work.path(),
-    )
-    .expect("apply patch");
+    .map_err(|failure| *failure.primary);
+    Some((work, result))
+}
 
+#[test]
+fn ordered_exact_patches_are_applied_and_removed_from_the_workspace() {
+    let Some((work, result)) = apply_patch_fixture(
+        b"old\n",
+        &[
+            "--- a/file.txt\n+++ b/file.txt\n@@ -1 +1 @@\n-old\n+middle\n",
+            "--- a/file.txt\n+++ b/file.txt\n@@ -1 +1 @@\n-middle\n+new\n",
+        ],
+        false,
+    ) else {
+        return;
+    };
+    result.expect("apply ordered patches");
     assert_eq!(
         fs::read(work.path().join("file.txt")).expect("patched"),
         b"new\n"
     );
     assert!(!work.path().join(".rpmx-patches").exists());
+}
+
+#[test]
+fn native_patches_reject_fuzzy_context_without_changing_the_source() {
+    let source = b"different context\nold\ntrailing context\n";
+    let Some((work, result)) = apply_patch_fixture(source, &[
+        "--- a/file.txt\n+++ b/file.txt\n@@ -1,3 +1,3 @@\n leading context\n-old\n+new\n trailing context\n",
+    ], false) else { return; };
+    result.expect_err("mismatched context must fail instead of applying with fuzz");
+    assert_eq!(
+        fs::read(work.path().join("file.txt")).expect("source"),
+        source
+    );
+}
+
+#[test]
+fn native_patches_reject_reversed_or_already_applied_changes() {
+    let Some((work, result)) = apply_patch_fixture(
+        b"new\n",
+        &["--- a/file.txt\n+++ b/file.txt\n@@ -1 +1 @@\n-old\n+new\n"],
+        false,
+    ) else {
+        return;
+    };
+    result.expect_err("already applied patch must fail instead of being reversed");
+    assert_eq!(
+        fs::read(work.path().join("file.txt")).expect("source"),
+        b"new\n"
+    );
+}
+
+#[test]
+fn source_assembly_uses_captured_patch_bytes_after_the_checkout_changes() {
+    let Some((work, result)) = apply_patch_fixture(
+        b"old\n",
+        &["--- a/file.txt\n+++ b/file.txt\n@@ -1 +1 @@\n-old\n+new\n"],
+        true,
+    ) else {
+        return;
+    };
+    result.expect("assemble captured patch into snapshot");
+    assert_eq!(
+        fs::read(work.path().join("file.txt")).expect("captured result"),
+        b"new\n"
+    );
 }
 
 #[test]

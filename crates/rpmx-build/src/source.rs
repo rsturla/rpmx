@@ -35,6 +35,7 @@ pub struct SourceOptions<'a> {
     pub cross: Option<&'a rpmx_base::guest::CrossToolchain>,
     pub runner: &'a str,
     pub recipe_dir: &'a Path,
+    pub recipe_files: &'a [rpmx_language::bundle::BundleFile],
 }
 
 /// The newest timestamp available from an explicit value, the recipe, or the
@@ -167,7 +168,7 @@ pub fn assemble_fetched(
     let commands = (|| -> Result<()> {
         apply_patches(
             &sandbox,
-            options.recipe_dir,
+            options.recipe_files,
             &options.recipe.patches,
             options.workspace,
         )?;
@@ -204,19 +205,13 @@ pub fn assemble_fetched(
 
 pub fn apply_patches(
     sandbox: &Sandbox<'_>,
-    recipe_dir: &Path,
+    recipe_files: &[rpmx_language::bundle::BundleFile],
     patches: &[rpmx_language::model::Patch],
     workspace: &Path,
 ) -> Result<()> {
     if patches.is_empty() {
         return Ok(());
     }
-    let recipe_dir = std::fs::canonicalize(recipe_dir).map_err(|error| {
-        Error::new(
-            codes::SOURCE_031,
-            format!("cannot resolve {}: {error}", recipe_dir.display()),
-        )
-    })?;
     let patch_dir = workspace.join(".rpmx-patches");
     std::fs::create_dir_all(&patch_dir).map_err(|error| {
         Error::new(
@@ -226,20 +221,20 @@ pub fn apply_patches(
     })?;
 
     for (index, patch) in patches.iter().enumerate() {
-        let source = std::fs::canonicalize(recipe_dir.join(&patch.file)).map_err(|error| {
-            Error::new(
-                codes::SOURCE_031,
-                format!("cannot read patch '{}': {error}", patch.file),
-            )
-        })?;
-        if !source.starts_with(&recipe_dir) {
-            return Err(Error::new(
-                codes::SOURCE_031,
-                format!("patch '{}' escapes the recipe directory", patch.file),
-            ));
-        }
+        let source = recipe_files
+            .iter()
+            .find(|file| Path::new(&file.name) == Path::new(&patch.file))
+            .ok_or_else(|| {
+                Error::new(
+                    codes::SOURCE_031,
+                    format!(
+                        "patch '{}' is absent from the captured recipe bundle",
+                        patch.file
+                    ),
+                )
+            })?;
         let name = format!("{index}.patch");
-        std::fs::copy(&source, patch_dir.join(&name)).map_err(|error| {
+        std::fs::write(patch_dir.join(&name), &source.bytes).map_err(|error| {
             Error::new(
                 codes::SOURCE_031,
                 format!("cannot stage patch '{}': {error}", patch.file),
@@ -250,6 +245,9 @@ pub fn apply_patches(
             uses: format!("patch:{}", patch.file),
             command: Some("patch".to_string()),
             args: vec![
+                "--batch".to_string(),
+                "--forward".to_string(),
+                "--fuzz=0".to_string(),
                 format!("-p{}", patch.strip),
                 "-i".to_string(),
                 format!("{}/.rpmx-patches/{name}", rpmx_base::guest::BUILD),

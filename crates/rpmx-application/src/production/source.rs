@@ -112,6 +112,7 @@ pub(crate) fn assemble_sources(
         cross: env.cross.as_ref(),
         runner: &config.runner,
         recipe_dir: base,
+        recipe_files: &bundle.files,
     })
     .map_err(|failure| {
         report
