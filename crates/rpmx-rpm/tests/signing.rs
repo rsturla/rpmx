@@ -127,3 +127,115 @@ fn signature_before_the_key_creation_is_refused() {
     assert_eq!(error.code, rpmx_core::error::codes::SIGN_004);
     assert!(error.message.contains("before signing key"), "{error}");
 }
+
+#[test]
+fn generated_secret_keys_interoperate_with_gnupg() {
+    use pgp::composed::{Deserializable, DetachedSignature, SignedPublicKey};
+    use std::os::unix::fs::PermissionsExt;
+
+    if !Command::new("gpg")
+        .arg("--version")
+        .output()
+        .is_ok_and(|output| output.status.success())
+    {
+        eprintln!("gpg not installed; skipping GnuPG interoperability assertions");
+        return;
+    }
+    for passphrase in [None, Some("test-only passphrase")] {
+        let dir = tempfile::tempdir().expect("private keyring");
+        fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o700)).expect("permissions");
+        let generated = generate_key(KeygenOptions {
+            user_id: "rpmx GnuPG test <rpmx@example.invalid>",
+            bits: 2048,
+            passphrase,
+        })
+        .expect("generate key");
+        let secret = dir.path().join("secret.asc");
+        fs::write(&secret, &generated.secret_armored).expect("secret key");
+        let (public, _) =
+            SignedPublicKey::from_string(&generated.public_armored).expect("public key");
+        let gpg = |args: &[&std::ffi::OsStr]| {
+            Command::new("gpg")
+                .arg("--homedir")
+                .arg(dir.path())
+                .args([
+                    "--no-options",
+                    "--batch",
+                    "--yes",
+                    "--pinentry-mode",
+                    "loopback",
+                ])
+                .arg("--passphrase")
+                .arg(passphrase.unwrap_or(""))
+                .args(args)
+                .output()
+                .map_err(|error| error.to_string())
+        };
+        // Always stop the private agent, including after a failed assertion below.
+        let result = (|| -> Result<(), String> {
+            let imported = gpg(&["--import".as_ref(), secret.as_os_str()])?;
+            if !imported.status.success() {
+                return Err(format!(
+                    "GnuPG import failed: {}",
+                    String::from_utf8_lossy(&imported.stderr)
+                ));
+            }
+            for index in 0..16 {
+                let data = format!("GnuPG RSA CRT interoperability message {index}\n");
+                let payload = dir.path().join("message");
+                let signature = dir.path().join("message.asc");
+                fs::write(&payload, &data).map_err(|error| error.to_string())?;
+                let signed = gpg(&[
+                    "--armor".as_ref(),
+                    "--detach-sign".as_ref(),
+                    "--output".as_ref(),
+                    signature.as_os_str(),
+                    payload.as_os_str(),
+                ])?;
+                if !signed.status.success() {
+                    return Err(format!(
+                        "GnuPG signing failed: {}",
+                        String::from_utf8_lossy(&signed.stderr)
+                    ));
+                }
+                let armored = fs::read_to_string(&signature).map_err(|error| error.to_string())?;
+                let (parsed, _) =
+                    DetachedSignature::from_string(&armored).map_err(|error| error.to_string())?;
+                parsed
+                    .verify(&public.primary_key, data.as_bytes())
+                    .map_err(|error| error.to_string())?;
+                let verified = gpg(&[
+                    "--verify".as_ref(),
+                    signature.as_os_str(),
+                    payload.as_os_str(),
+                ])?;
+                if !verified.status.success() {
+                    return Err(format!(
+                        "GnuPG verification failed: {}",
+                        String::from_utf8_lossy(&verified.stderr)
+                    ));
+                }
+                fs::write(&payload, "altered message\n").map_err(|error| error.to_string())?;
+                let tampered = gpg(&[
+                    "--verify".as_ref(),
+                    signature.as_os_str(),
+                    payload.as_os_str(),
+                ])?;
+                if tampered.status.success()
+                    || parsed
+                        .verify(&public.primary_key, b"altered message\n")
+                        .is_ok()
+                {
+                    return Err("altered message accepted".into());
+                }
+            }
+            Ok(())
+        })();
+        let _ = Command::new("gpgconf")
+            .arg("--homedir")
+            .arg(dir.path())
+            .args(["--kill", "gpg-agent"])
+            .status();
+        result.expect("GnuPG must sign valid RSA signatures with generated keys");
+    }
+}

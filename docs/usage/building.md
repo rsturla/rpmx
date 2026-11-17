@@ -115,6 +115,9 @@ rpmx repo --rpms packages/x86_64 --output repo --signing-key key.asc
 rpmx sign --signing-key key.asc packages/x86_64/*.rpm
 ```
 
+New RSA keys use the prime order required by [RFC 9580](https://www.rfc-editor.org/rfc/rfc9580.html#section-5.5.5.1),
+including passphrase-protected keys. Loading an existing key does not rewrite it.
+
 rpmx never stores or discovers keys. `--signing-passphrase-env VAR` reads a
 passphrase from the environment. `--signing-timestamp` defaults to the source
 date epoch (then now); signed reproducible builds need a deterministic epoch.
