@@ -31,11 +31,14 @@ pub(crate) fn execute(
     output: &Path,
     run_report: &mut crate::RunReport,
 ) -> Result<(), Error> {
-    let arch = input
-        .arch
-        .clone()
-        .map(Ok)
-        .unwrap_or_else(|| rpmx_rpm::package_arch(&input.srpm))?;
+    let arch = input.arch.clone().map(Ok).unwrap_or_else(|| {
+        let arch = rpmx_rpm::package_arch(&input.srpm)?;
+        if arch == "noarch" {
+            Ok(crate::domain::Arch::current()?.to_string())
+        } else {
+            Ok(arch)
+        }
+    })?;
     let policy = crate::environment::policy(config)?;
     rebuild(
         RebuildContext {
@@ -225,7 +228,10 @@ fn rebuild(request: RebuildContext<'_>, run_report: &mut crate::RunReport) -> Re
         // provide (`zlib-devel` -> `zlib-ng-compat-devel`) that the lock
         // records under the provider's name. Only an explicit root needs the
         // names checked literally.
-        let trusted = request.prepared.is_some();
+        let trusted = request.prepared.is_some()
+            || (package_lock.root_lock.is_some()
+                && package_lock.build.packages == cell.packages
+                && package_lock.build.sysroot == cell.sysroot);
         include_resolved_build_requirements(&mut available, &cell.packages, trusted);
         if effective_sysroot.is_some() {
             if let Some(lock) = &sysroot_lock {

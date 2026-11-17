@@ -304,7 +304,29 @@ impl RootSelection {
 
     pub fn load(lock_path: &Path, root_path: &Path, arch: &str) -> Result<Self> {
         let lock = load_lock(lock_path)?;
-        Self::verify(&lock, root_path, arch)
+        Self::verify_inputs(&lock, root_path, arch)
+    }
+
+    /// Bind resolved inputs to the independently saved assembly record.
+    pub fn verify_inputs(lock: &RootLock, root_path: &Path, arch: &str) -> Result<Self> {
+        if lock.root_digest.is_some() {
+            return Self::verify(lock, root_path, arch);
+        }
+        lock.validate()?;
+        lock.require_target(arch)?;
+        let receipt = load_lock(
+            &root_path
+                .parent()
+                .unwrap_or(root_path)
+                .join("root.lock.yaml"),
+        )?;
+        if receipt.assembly_identity() != lock.assembly_identity() {
+            return Err(Error::new(
+                codes::ROOT_017,
+                "assembly record differs from the resolved inputs",
+            ));
+        }
+        Self::verify(&receipt, root_path, arch)
     }
 }
 
@@ -868,6 +890,29 @@ pub(crate) mod model_tests {
         let mut old = lock;
         old.version = 1;
         assert!(old.validate().unwrap_err().message.contains("regenerate"));
+    }
+
+    #[test]
+    fn resolved_inputs_use_a_separate_verified_assembly_record() {
+        let work = tempfile::tempdir().unwrap();
+        let input =
+            super::super::candidate::tests::rpm(work.path(), "fixture", "1", "noarch", None);
+        let candidates = super::super::CandidateSet::import(work.path(), &[input]).unwrap();
+        let inputs = candidate_lock(&candidates.packages()[0]);
+        let root = work.path().join("root");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::write(root.join("value"), "42").unwrap();
+        let mut receipt = inputs.clone();
+        receipt.root_digest = Some(rpmx_store::tree::digest_root(&root).unwrap());
+        receipt.rpmdb_digest = Some(rpmx_store::tree::rpmdb_digest(&root).unwrap());
+        write_lock(&work.path().join("root.lock.yaml"), &receipt).unwrap();
+        assert!(RootSelection::verify_inputs(&inputs, &root, "x86_64").is_ok());
+        assert!(inputs.root_digest.is_none());
+        let mut different = inputs.clone();
+        different.options.docs = true;
+        assert!(RootSelection::verify_inputs(&different, &root, "x86_64").is_err());
+        std::fs::write(root.join("value"), "43").unwrap();
+        assert!(RootSelection::verify_inputs(&inputs, &root, "x86_64").is_err());
     }
 
     #[test]

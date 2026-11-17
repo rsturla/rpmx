@@ -5,6 +5,7 @@ use std::path::Path;
 
 pub(crate) mod build;
 pub(crate) mod rebuild;
+mod shared_srpm;
 pub(crate) mod source;
 pub(crate) mod srpm;
 mod tests;

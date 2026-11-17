@@ -304,7 +304,7 @@ fn extension(
                 &lock.prefix,
                 &lock.libdir,
                 &lock.options,
-                &lock.builder,
+                lock.builder.as_ref().map(|builder| &builder.installer),
             ))
         };
         if identity(root.lock()).map_err(|error| Error::new(codes::TEST_004, error.to_string()))?

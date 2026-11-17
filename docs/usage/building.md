@@ -232,3 +232,39 @@ resolved step definitions, sources and patches. It does not need the original ch
 step definitions and rejects a digest mismatch (`RPMX-SRPM-011`).
 
 ---
+
+## Shared sources and separate target inputs
+
+Use `srpm --arch all` to prepare one source package per matrix cell for all
+architectures declared by a profile:
+
+```console
+rpmx srpm package.yaml --arch all --output prepared
+rpmx rebuild prepared/hello-1-1.src.rpm --arch x86_64 \
+  --root-lock prepared/locks/root-x86_64.lock.json --output packages
+```
+
+Sources are assembled once on the native host. The shared SRPM has a `noarch`
+header and a schema-2 package index. Each target entry records its expanded
+build declarations and pipeline inputs. Resolved dependency closures are
+written separately to `locks/root-<arch>.lock.json`. These files use the root
+lock format, independently of their filename suffix.
+
+The source package does not bind its identity to assembled filesystem or RPM
+database digests. A binary worker imports the target dependency CAS payloads,
+assembles its root from that external lock, and records its local assembly
+receipt. Dependency resolution on the source worker does not install foreign
+architecture RPMs. Source assembly that needs commands assembles only its
+native environment.
+
+Transfer the SRPM, target lock and dependency CAS payloads to a native worker.
+The target lock must use repository locations available to that worker if
+build tests need additional packages. Alternatively, select a fresh native
+build environment with `rpmx rebuild FILE --profile PROFILE`. Package acceptance
+remains a separate `rpmx test` operation; rebuild still runs `build.tests`.
+
+Single-target SRPMs retain their embedded environment and existing format.
+Shared preparation requires online automatic resolution, matching matrix-cell
+identities, and identical source-assembly plans across targets. Cross profiles
+use the existing single-target source format. Architecture-dependent source
+assembly fails instead of silently publishing one target's sources for another.
