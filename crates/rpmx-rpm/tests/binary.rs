@@ -219,3 +219,34 @@ fn binary_package_is_deterministic() {
         fs::read(&second).expect("read second")
     );
 }
+
+#[test]
+fn provenance_roundtrips_in_the_rpm_payload_and_versioned_provides() {
+    use rpmx_core::provenance::{self, Input};
+    use std::collections::BTreeMap;
+    let directory = tempfile::tempdir().unwrap();
+    let mut package = spec();
+    let input = Input {
+        root: "build".into(),
+        name: "portable-compiler".into(),
+        evr: "1-4".into(),
+        arch: "x86_64".into(),
+        checksum: "sha256:abcd".into(),
+        source: Some("portable-compiler-1-4.src.rpm".into()),
+        provides: BTreeMap::from([("rpmx(component:crypto)".into(), "1".into())]),
+    };
+    provenance::attach(&mut package, &[input], &[], true).unwrap();
+    let path = directory.path().join("demo.rpm");
+    write_binary_rpm(&package, &path).unwrap();
+    let receipt = provenance::inspect(&path).unwrap().unwrap();
+    assert_eq!(receipt.output, "demo-bin");
+    assert_eq!(receipt.inputs[0].evr, "1-4");
+    assert!(receipt.roots_complete);
+    let rpm = rpm::Package::open(&path).unwrap();
+    assert!(rpm
+        .metadata
+        .get_provides()
+        .unwrap()
+        .iter()
+        .any(|p| p.name == "buildinput(component:crypto)" && p.version == "1"));
+}

@@ -665,6 +665,7 @@ fn expand(value: &str, sandbox: &Sandbox<'_>) -> String {
     value
         .replace("${source.dir}", rpmx_base::guest::BUILD)
         .replace("${build.dir}", rpmx_base::guest::BUILD)
+        .replace("${provenance.dir}", "/tmp/build/.rpmx/provenance")
         .replace("${bundled.dir}", rpmx_base::guest::BUNDLED_DIR)
         .replace("${stage}", rpmx_base::guest::STAGE)
         .replace("${prefix}", sandbox.config.prefix)

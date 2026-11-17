@@ -189,6 +189,32 @@ fn rebuild(request: RebuildContext<'_>, run_report: &mut crate::RunReport) -> Re
     }
     crate::domain::components::prepare_output_dirs(&build, &[&cell])?;
 
+    // Resolved headers supply identities. Reports may refine component use but
+    // cannot replace these immutable host-side input records.
+    let cache = request
+        .config
+        .cache
+        .clone()
+        .map(Ok)
+        .unwrap_or_else(crate::support::default_cache)?;
+    let mut provenance_inputs = Vec::new();
+    let mut provenance_complete =
+        active_lock.is_some() && (effective_sysroot.is_none() || sysroot_lock.is_some());
+    for (root, lock) in [
+        ("build", active_lock.as_ref()),
+        ("sysroot", sysroot_lock.as_ref()),
+    ] {
+        if let Some(lock) = lock {
+            let collected = rpmx_build::provenance::collect(lock, &cache, root)?;
+            provenance_complete &= collected.complete;
+            provenance_inputs.extend(collected.inputs);
+        }
+    }
+    if !provenance_complete {
+        crate::domain::output::warning("provenance", "build-input capability coverage is incomplete; retain cached input RPMs for repair verification");
+    }
+    rpmx_build::provenance::prepare(&build, &provenance_inputs)?;
+
     let prepared_tests = if request.input.build_tests {
         let prepared = super::tests::prepare(
             request.config,
@@ -340,7 +366,7 @@ fn rebuild(request: RebuildContext<'_>, run_report: &mut crate::RunReport) -> Re
     }
 
     let package_started = std::time::Instant::now();
-    let packages = prepare_binary_packages(BinaryPackageOptions {
+    let mut packages = prepare_binary_packages(BinaryPackageOptions {
         recipe: &recipe,
         cell: &cell,
         stage: &stage,
@@ -360,6 +386,17 @@ fn rebuild(request: RebuildContext<'_>, run_report: &mut crate::RunReport) -> Re
             crate::domain::output::duration(package_started)
         ),
     );
+
+    let output_names = packages.iter().map(|p| p.name.clone()).collect();
+    let coverage = rpmx_build::provenance::reports(&build, &provenance_inputs, &output_names)?;
+    for package in &mut packages {
+        rpmx_build::provenance::attach(
+            package,
+            &provenance_inputs,
+            &coverage,
+            provenance_complete,
+        )?;
+    }
 
     if request.input.lint {
         let findings = crate::package_lint::check(&packages);

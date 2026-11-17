@@ -79,6 +79,10 @@ pub struct ResolvedStep {
 
 const BUILTINS: &[(&str, &str)] = &[
     ("go/bump", include_str!("../pipelines/go/bump.yaml")),
+    (
+        "provenance/record",
+        include_str!("../pipelines/provenance/record.yaml"),
+    ),
     ("go/build", include_str!("../pipelines/go/build.yaml")),
     ("go/test", include_str!("../pipelines/go/test.yaml")),
     ("go/vendor", include_str!("../pipelines/go/vendor.yaml")),

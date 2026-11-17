@@ -21,6 +21,14 @@ pub fn run(cli: Cli) -> Result<CommandOutcome, Error> {
         command,
     } = cli;
     let result = match command {
+        Command::Provenance { file } => {
+            let receipt = rpmx_build::provenance::inspect(&file)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&receipt).expect("receipt is serializable")
+            );
+            Ok(())
+        }
         Command::Explain(args) => commands::explain::run(args, pipeline_dir.as_deref()),
         Command::Shell(args) => {
             return commands::shell::run(args, pipeline_dir.as_deref()).map(|report| {

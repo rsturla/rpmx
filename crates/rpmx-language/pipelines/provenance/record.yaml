@@ -1,0 +1,29 @@
+name: provenance/record
+version: 1
+summary: Record component coverage produced by a build step
+inputs:
+  file:
+    type: string
+    required: true
+  name:
+    type: string
+    default: coverage
+needs:
+  packages: [coreutils]
+run:
+  env:
+    COVERAGE_FILE: "${inputs.file}"
+    COVERAGE_NAME: "${inputs.name}"
+    COVERAGE_DIRECTORY: "${provenance.dir}/reports"
+  runs: |
+    set -eu
+    case "$COVERAGE_NAME" in
+      ''|.|..|*[!A-Za-z0-9._-]*)
+        echo "provenance/record: invalid report name" >&2
+        exit 2
+        ;;
+    esac
+    target="$COVERAGE_DIRECTORY/$COVERAGE_NAME.json"
+    test ! -e "$target"
+    test ! -L "$target"
+    cp -- "$COVERAGE_FILE" "$target"

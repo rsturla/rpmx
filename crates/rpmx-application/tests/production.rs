@@ -42,14 +42,26 @@ fn build_root(directory: &Path) -> BuildRoot {
         arch.into(),
         ["bash", "coreutils"]
             .into_iter()
-            .map(|name| LockedPackage {
-                name: name.into(),
-                origin: PackageOrigin::Candidate,
-                evr: "1-1".into(),
-                checksum: format!("sha512:{}", "a".repeat(128)),
-                size: 1,
-                srpm: None,
-                module: None,
+            .map(|name| {
+                let package = rpm::PackageBuilder::new(name, "1", "MIT", arch, "fixture input")
+                    .release("1")
+                    .source_rpm(format!("{name}-1-1.src.rpm"))
+                    .provides(rpm::Dependency::eq("rpmx(component:fixture)", "1"))
+                    .build()
+                    .unwrap();
+                let path = directory.join(format!("{name}.rpm"));
+                package.write_file(&path).unwrap();
+                let bytes = std::fs::read(path).unwrap();
+                let checksum = rpmx_store::cas::store(&directory.join("cas"), &bytes).unwrap();
+                LockedPackage {
+                    name: name.into(),
+                    origin: PackageOrigin::Candidate,
+                    evr: "1-1".into(),
+                    checksum,
+                    size: bytes.len() as u64,
+                    srpm: Some(format!("{name}-1-1.src.rpm")),
+                    module: None,
+                }
             })
             .collect(),
     )]);
@@ -81,7 +93,7 @@ fn build_root(directory: &Path) -> BuildRoot {
         options: Default::default(),
         prefix: "/usr".into(),
         libdir: "/usr/lib64".into(),
-        sbom: false,
+        sbom: true,
         closure_digest: closure_digest("44", &[arch.into()], &repositories, &packages),
         repositories,
         packages,
@@ -162,6 +174,7 @@ fn build_tests_cannot_change_production_bytes_or_component_metadata() {
     let directory = tempfile::tempdir().unwrap();
     let config = ApplicationConfig {
         root: build_root(directory.path()),
+        cache: Some(directory.path().join("cas")),
         runner: "bwrap".into(),
         quiet: true,
         ..Default::default()
@@ -184,6 +197,14 @@ fn build_tests_cannot_change_production_bytes_or_component_metadata() {
     assert_eq!(report.acceptance, AcceptanceState::NotRequested);
     assert!(report.tests.is_empty());
     assert_eq!(report.artifacts.rpms.len(), 1);
+    let receipt = rpmx_build::provenance::inspect(&report.artifacts.rpms[0])
+        .unwrap()
+        .unwrap();
+    assert!(receipt.roots_complete);
+    assert_eq!(receipt.inputs.len(), 2);
+    assert!(receipt
+        .capabilities()
+        .contains(&("buildinput(component:fixture)".into(), "1".into())));
     let package = rpmx_rpm::package_metadata(&report.artifacts.rpms[0]).unwrap();
     assert!(package
         .provides
@@ -203,6 +224,20 @@ fn build_tests_cannot_change_production_bytes_or_component_metadata() {
         std::fs::read_to_string(extracted.join("usr/share/probe/data")).unwrap(),
         "production bytes\n"
     );
+    let spdx: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(extracted.join("usr/share/sbom/probe-1-1.spdx.json")).unwrap(),
+    )
+    .unwrap();
+    assert!(spdx["packages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|package| package["externalRefs"]
+            .as_array()
+            .is_some_and(|references| references
+                .iter()
+                .any(|reference| reference["referenceLocator"]
+                    == "/usr/share/rpmx/buildinfo/probe.json"))));
     assert!(report.build_tests[0]
         .evidence
         .join("artifacts/result.log")
@@ -233,6 +268,7 @@ fn failed_build_test_keeps_evidence_and_never_promotes_candidate_rpms() {
     let directory = tempfile::tempdir().unwrap();
     let config = ApplicationConfig {
         root: build_root(directory.path()),
+        cache: Some(directory.path().join("cas")),
         runner: "bwrap".into(),
         quiet: true,
         ..Default::default()
@@ -270,6 +306,7 @@ fn skipped_requested_build_test_never_publishes_and_needs_no_test_environment() 
     let directory = tempfile::tempdir().unwrap();
     let config = ApplicationConfig {
         root: build_root(directory.path()),
+        cache: Some(directory.path().join("cas")),
         runner: "bwrap".into(),
         quiet: true,
         ..Default::default()
@@ -352,6 +389,7 @@ fn explicitly_disabling_build_tests_does_not_run_either_test_phase() {
     let directory = tempfile::tempdir().unwrap();
     let config = ApplicationConfig {
         root: build_root(directory.path()),
+        cache: Some(directory.path().join("cas")),
         runner: "bwrap".into(),
         quiet: true,
         ..Default::default()
@@ -379,6 +417,7 @@ fn failed_source_assembly_retains_both_streams_and_reports_original_failure() {
     let directory = tempfile::tempdir().unwrap();
     let config = ApplicationConfig {
         root: build_root(directory.path()),
+        cache: Some(directory.path().join("cas")),
         runner: "bwrap".into(),
         quiet: true,
         ..Default::default()
