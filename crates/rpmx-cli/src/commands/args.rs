@@ -494,8 +494,7 @@ pub struct SrpmArgs {
     /// Output directory.
     #[arg(long, default_value = ".")]
     pub output: PathBuf,
-    /// Build architecture recorded in the source header. Defaults to the
-    /// single target the recipe's profile declares, or the host architecture.
+    /// Target architecture, or all for shared sources and separate locks/ inputs.
     #[arg(long)]
     pub arch: Option<String>,
     /// Runner: auto, bwrap, podman or qemu.

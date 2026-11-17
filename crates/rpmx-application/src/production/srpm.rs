@@ -16,6 +16,9 @@ pub(crate) fn execute(
     output: &Path,
     report: &mut RunReport,
 ) -> Result<(), Error> {
+    if input.arch.as_deref() == Some("all") {
+        return super::shared_srpm::execute(config, input, output, report);
+    }
     let target = environment::target(&input.recipe, input.arch.as_deref(), config)?;
     let policy = environment::policy(config)?;
     let (bundle, mut plan) =
@@ -82,9 +85,9 @@ pub(crate) fn execute(
 
 /// Persisted source-package provenance, not an execution root handle.
 pub(crate) struct SourceBuildProvenance {
-    root: Option<crate::domain::root::RootLock>,
-    sysroot: Option<crate::domain::root::RootLock>,
-    cross: Option<crate::domain::guest::CrossToolchain>,
+    pub(super) root: Option<crate::domain::root::RootLock>,
+    pub(super) sysroot: Option<crate::domain::root::RootLock>,
+    pub(super) cross: Option<crate::domain::guest::CrossToolchain>,
 }
 impl SourceBuildProvenance {
     pub fn from_environment(environment: Option<&Environment>) -> Self {

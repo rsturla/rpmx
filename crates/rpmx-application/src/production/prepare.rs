@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use crate::domain::error::codes;
 use crate::domain::root::{load_lock, RootSelection};
-use crate::domain::srpm::load_lock_file;
+use crate::domain::srpm::{load_target_lock, read_reference};
 use crate::domain::steps::validate_name;
 use crate::domain::Error;
 use rpmx_rpm::extract::extract_srpm;
@@ -48,10 +48,15 @@ pub(super) fn prepare(
     signing: Option<&rpmx_rpm::sign::SigningKey>,
 ) -> Result<RebuildState, Error> {
     let work = crate::support::WorkDir::new("rebuild")?;
-    let extracted = extract_srpm(request.input.srpm.as_path(), work.path())?;
+    let mut extracted = extract_srpm(request.input.srpm.as_path(), work.path())?;
     // Read the authoritative lock before unpacking the snapshot. The snapshot
     // is user-controlled recipe data and must not be able to replace it.
-    let package_lock = load_lock_file(&work.path().join("package.lock.json"))?;
+    let package_lock = load_target_lock(work.path(), request.arch)?;
+    extracted.lock_steps = package_lock
+        .steps
+        .iter()
+        .map(|step| (step.name.clone(), step.digest.clone()))
+        .collect();
     // A cross SRPM names its target sysroot; load it before planning so the
     // plan is expanded for the architecture the package is for.
     let embedded_cross = package_lock.cross.clone();
@@ -156,9 +161,18 @@ pub(super) fn prepare(
         false,
         policy,
     )?;
+    let source_name = rpmx_rpm::package_name(request.input.srpm.as_path())?;
     let cells: Vec<_> = match request.input.cell.as_deref() {
         Some(id) => plan.cells.iter().filter(|cell| cell.id == id).collect(),
-        None => plan.cells.iter().collect(),
+        None => plan
+            .cells
+            .iter()
+            .filter(|cell| {
+                cell.package == source_name
+                    && cell.version == package_lock.version
+                    && cell.release == package_lock.release
+            })
+            .collect(),
     };
     if cells.is_empty() {
         return Err(Error::new(
@@ -210,17 +224,39 @@ pub(super) fn prepare(
     })?;
 
     let mut locked_packages: BTreeSet<String> = BTreeSet::new();
-    let embedded_lock = {
-        let path = work.path().join("root.lock.json");
-        if path.exists() {
-            Some(load_lock(&path)?)
-        } else {
-            None
+    let embedded_lock = package_lock
+        .root_lock
+        .as_ref()
+        .map(|reference| {
+            read_reference(work.path(), reference)?;
+            load_lock(&work.path().join(&reference.path))
+        })
+        .transpose()?;
+    let automatic_environment = if embedded_lock.is_none()
+        && request.config.root.lock().is_none()
+        && request.config.root.profile().is_some()
+    {
+        let environment = crate::environment::Environment::prepare(
+            &bundle,
+            &plan,
+            crate::domain::Arch::parse(&target_arch)?,
+            request.config,
+        )?;
+        if environment.cross.is_some() {
+            return Err(Error::new(
+                codes::SRPM_006,
+                "shared sources require a native build profile",
+            ));
         }
+        Some(environment)
+    } else {
+        None
     };
     let requested_lock = match request.config.root.lock() {
         Some(path) => Some(load_lock(path)?),
-        None => None,
+        None => automatic_environment
+            .as_ref()
+            .and_then(|env| env.lock().cloned()),
     };
     let root_differs = match (&requested_lock, &embedded_lock) {
         (Some(requested), Some(embedded)) => {
@@ -254,7 +290,7 @@ pub(super) fn prepare(
         None
     };
     let allow_appliance_resolve = requested_lock.is_some();
-    let active_lock = requested_lock.or(embedded_lock);
+    let mut active_lock = requested_lock.or(embedded_lock);
     if let Some(lock) = &active_lock {
         crate::support::autoroot::report_root(lock, &lock.profile, "from lock");
     }
@@ -266,11 +302,26 @@ pub(super) fn prepare(
         crate::domain::Arch::parse(&target_arch)?
     };
 
-    let mut assembled_appliance: Option<PathBuf> = None;
+    let mut assembled_appliance: Option<PathBuf> = automatic_environment
+        .as_ref()
+        .and_then(|env| env.appliance.clone());
     let assembled_root: Option<RootSelection> = if let Some(lock) = &active_lock {
         for entries in lock.packages.values() {
             for package in entries {
                 locked_packages.insert(package.name.clone());
+                if lock.root_digest.is_none() {
+                    let cache = request
+                        .config
+                        .cache
+                        .clone()
+                        .map(Ok)
+                        .unwrap_or_else(crate::support::default_cache)?;
+                    let path = rpmx_store::cas::path(&cache, &package.checksum)?;
+                    rpmx_store::cas::load(&cache, &package.checksum)?;
+                    locked_packages.extend(
+                        rpmx_payload::metadata::package_metadata(&path)?.provided_capabilities(),
+                    );
+                }
             }
         }
         let runner_kind = request
@@ -290,7 +341,12 @@ pub(super) fn prepare(
             assembled_appliance = request.prepared.and_then(|env| env.appliance.clone());
             None
         } else {
-            let path = match request.config.root.path() {
+            let path = match request
+                .config
+                .root
+                .path()
+                .or_else(|| automatic_environment.as_ref().and_then(|env| env.root()))
+            {
                 Some(root_path) => root_path.to_path_buf(),
                 None => {
                     let roots = crate::autoroot::ensure_from_lock(
@@ -307,7 +363,7 @@ pub(super) fn prepare(
                     roots.root
                 }
             };
-            Some(RootSelection::verify(lock, &path, exec_name)?)
+            Some(RootSelection::verify_inputs(lock, &path, exec_name)?)
         };
         if request.prepared.is_none() && request.config.root.path().is_some() {
             assembled_appliance = crate::support::autoroot::appliance_for(
@@ -334,6 +390,9 @@ pub(super) fn prepare(
         None
     };
 
+    if let Some(selection) = &assembled_root {
+        active_lock = Some(selection.lock().clone());
+    }
     let replaced_sysroot = cross_lock_and_arch.as_ref().map(|(lock, _)| lock.clone());
     let (sysroot, cross, sysroot_lock) = match (&embedded_cross, cross_lock_and_arch) {
         (Some(recorded), Some((lock, arch))) => {

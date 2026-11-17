@@ -335,6 +335,60 @@ pub struct PackageLock {
     pub replaced: Option<ReplacedLock>,
 }
 
+/// One source package with independently resolved target environments.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TargetIndex {
+    pub schema: u32,
+    pub source_date_epoch: u32,
+    pub targets: BTreeMap<String, LockRoot>,
+}
+
+/// Select a target lock without changing the shared source package.
+pub fn load_target_lock(directory: &Path, arch: &str) -> Result<PackageLock> {
+    let path = directory.join("package.lock.json");
+    let text = read_text_capped(&path, codes::SRPM_006)?;
+    let value: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|error| Error::new(codes::SRPM_006, error.to_string()))?;
+    if value.get("schema").and_then(|value| value.as_u64()) != Some(2) {
+        return load_lock_file(&path);
+    }
+    let index: TargetIndex = serde_json::from_value(value)
+        .map_err(|error| Error::new(codes::SRPM_006, error.to_string()))?;
+    let reference = index
+        .targets
+        .get(arch)
+        .ok_or_else(|| Error::new(codes::SRPM_006, format!("SRPM has no target '{arch}'")))?;
+    let text = read_reference(directory, reference)?;
+    let lock: PackageLock = serde_json::from_str(&text)
+        .map_err(|error| Error::new(codes::SRPM_006, error.to_string()))?;
+    if lock.schema != 1 || lock.source_date_epoch != index.source_date_epoch {
+        return Err(Error::new(
+            codes::SRPM_006,
+            "target lock schema or timestamp differs from the shared SRPM",
+        ));
+    }
+    Ok(lock)
+}
+
+/// Read a flat bundle file and verify its recorded digest.
+pub fn read_reference(directory: &Path, reference: &LockRoot) -> Result<String> {
+    if Path::new(&reference.path).components().count() != 1
+        || reference.path == "."
+        || reference.path == ".."
+    {
+        return Err(Error::new(codes::SRPM_006, "invalid bundle reference path"));
+    }
+    let text = read_text_capped(&directory.join(&reference.path), codes::SRPM_006)?;
+    if sha512_hex(text.as_bytes()) != reference.digest {
+        return Err(Error::new(
+            codes::SRPM_006,
+            format!("bundle digest mismatch for {}", reference.path),
+        ));
+    }
+    Ok(text)
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SourceManifestRecipe {
     pub path: String,

@@ -35,12 +35,19 @@ impl RootPolicy {
     /// Reuse locked repository/layout policy and immutable tool images, never its package seeds.
     pub fn from_lock(lock: &crate::root::RootLock) -> Result<Self> {
         lock.validate()?;
-        let images = lock.builder.clone().ok_or_else(|| {
+        let mut images = lock.builder.clone().ok_or_else(|| {
             Error::new(
                 codes::ROOT_006,
                 "root lock has no tool images; supply an explicit profile",
             )
         })?;
+        // A shared SRPM can resolve on a different host. Native check roots
+        // use the already-pinned target tool image for downstream resolution.
+        if images.resolver.architecture() != Arch::current()?.as_str()
+            && images.installer.architecture() == Arch::current()?.as_str()
+        {
+            images.resolver = images.installer.clone();
+        }
         let profile = Profile {
             document: crate::profile::DOCUMENT.to_string(),
             version: crate::profile::VERSION,

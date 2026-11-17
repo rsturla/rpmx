@@ -330,7 +330,13 @@ fn ensure_with(
     }
     let appliance_override = override_root.map(Path::to_path_buf);
     let roots = cas.parent().unwrap_or(&cas).join("roots");
-    let digest = lock.require_digest()?.to_string();
+    lock.validate()?;
+    lock.require_target(arch)?;
+    let digest = lock
+        .root_digest
+        .as_ref()
+        .map(|_| lock.require_digest().map(str::to_string))
+        .transpose()?;
     let identity = lock.assembly_identity();
     let key = identity.strip_prefix("sha512:").unwrap_or(&identity);
     let directory = roots.join(format!("lock-{key}"));
@@ -353,7 +359,10 @@ fn ensure_with(
             appliance,
         });
     }
-    if let Some(root) = find_published_root(&roots, &digest) {
+    if let Some(root) = digest
+        .as_deref()
+        .and_then(|digest| find_published_root(&roots, digest))
+    {
         let appliance = appliance_path(needs_appliance)?;
         return Ok(AssembledRoots { root, appliance });
     }
@@ -436,13 +445,16 @@ fn ensure_with(
         create_sysroot_mount(&assembled)?;
     }
     let actual = digest_root(&assembled)?;
-    if actual != digest {
+    if digest.as_ref().is_some_and(|digest| &actual != digest) {
         return Err(Error::new(
             codes::ROOT_017,
-            format!("assembled root digest {actual} does not match the SRPM lock's {digest}"),
+            format!("assembled root digest {actual} does not match the SRPM lock"),
         ));
     }
-    write_lock(&lock_path, lock)?;
+    let mut receipt = lock.clone();
+    receipt.root_digest = Some(actual);
+    receipt.rpmdb_digest = Some(rpmx_store::tree::rpmdb_digest(&assembled)?);
+    write_lock(&lock_path, &receipt)?;
     let appliance = appliance_path(needs_appliance)?;
     Ok(AssembledRoots {
         root: root_path,

@@ -247,6 +247,140 @@ pub fn prepare_source_packages(
     Ok(packages)
 }
 
+/// Combine target plans into one SRPM while retaining each exact root lock.
+pub fn merge_target_packages(mut variants: Vec<SourcePackageSpec>) -> Result<SourcePackageSpec> {
+    let mut package = variants
+        .pop()
+        .ok_or_else(|| Error::new(codes::SRPM_006, "no SRPM targets"))?;
+    let mut files = BTreeMap::<String, SourcePackageFile>::new();
+    let mut targets = BTreeMap::new();
+    let mut steps = BTreeMap::<String, String>::new();
+    let mut manifest = None;
+    for mut variant in variants
+        .into_iter()
+        .chain(std::iter::once(SourcePackageSpec {
+            files: std::mem::take(&mut package.files),
+            ..package.clone()
+        }))
+    {
+        if variant.name != package.name
+            || variant.version != package.version
+            || variant.release != package.release
+            || variant.source_date_epoch != package.source_date_epoch
+        {
+            return Err(Error::new(
+                codes::SRPM_006,
+                "SRPM targets have different package identities",
+            ));
+        }
+        let arch = rpmx_base::arch::Arch::parse(&variant.arch)?.to_string();
+        let lock_file = variant
+            .files
+            .iter_mut()
+            .find(|file| file.path == "package.lock.json")
+            .ok_or_else(|| Error::new(codes::SRPM_006, "target has no package lock"))?;
+        let mut lock: srpm::PackageLock = serde_json::from_slice(&lock_file.data)
+            .map_err(|error| Error::new(codes::SRPM_006, error.to_string()))?;
+        if let Some(root) = &mut lock.root_lock {
+            root.path = format!("root-{arch}.lock.json");
+        }
+        if let Some(cross) = &mut lock.cross {
+            cross.sysroot.path = format!("sysroot-{arch}.lock.json");
+        }
+        lock_file.path = format!("package-{arch}.lock.json");
+        lock_file.data = serde_json::to_vec_pretty(&lock)
+            .map_err(|error| Error::new(codes::SRPM_006, error.to_string()))?;
+        let reference = srpm::LockRoot {
+            path: lock_file.path.clone(),
+            digest: srpm::sha512_hex(&lock_file.data),
+        };
+        if targets.insert(arch.clone(), reference).is_some() {
+            return Err(Error::new(codes::SRPM_006, "duplicate SRPM target"));
+        }
+        for mut file in variant.files {
+            match file.path.as_str() {
+                "root.lock.json" => file.path = format!("root-{arch}.lock.json"),
+                "sysroot.lock.json" => file.path = format!("sysroot-{arch}.lock.json"),
+                "RPMX-MANIFEST.json" => {
+                    manifest = Some(
+                        serde_json::from_slice::<serde_json::Value>(&file.data)
+                            .map_err(|error| Error::new(codes::SRPM_006, error.to_string()))?,
+                    );
+                    continue;
+                }
+                "RPMX-STEPS.json" => {
+                    let target_steps: BTreeMap<String, String> = serde_json::from_slice(&file.data)
+                        .map_err(|error| Error::new(codes::SRPM_006, error.to_string()))?;
+                    for (name, text) in target_steps {
+                        if steps.get(&name).is_some_and(|previous| previous != &text) {
+                            return Err(Error::new(
+                                codes::SRPM_006,
+                                "target pipeline definitions differ",
+                            ));
+                        }
+                        steps.insert(name, text);
+                    }
+                    continue;
+                }
+                _ => {}
+            }
+            if let Some(previous) = files.get(&file.path) {
+                if previous.data != file.data || previous.mode != file.mode {
+                    return Err(Error::new(
+                        codes::SRPM_006,
+                        format!("target source files differ: {}", file.path),
+                    ));
+                }
+            } else {
+                files.insert(file.path.clone(), file);
+            }
+        }
+    }
+    let index = srpm::TargetIndex {
+        schema: 2,
+        source_date_epoch: package.source_date_epoch,
+        targets,
+    };
+    for (path, data) in [
+        ("package.lock.json", serde_json::to_vec_pretty(&index)),
+        ("RPMX-STEPS.json", serde_json::to_vec_pretty(&steps)),
+    ] {
+        files.insert(
+            path.into(),
+            SourcePackageFile {
+                path: path.into(),
+                mode: 0o644,
+                data: data.map_err(|error| Error::new(codes::SRPM_006, error.to_string()))?,
+            },
+        );
+    }
+    let mut manifest = manifest.ok_or_else(|| Error::new(codes::SRPM_006, "no source manifest"))?;
+    manifest["schema"] = 2.into();
+    manifest
+        .as_object_mut()
+        .expect("source manifest object")
+        .remove("root_lock");
+    manifest["lock"]["digest"] = srpm::sha512_hex(&files["package.lock.json"].data).into();
+    manifest["sources"] = serde_json::json!(files
+        .values()
+        .map(|file| serde_json::json!({
+            "path": file.path, "digest": srpm::sha512_hex(&file.data), "size": file.data.len()
+        }))
+        .collect::<Vec<_>>());
+    files.insert(
+        "RPMX-MANIFEST.json".into(),
+        SourcePackageFile {
+            path: "RPMX-MANIFEST.json".into(),
+            mode: 0o644,
+            data: serde_json::to_vec_pretty(&manifest)
+                .map_err(|error| Error::new(codes::SRPM_006, error.to_string()))?,
+        },
+    );
+    package.arch = "noarch".into();
+    package.files = files.into_values().collect();
+    Ok(package)
+}
+
 fn collect_local_steps(
     plan: &Plan,
     step_root: Option<&Path>,

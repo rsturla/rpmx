@@ -686,7 +686,17 @@ fn write_repositories(work: &Path, repositories: &[Repository]) -> Result<Reposi
         }
         if kind == "baseurl" {
             if let Some(path) = local_repository_path(&url) {
-                let path = std::fs::canonicalize(&path).map_err(|error| {
+                // DNF expands target variables inside the container. Mount
+                // the fixed parent, retaining the variable suffix in its URL.
+                let text = path.to_string_lossy();
+                let (parent, suffix) = match text.find('$') {
+                    Some(variable) => {
+                        let split = text[..variable].rfind('/').unwrap_or(0);
+                        (&text[..split], &text[split..])
+                    }
+                    None => (text.as_ref(), ""),
+                };
+                let path = std::fs::canonicalize(parent).map_err(|error| {
                     Error::new(
                         codes::ROOT_006,
                         format!(
@@ -696,7 +706,7 @@ fn write_repositories(work: &Path, repositories: &[Repository]) -> Result<Reposi
                     )
                 })?;
                 let target = format!("/rpmx-repos/{index}");
-                url = format!("file://{target}");
+                url = format!("file://{target}{suffix}");
                 mounts.push((path, target));
             }
         }
@@ -1435,6 +1445,25 @@ mod local_repository_tests {
         assert_eq!(setup.mounts[0].1, "/rpmx-repos/0");
         let text = std::fs::read_to_string(work.path().join("repos.d/local.repo")).expect("repo");
         assert!(text.contains("baseurl=file:///rpmx-repos/0"), "{text}");
+    }
+
+    #[test]
+    fn local_repository_target_variables_are_expanded_by_dnf() {
+        let work = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(work.path().join("repos.d")).unwrap();
+        let repository_dir = tempfile::tempdir().unwrap();
+        let mut entry = repository("local");
+        entry.baseurl = Some(format!(
+            "file://{}/$releasever/${{basearch}}",
+            repository_dir.path().display()
+        ));
+        let setup = write_repositories(work.path(), &[entry]).unwrap();
+        assert_eq!(
+            setup.mounts[0].0,
+            repository_dir.path().canonicalize().unwrap()
+        );
+        let text = std::fs::read_to_string(work.path().join("repos.d/local.repo")).unwrap();
+        assert!(text.contains("baseurl=file:///rpmx-repos/0/$releasever/${basearch}"));
     }
 
     #[test]
