@@ -7,6 +7,7 @@ pub mod package;
 pub mod package_lint;
 pub mod package_lock;
 pub mod package_spec;
+pub mod provenance;
 pub mod sbom;
 pub mod source;
 pub mod source_package;

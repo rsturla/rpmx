@@ -45,6 +45,7 @@ impl Cli {
             Command::Lint(_) => "lint",
             Command::Lock(_) => "lock",
             Command::Plan(_) => "plan",
+            Command::Provenance { .. } => "provenance",
             Command::Bootstrap { .. } => "bootstrap",
             Command::Root { .. } => "root",
             Command::Runner { .. } => "runner",
@@ -126,6 +127,8 @@ pub struct PolicyArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
+    /// Read the durable build-input receipt from a binary RPM (null for legacy RPMs).
+    Provenance { file: std::path::PathBuf },
     /// Explain a resolved policy, root, step list, matrix or dependency set.
     Explain(crate::commands::ExplainArgs),
     /// Open a shell in the build sandbox.

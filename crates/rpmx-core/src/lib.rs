@@ -2,7 +2,7 @@ pub use rpmx_base::{
     arch, error, guest, hash, output, yaml, Arch, Error, Result, MAX_ARCHIVE_BYTES,
 };
 pub use rpmx_build::{
-    binary_package, elf, fetch, package, package_spec, sbom, source, source_package,
+    binary_package, elf, fetch, package, package_spec, provenance, sbom, source, source_package,
 };
 pub use rpmx_components as components;
 pub use rpmx_root::{appliance, cache_lock, pkgmanifest, profile, request, root};

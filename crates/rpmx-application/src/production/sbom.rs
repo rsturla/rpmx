@@ -75,6 +75,31 @@ impl SbomContext {
             sources: &refs,
             cpe: recipe.package.cpe.as_ref(),
         })?;
+        // The payload receipt is the common source for exact build inputs and
+        // component coverage. Link it from SPDX instead of collecting again.
+        let mut document: serde_json::Value = serde_json::from_str(&text)
+            .map_err(|error| Error::new(codes::BUILD_006, error.to_string()))?;
+        let receipt_path = format!(
+            "{}/{}.json",
+            rpmx_build::provenance::PAYLOAD_DIRECTORY,
+            package.name
+        );
+        if package.files.iter().any(|file| file.path == receipt_path) {
+            if let Some(packages) = document["packages"].as_array_mut() {
+                if let Some(primary) = packages.iter_mut().find(|p| p["name"] == package.name) {
+                    let references = primary
+                        .as_object_mut()
+                        .expect("SPDX package object")
+                        .entry("externalRefs")
+                        .or_insert_with(|| serde_json::json!([]));
+                    references.as_array_mut().expect("SPDX external references").push(serde_json::json!({
+                        "referenceCategory": "OTHER", "referenceType": "urn:rpmx:build-input-receipt", "referenceLocator": receipt_path
+                    }));
+                }
+            }
+        }
+        let text = serde_json::to_string_pretty(&document)
+            .map_err(|error| Error::new(codes::BUILD_006, error.to_string()))?;
         package.files.push(BinaryPackageFile {
             path: format!(
                 "{}/{}-{}-{}.spdx.json",
