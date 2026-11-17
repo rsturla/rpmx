@@ -152,21 +152,23 @@ pub fn generate(
         findings.provide_path(&file.path);
     }
 
-    if options.elf {
+    let mut elf_findings = if options.elf.provides || options.elf.requires {
         let mut elf = elf::Scanner::default();
         for file in files.iter().filter(|file| file.target.is_none()) {
             elf.inspect(file);
         }
-        findings.merge(elf.finish());
-    }
+        elf.finish()
+    } else {
+        Findings::default()
+    };
 
     let mut python = python::Scanner::default();
     let mut perl = perl::Scanner::default();
     for file in files {
         match &file.target {
             Some(target) => {
-                if options.elf {
-                    libsymlink::inspect(&file.path, target, sonames, &mut findings);
+                if options.elf.requires {
+                    libsymlink::inspect(&file.path, target, sonames, &mut elf_findings);
                 }
             }
             None => {
@@ -194,6 +196,7 @@ pub fn generate(
             }
         }
     }
+    findings.merge_sides(elf_findings, options.elf.provides, options.elf.requires);
     findings.merge(python.finish());
     findings.merge_sides(
         perl.finish(),
@@ -225,6 +228,142 @@ pub(crate) fn test_file(path: &str, data: &[u8]) -> BinaryPackageFile {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn private_elf_libraries_keep_runtime_dependencies_without_public_provides() {
+        let work = tempfile::tempdir().unwrap();
+        let source = work.path().join("private.c");
+        let versions = work.path().join("versions.map");
+        let library = work.path().join("libprivate.so.1");
+        std::fs::write(
+            &source,
+            "#include <stdio.h>\nvoid probe(void) { puts(\"private\"); }\n",
+        )
+        .unwrap();
+        std::fs::write(&versions, "PRIVATE_1.0 { global: probe; local: *; };\n").unwrap();
+        let compiled = std::process::Command::new("cc")
+            .args(["-shared", "-fPIC", "-Wl,-soname,libprivate.so.1"])
+            .arg(format!("-Wl,--version-script={}", versions.display()))
+            .arg(&source)
+            .arg("-o")
+            .arg(&library)
+            .output()
+            .unwrap();
+        assert!(
+            compiled.status.success(),
+            "{}",
+            String::from_utf8_lossy(&compiled.stderr)
+        );
+        // A second private DSO uses a versioned symbol from the first. Neither
+        // that internal edge nor the linker symlink requires a public provider.
+        let consumer_source = work.path().join("consumer.c");
+        let consumer = work.path().join("libconsumer.so.1");
+        std::fs::write(
+            &consumer_source,
+            "extern void probe(void);\nvoid client(void) { probe(); }\n",
+        )
+        .unwrap();
+        let linked = std::process::Command::new("cc")
+            .args([
+                "-shared",
+                "-fPIC",
+                "-Wl,-soname,libconsumer.so.1",
+                "-Wl,-z,defs",
+            ])
+            .arg(&consumer_source)
+            .arg(&library)
+            .arg("-o")
+            .arg(&consumer)
+            .output()
+            .unwrap();
+        assert!(
+            linked.status.success(),
+            "{}",
+            String::from_utf8_lossy(&linked.stderr)
+        );
+        let mut symlink = test_file("/usr/lib/gcc/target/15/libprivate.so", b"");
+        symlink.target = Some("libprivate.so.1".into());
+        let files = [
+            test_file(
+                "/usr/lib/gcc/target/15/libprivate.so.1",
+                &std::fs::read(library).unwrap(),
+            ),
+            test_file(
+                "/usr/lib/gcc/target/15/libconsumer.so.1",
+                &std::fs::read(consumer).unwrap(),
+            ),
+            symlink,
+        ];
+        let sonames = BTreeMap::from([(
+            "/usr/lib/gcc/target/15/libprivate.so.1".into(),
+            format!("libprivate.so.1()({}bit)", usize::BITS),
+        )]);
+        let (public, dependencies) =
+            generate(&files, "x86_64", &sonames, &OutputGenerators::default());
+        assert!(
+            public
+                .iter()
+                .any(|item| item.starts_with("libprivate.so.1()")),
+            "{public:?}"
+        );
+        assert!(
+            public.iter().any(|item| item.contains("PRIVATE_1.0")),
+            "{public:?}"
+        );
+        assert!(
+            dependencies
+                .iter()
+                .any(|item| item.starts_with("libc.so.6(")),
+            "{dependencies:?}"
+        );
+        assert!(
+            !dependencies
+                .iter()
+                .any(|item| item.starts_with("libprivate.so.1(")),
+            "internal ELF dependency escaped: {dependencies:?}"
+        );
+
+        let private: OutputGenerators =
+            serde_yaml_ng::from_str("elf: { provides: false }").unwrap();
+        let (provides, requires) = generate(&files, "x86_64", &sonames, &private);
+        assert!(
+            provides.is_empty(),
+            "private SONAME and symbol versions leaked: {provides:?}"
+        );
+        assert_eq!(
+            requires, dependencies,
+            "private libraries still need their external ABI dependencies"
+        );
+
+        let provides_only: OutputGenerators =
+            serde_yaml_ng::from_str("elf: { requires: false }").unwrap();
+        let (provides, requires) = generate(&files, "x86_64", &sonames, &provides_only);
+        assert_eq!(provides, public);
+        assert!(requires.is_empty(), "{requires:?}");
+        assert!(serde_yaml_ng::from_str::<OutputGenerators>("elf: false").is_err());
+    }
+
+    #[test]
+    fn private_development_symlinks_still_require_the_public_runtime() {
+        let mut link = test_file("/usr/lib/gcc/target/15/libprivate.so", b"");
+        link.target = Some("libprivate.so.1".into());
+        let sonames = BTreeMap::from([(
+            "/usr/lib/gcc/target/15/libprivate.so.1".into(),
+            "libprivate.so.1()(64bit)".into(),
+        )]);
+        let private: OutputGenerators =
+            serde_yaml_ng::from_str("elf: { provides: false }").unwrap();
+        let (provides, requires) =
+            generate(std::slice::from_ref(&link), "x86_64", &sonames, &private);
+        assert!(provides.is_empty());
+        assert_eq!(requires, ["libprivate.so.1()(64bit)"]);
+
+        let disabled: OutputGenerators =
+            serde_yaml_ng::from_str("elf: { provides: false, requires: false }").unwrap();
+        let (provides, requires) = generate(&[link], "x86_64", &sonames, &disabled);
+        assert!(provides.is_empty());
+        assert!(requires.is_empty());
+    }
 
     fn pkgconfig_file() -> BinaryPackageFile {
         test_file(

@@ -263,8 +263,22 @@ outputs:
 ```
 
 The keys are `elf`, `pkgconfig`, `script`, `python`, `perl`, `desktop`,
-`metainfo`, `debuginfo` and `bundled`; all default to `true`. `elf` also
-controls the `.so` symlink requirement.
+`metainfo`, `debuginfo` and `bundled`; all are enabled by default.
+
+`elf` takes a mapping with independent `provides` and `requires` switches,
+both enabled by default. Private compiler libraries must keep their external
+ABI requirements without advertising SONAMEs or symbol versions as public
+runtime providers:
+
+```yaml
+generators:
+  elf:
+    provides: false
+```
+
+This retains `.so` symlink requirements too. Use explicit package dependencies
+for matching private development libraries. To disable all ELF generation, set
+both switches to `false`. Boolean `elf` values are rejected.
 
 `perl` also accepts a mapping, because the package that ships the interpreter
 needs one side and not the other: its `perl(Module)` provides describe what it
