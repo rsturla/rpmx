@@ -96,6 +96,9 @@ pub struct BuildArgs {
     /// Skip build.tests. Package acceptance is a separate operation.
     #[arg(long)]
     pub no_tests: bool,
+    /// Also run cases marked optional; failures remain fatal.
+    #[arg(long, conflicts_with = "no_tests")]
+    pub include_optional_tests: bool,
     /// Do not write repository metadata after the build.
     #[arg(long)]
     pub no_index: bool,
@@ -145,6 +148,9 @@ pub struct RebuildArgs {
     /// Skip build.tests. Package acceptance is a separate operation.
     #[arg(long)]
     pub no_tests: bool,
+    /// Also run cases marked optional; failures remain fatal.
+    #[arg(long, conflicts_with = "no_tests")]
+    pub include_optional_tests: bool,
     /// Do not write repository metadata after the build.
     #[arg(long)]
     pub no_index: bool,
@@ -301,6 +307,9 @@ pub struct TestArgs {
     /// Select NAME or OUTPUT/NAME; repeat to select multiple cases.
     #[arg(long = "test", value_name = "NAME")]
     pub selected: Vec<String>,
+    /// Also run optional cases without selecting each one by name.
+    #[arg(long)]
+    pub include_optional_tests: bool,
     /// Repository policy for package-test dependencies.
     #[arg(long, conflicts_with = "replay")]
     pub test_profile: Option<PathBuf>,
@@ -705,4 +714,67 @@ pub struct GcArgs {
     pub dry_run: bool,
     #[command(flatten)]
     pub cache: CacheArgs,
+}
+
+#[cfg(test)]
+mod optional_test_arguments {
+    use crate::cli::{Cli, Command};
+    use clap::Parser;
+
+    #[test]
+    fn optional_cases_require_explicit_opt_in() {
+        for include in [false, true] {
+            for command in ["build", "rebuild", "test"] {
+                let mut argv = vec!["rpmx", command, "input"];
+                if command == "test" {
+                    argv.extend(["--install-dir", "rpms"]);
+                }
+                if include {
+                    argv.push("--include-optional-tests");
+                }
+                let parsed = Cli::try_parse_from(argv).expect("valid test selection");
+                let actual = match parsed.command {
+                    Command::Build(args) => args.include_optional_tests,
+                    Command::Rebuild(args) => args.include_optional_tests,
+                    Command::Test(args) => args.include_optional_tests,
+                    _ => unreachable!(),
+                };
+                assert_eq!(actual, include, "{command}");
+            }
+        }
+    }
+
+    #[test]
+    fn optional_opt_in_conflicts_with_disabling_source_tests() {
+        for command in ["build", "rebuild"] {
+            let error = Cli::try_parse_from([
+                "rpmx",
+                command,
+                "input",
+                "--no-tests",
+                "--include-optional-tests",
+            ])
+            .expect_err("contradictory test selection must fail before execution");
+            assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
+        }
+    }
+
+    #[test]
+    fn named_optional_selection_does_not_require_the_bulk_opt_in() {
+        let parsed = Cli::try_parse_from([
+            "rpmx",
+            "test",
+            "package.yaml",
+            "--install-dir",
+            "rpms",
+            "--test",
+            "example/extended-upstream",
+        ])
+        .expect("explicit named selection");
+        let Command::Test(args) = parsed.command else {
+            unreachable!()
+        };
+        assert_eq!(args.selected, ["example/extended-upstream"]);
+        assert!(!args.include_optional_tests);
+    }
 }

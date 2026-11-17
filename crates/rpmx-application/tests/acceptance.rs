@@ -24,6 +24,16 @@ fn run(
     subjects: RpmInputs,
     selection: Vec<String>,
 ) -> rpmx_application::RunReport {
+    run_with_optional(directory, recipe, subjects, selection, false)
+}
+
+fn run_with_optional(
+    directory: &Path,
+    recipe: PathBuf,
+    subjects: RpmInputs,
+    selection: Vec<String>,
+    include_optional_tests: bool,
+) -> rpmx_application::RunReport {
     let app = Application::new(ApplicationConfig {
         cache: Some(directory.join("cache")),
         offline: true,
@@ -35,6 +45,7 @@ fn run(
             subjects,
             arch: None,
             selection,
+            include_optional_tests,
             environment: AcceptanceEnvironment::ProjectDefault,
             save_environment: None,
         }),
@@ -237,7 +248,10 @@ fn package_tests_resolve_only_required_outputs_and_replay_exact_environments() {
         script: |
           test ! -e /transaction-sentinel
           test ! -e /lifecycle-probe.post
-          test ! -e /lifecycle-probe.postun"#,
+          test ! -e /lifecycle-probe.postun
+      - name: optional-failure
+        optional: true
+        script: exit 27"#,
     );
     let profile = directory.path().join("profile.yaml");
     let repository = directory.path().join("repository");
@@ -291,6 +305,7 @@ fn package_tests_resolve_only_required_outputs_and_replay_exact_environments() {
         subjects,
         arch: None,
         selection: vec![],
+        include_optional_tests: false,
         environment: AcceptanceEnvironment::Profile(profile),
         save_environment: Some(saved.clone()),
     };
@@ -318,6 +333,26 @@ fn package_tests_resolve_only_required_outputs_and_replay_exact_environments() {
         std::fs::read(report.tests[0].evidence.join("artifacts/receipt")).unwrap(),
         b"evidence"
     );
+    let mut opted_in = input.clone();
+    opted_in.include_optional_tests = true;
+    opted_in.environment = AcceptanceEnvironment::Replay(saved.clone());
+    opted_in.save_environment = None;
+    let optional_report = Application::new(config.clone())
+        .execute(request(opted_in))
+        .unwrap();
+    assert_eq!(optional_report.tests.len(), 4);
+    assert!(!optional_report.success());
+    let failure = optional_report
+        .tests
+        .iter()
+        .find(|case| case.name.ends_with("optional-failure"))
+        .unwrap();
+    assert_eq!(failure.status, CaseStatus::Failed);
+    assert!(
+        failure.primary.as_ref().unwrap().message.contains("27"),
+        "{failure:#?}"
+    );
+
     let mut replay = input;
     replay.environment = AcceptanceEnvironment::Replay(saved.clone());
     replay.save_environment = None;
@@ -333,6 +368,41 @@ fn package_tests_resolve_only_required_outputs_and_replay_exact_environments() {
         serde_json::to_string_pretty(&report).unwrap()
     );
     assert_eq!(report.tests.len(), 3);
+
+    let mut selected = replay.clone();
+    selected.selection = vec!["optional-failure".into()];
+    let optional_report = Application::new(ApplicationConfig {
+        offline: true,
+        ..config.clone()
+    })
+    .execute(request(selected))
+    .unwrap();
+    assert_eq!(optional_report.tests.len(), 1);
+    assert_eq!(optional_report.tests[0].status, CaseStatus::Failed);
+    assert!(optional_report.tests[0]
+        .primary
+        .as_ref()
+        .unwrap()
+        .message
+        .contains("27"));
+
+    // Optional metadata is part of the saved plan, even for default selection.
+    let recipe_path = replay.recipe.clone();
+    let original_recipe = std::fs::read_to_string(&recipe_path).unwrap();
+    std::fs::write(
+        &recipe_path,
+        original_recipe.replace("optional: true", "optional: false"),
+    )
+    .unwrap();
+    let changed = Application::new(ApplicationConfig {
+        offline: true,
+        ..config.clone()
+    })
+    .execute(request(replay.clone()))
+    .unwrap();
+    assert!(!changed.success());
+    assert!(changed.primary.as_ref().unwrap().message.contains("saved"));
+    std::fs::write(&recipe_path, original_recipe).unwrap();
 
     // Replay must use the saved tree, even when all packages are cached.
     // Removing one group's tree must fail that group without rebuilding it.
@@ -448,4 +518,58 @@ fn local_runtime(directory: &Path) -> PathBuf {
     }
     builder.build().unwrap().write_file(&path).unwrap();
     path
+}
+
+#[test]
+fn default_selection_omits_optional_cases_before_preparing_their_dependencies() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = recipe(directory.path(), "      - name: required\n        skip: hardware unavailable\n        script: exit 99\n      - name: costly\n        optional: true\n        packages: [unavailable-optional-tool]\n        script: exit 27");
+    let subject = rpm(directory.path());
+    let report = run(
+        directory.path(),
+        path,
+        RpmInputs::Files(vec![subject]),
+        vec![],
+    );
+    assert_eq!(report.outcome, RunOutcome::Incomplete);
+    assert_eq!(report.tests.len(), 1);
+    assert_eq!(report.tests[0].name, "required");
+    assert_eq!(report.tests[0].status, CaseStatus::Skipped);
+    assert!(report.environments.is_empty());
+    assert!(
+        report.primary.is_none(),
+        "optional dependencies must not be resolved"
+    );
+    let junit = std::fs::read_to_string(directory.path().join("results/run-report.xml")).unwrap();
+    assert!(
+        !junit.contains("costly"),
+        "unselected is neither passed nor skipped"
+    );
+}
+
+#[test]
+fn optional_only_cases_need_opt_in_but_selected_skips_still_block() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = recipe(directory.path(), "      - name: costly\n        optional: true\n        skip: hardware unavailable\n        script: exit 99");
+    let subject = rpm(directory.path());
+    let inputs = RpmInputs::Files(vec![subject]);
+    let report = run(directory.path(), path.clone(), inputs.clone(), vec![]);
+    assert_eq!(report.outcome, RunOutcome::Failed);
+    assert_eq!(report.primary.as_ref().unwrap().code, "RPMX-TEST-006");
+    assert!(report.tests.is_empty());
+    assert!(report.environments.is_empty());
+    for (selectors, include) in [(vec![], true), (vec!["fixture/costly".into()], false)] {
+        let report = run_with_optional(
+            directory.path(),
+            path.clone(),
+            inputs.clone(),
+            selectors,
+            include,
+        );
+        assert_eq!(report.outcome, RunOutcome::Incomplete);
+        assert_eq!(report.tests.len(), 1);
+        assert_eq!(report.tests[0].status, CaseStatus::Skipped);
+        assert!(!report.success());
+        assert!(report.environments.is_empty());
+    }
 }

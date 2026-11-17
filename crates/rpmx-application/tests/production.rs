@@ -160,6 +160,7 @@ fn input(recipe: PathBuf) -> BuildInput {
         cell: None,
         stage: None,
         build_tests: true,
+        include_optional_tests: false,
         locked: false,
         lint: false,
         index: false,
@@ -531,4 +532,137 @@ fn staged_packaging_retains_mode_zero_payload_without_changing_its_source() {
         0o0,
         "packaging must not chmod the staged source"
     );
+}
+
+#[test]
+fn optional_source_dependencies_are_deferred_and_srpm_rebuild_can_opt_in() {
+    if !available() {
+        return;
+    }
+    let directory = tempfile::tempdir().unwrap();
+    let config = ApplicationConfig {
+        root: build_root(directory.path()),
+        cache: Some(directory.path().join("cas")),
+        offline: true,
+        runner: "bwrap".into(),
+        quiet: true,
+        ..Default::default()
+    };
+    let path = recipe(directory.path(), false);
+    let yaml = std::fs::read_to_string(&path).unwrap()
+        .replace("    - name: source test with mutations", "    - name: source test with mutations\n      optional: true")
+        .replace(
+        "outputs:\n", "    - name: optional-upstream\n      optional: true\n      packages: [unavailable-optional-tool]\n      script: exit 27\noutputs:\n");
+    std::fs::write(&path, yaml).unwrap();
+    let output = directory.path().join("output");
+    let report = Application::new(config.clone())
+        .execute(ApplicationRequest {
+            operation: Operation::Build(input(path)),
+            output,
+        })
+        .unwrap();
+    assert!(report.success(), "{:?}", report.primary);
+    assert!(report.build_tests.is_empty());
+    assert_eq!(report.artifacts.rpms.len(), 1);
+    let source_payload = directory.path().join("source-payload");
+    rpmx_payload::extract_payload(
+        &rpm::Package::open(&report.artifacts.srpms[0]).unwrap(),
+        &source_payload,
+    )
+    .unwrap();
+    let embedded = rpmx_language::load_recipe_bundle(source_payload.join("package.yaml")).unwrap();
+    assert!(
+        embedded.recipe.build.tests[1].optional,
+        "SRPM must retain opt-in checks"
+    );
+    assert_eq!(
+        embedded.recipe.build.tests[1].packages,
+        ["unavailable-optional-tool"]
+    );
+
+    // Opting in from the SRPM must prepare the optional dependency and fail
+    // before the production pipeline, rather than treating the omission as a pass.
+    let mut request = ApplicationRequest::rebuild(
+        &report.artifacts.srpms[0],
+        directory.path().join("opted-in"),
+    );
+    let Operation::Rebuild(ref mut input) = request.operation else {
+        unreachable!()
+    };
+    input.lint = false;
+    input.index = false;
+    let rebuilt = Application::new(config.clone())
+        .execute(ApplicationRequest {
+            operation: Operation::Rebuild(input.clone()),
+            output: directory.path().join("default-rebuild"),
+        })
+        .unwrap();
+    assert!(rebuilt.success(), "{:?}", rebuilt.primary);
+    assert!(rebuilt.build_tests.is_empty());
+    assert_eq!(rebuilt.artifacts.rpms.len(), 1);
+    let Operation::Rebuild(ref mut input) = request.operation else {
+        unreachable!()
+    };
+    input.include_optional_tests = true;
+    let opted_in = Application::new(config).execute(request).unwrap();
+    assert!(!opted_in.success());
+    assert!(opted_in.artifacts.rpms.is_empty());
+    assert_eq!(opted_in.build_tests.len(), 2);
+    let failed = opted_in
+        .build_tests
+        .iter()
+        .find(|case| case.name == "optional-upstream")
+        .unwrap();
+    assert_eq!(failed.status, CaseStatus::Failed);
+    assert!(opted_in
+        .primary
+        .as_ref()
+        .unwrap()
+        .message
+        .contains("not cached"));
+}
+
+#[test]
+fn opted_in_optional_source_failure_blocks_rpm_promotion() {
+    if !available() {
+        return;
+    }
+    let directory = tempfile::tempdir().unwrap();
+    let config = ApplicationConfig {
+        root: build_root(directory.path()),
+        cache: Some(directory.path().join("cas")),
+        runner: "bwrap".into(),
+        quiet: true,
+        ..Default::default()
+    };
+    let path = recipe(directory.path(), true);
+    std::fs::write(
+        &path,
+        std::fs::read_to_string(&path).unwrap().replace(
+            "    - name: source test with mutations",
+            "    - name: source test with mutations\n      optional: true",
+        ),
+    )
+    .unwrap();
+    let mut selected = input(path.clone());
+    let default = Application::new(config.clone())
+        .execute(ApplicationRequest {
+            operation: Operation::Build(selected.clone()),
+            output: directory.path().join("default"),
+        })
+        .unwrap();
+    assert!(default.success(), "{:?}", default.primary);
+    assert!(default.build_tests.is_empty());
+    assert_eq!(default.artifacts.rpms.len(), 1);
+    selected.include_optional_tests = true;
+    let report = Application::new(config)
+        .execute(ApplicationRequest {
+            operation: Operation::Build(selected),
+            output: directory.path().join("opted-in"),
+        })
+        .unwrap();
+    assert!(!report.success());
+    assert_eq!(report.build_tests.len(), 1);
+    assert_eq!(report.build_tests[0].status, CaseStatus::Failed);
+    assert!(report.artifacts.rpms.is_empty());
 }

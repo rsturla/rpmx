@@ -127,10 +127,15 @@ pub fn plan(plan: &Plan) {
         }
         for (phase, tests) in [("build test", &cell.build_tests), ("test", &cell.tests)] {
             for test in tests {
+                let optional = if test.optional { " [optional]" } else { "" };
                 if phase == "build test" {
-                    println!("  build test {}", test.qualified_name());
+                    println!("  build test {}{optional}", test.qualified_name());
                 } else {
-                    println!("  test   {} ({})", test.qualified_name(), test.mode);
+                    println!(
+                        "  test   {} ({}){optional}",
+                        test.qualified_name(),
+                        test.mode
+                    );
                 }
                 if let Some(argv) = &test.argv {
                     println!("    argv   {}", argv.join(" "));

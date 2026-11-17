@@ -13,6 +13,7 @@ mod environment;
 mod production;
 mod report;
 mod request;
+mod selection;
 
 pub use acceptance::{AcceptInput, AcceptanceEnvironment, RpmInputs};
 pub use report::*;

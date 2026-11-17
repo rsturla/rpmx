@@ -91,3 +91,45 @@ fn junit_copy_failure_preserves_the_original_failure_in_the_same_report() {
     .unwrap();
     assert_eq!(saved, report);
 }
+
+#[test]
+fn plan_marks_optional_cases_without_hiding_mandatory_ones() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(
+        directory.path().join("package.yaml"),
+        r#"
+schema: 2
+package:
+  name: example
+  version: '1'
+  release: '1'
+  summary: Example
+  license: MIT
+build:
+  pipeline:
+    - runs: 'true'
+  tests:
+    - name: upstream
+      optional: true
+      script: 'true'
+outputs:
+  - name: example
+    tests:
+      - name: behavior
+        script: 'true'
+      - name: extended
+        optional: true
+        script: 'true'
+"#,
+    )
+    .unwrap();
+    let output = invoke(directory.path(), &["plan", "--arch", "x86_64"]);
+    assert!(output.status.success(), "{output:?}");
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(text.contains("build test upstream [optional]"), "{text}");
+    assert!(
+        text.contains("example/extended (installed) [optional]"),
+        "{text}"
+    );
+    assert!(text.contains("example/behavior (installed)\n"), "{text}");
+}

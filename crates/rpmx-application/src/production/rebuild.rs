@@ -218,7 +218,9 @@ fn rebuild(request: RebuildContext<'_>, run_report: &mut crate::RunReport) -> Re
     let prepared_tests = if request.input.build_tests {
         let prepared = super::tests::prepare(
             request.config,
-            &cell,
+            cell.build_tests.iter().filter(|test| {
+                crate::selection::includes(test, &[], request.input.include_optional_tests)
+            }),
             active_lock.as_ref(),
             sysroot_lock.as_ref(),
             sandbox_config,

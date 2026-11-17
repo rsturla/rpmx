@@ -38,6 +38,7 @@ pub fn run_with(
         arch: args.arch,
         cell: args.cell,
         build_tests: !args.no_tests,
+        include_optional_tests: args.include_optional_tests,
         lint: !args.no_lint,
         index: !args.no_index,
         sbom: args.sbom,

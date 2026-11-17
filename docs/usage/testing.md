@@ -6,7 +6,7 @@ Recipes declare named cases with the same syntax in two places:
 - Output or recipe `tests` accepts existing binary RPMs through their installed interfaces.
 
 `rpmx build` and `rpmx rebuild` seal candidate RPMs before source cases run.
-They publish those exact RPMs only after the source cases pass. They never run
+They publish those exact RPMs only after the selected source cases pass. They never run
 package acceptance. `rpmx test` requires `--install-dir`; it never builds.
 A release script should build, accept the resulting RPMs, then publish only
 when both reports pass.
@@ -19,7 +19,46 @@ rpmx test package.yaml --install-dir packages/x86_64 --test hello/behavior
 
 `--test NAME` selects a case; use `OUTPUT/NAME` to disambiguate output cases.
 Repeat it for several cases. `rpmx plan package.yaml --json` lists all planned
-source and acceptance cases. `rpmx build --no-tests` skips only source cases.
+source and acceptance cases, including optional ones. `rpmx build --no-tests`
+skips only source cases.
+
+## Optional suites
+
+Cases run by default unless they declare `optional: true`. Use this for an
+expensive upstream suite that complements the mandatory package tests:
+
+```yaml
+build:
+  tests:
+    - name: upstream
+      optional: true
+      packages: [make]
+      script: make check
+```
+
+The same field works on installed-package cases. Opt in to all optional cases
+for the operation with `--include-optional-tests`:
+
+```console
+rpmx build package.yaml --include-optional-tests
+rpmx rebuild example.src.rpm --include-optional-tests
+rpmx test package.yaml --install-dir packages/x86_64 --include-optional-tests
+rpmx test package.yaml --install-dir packages/x86_64 --test example/extended
+```
+
+An explicit `--test NAME` selection includes a matching optional installed-package
+case without the bulk opt-in. Unselected optional cases are omitted before test
+environments are prepared; they are not reported as passed or skipped. Once
+selected, an optional case must pass under the same rules as a mandatory case.
+If no installed-package cases are selected, `rpmx test` reports no matching
+tests rather than a passing empty run.
+`--include-optional-tests` conflicts with `--no-tests` on build and rebuild.
+
+Mandatory behavioral tests give prompt feedback during normal builds. They do
+not replace the broader regression coverage of an upstream suite. Run optional
+suites when changing a compiler or dependency, upgrading upstream sources, or
+qualifying a release. A passing default run establishes only the selected
+coverage; it does not claim that omitted upstream cases passed.
 
 ## Declare cases
 

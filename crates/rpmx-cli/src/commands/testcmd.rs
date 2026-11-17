@@ -24,6 +24,7 @@ pub fn run(args: TestArgs, pipelines: Option<&Path>) -> Result<rpmx_application:
         subjects: RpmInputs::Directory(args.install_dir),
         arch: args.arch,
         selection: args.selected,
+        include_optional_tests: args.include_optional_tests,
         environment,
         save_environment: args.save_environment,
     };

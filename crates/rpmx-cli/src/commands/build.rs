@@ -28,6 +28,7 @@ pub fn run(
         cell: args.cell,
         stage: args.stage,
         build_tests: !args.no_tests,
+        include_optional_tests: args.include_optional_tests,
         locked: args.locked,
         lint: !args.no_lint,
         index: !args.no_index,

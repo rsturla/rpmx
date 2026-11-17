@@ -798,6 +798,9 @@ impl std::fmt::Display for TestMode {
 #[serde(deny_unknown_fields)]
 pub struct Test {
     pub name: String,
+    /// Run only when explicitly selected or optional tests are included.
+    #[serde(default)]
+    pub optional: bool,
     #[serde(default)]
     pub mode: TestMode,
     /// Allow external network access for this acceptance case.

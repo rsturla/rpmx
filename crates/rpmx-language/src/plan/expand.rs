@@ -419,6 +419,7 @@ pub(crate) fn expand_tests(
             .unwrap_or_else(|| format!("test:{name}"));
         let mut planned_test = PlannedTest {
             name,
+            optional: test.optional,
             cell_id: String::new(),
             files: test.files,
             artifacts: test.artifacts,

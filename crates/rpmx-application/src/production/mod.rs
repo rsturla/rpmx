@@ -53,7 +53,12 @@ fn package_stage(
         ));
     }
     let cell = &plan.cells[0];
-    if input.build_tests && !cell.build_tests.is_empty() {
+    if input.build_tests
+        && cell
+            .build_tests
+            .iter()
+            .any(|test| crate::selection::includes(test, &[], input.include_optional_tests))
+    {
         return Err(Error::new(codes::TEST_005, "staged packaging has no build workspace for build.tests; use --no-tests to package the tree, then run standalone RPM acceptance"));
     }
     let epoch = support::source_date_epoch(&bundle.recipe, config.policy.source_date_epoch);
