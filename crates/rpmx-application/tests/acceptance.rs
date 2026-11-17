@@ -169,7 +169,11 @@ fn unknown_selection_is_reported_before_environment_acquisition() {
 #[test]
 #[ignore = "requires cached Fedora 44 builder image, Podman and configured bubblewrap namespaces"]
 fn package_tests_resolve_only_required_outputs_and_replay_exact_environments() {
-    let directory = tempfile::tempdir().unwrap();
+    let current = std::env::current_dir().unwrap();
+    let directory = tempfile::Builder::new()
+        .prefix("relative-environment-")
+        .tempdir_in(&current)
+        .unwrap();
     let subject = rpm(directory.path());
     let runtime = local_runtime(directory.path());
     let extra = directory.path().join("unrelated.rpm");
@@ -269,7 +273,13 @@ fn package_tests_resolve_only_required_outputs_and_replay_exact_environments() {
     })
     .unwrap();
     std::fs::write(&profile, format!("document: rpmx-profile\nversion: 1\nreleasever: '44'\narchs: [{}]\nrepositories:\n  - id: local\n    baseurl: file://{}\n", rpmx_base::arch::Arch::current().unwrap(), repository.display())).unwrap();
-    let saved = directory.path().join("saved");
+    // Saved environments are CLI paths and may be relative to the caller.
+    let saved = directory
+        .path()
+        .strip_prefix(&current)
+        .unwrap()
+        .join("saved");
+    assert!(saved.is_relative());
     let subjects = RpmInputs::Files(vec![subject, runtime, extra]);
     let config = ApplicationConfig {
         cache: Some(directory.path().join("cache")),
