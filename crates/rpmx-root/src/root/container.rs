@@ -245,6 +245,24 @@ pub(crate) fn podman_run_assembly(
     target: rpmx_base::arch::Arch,
     args: &[String],
 ) -> Result<std::process::Output> {
+    let mut process = assembly_command(image, work, root, target, args)?;
+    process.output().map_err(|error| {
+        Error::new(
+            codes::ROOT_012,
+            format!("cannot run the assembly container: {error}"),
+        )
+    })
+}
+
+fn assembly_command(
+    image: &str,
+    work: &Path,
+    root: &Path,
+    target: rpmx_base::arch::Arch,
+    args: &[String],
+) -> Result<Command> {
+    let work = bind_source(work)?;
+    let root = bind_source(root)?;
     let mut process = Command::new("podman");
     process
         .arg("run")
@@ -269,10 +287,19 @@ pub(crate) fn podman_run_assembly(
         .arg("-w")
         .arg("/work");
     process.arg(image).args(args);
-    process.output().map_err(|error| {
+    Ok(process)
+}
+
+// Podman interprets relative -v sources as named volumes. These are existing
+// host directories, so resolve them at the shared container boundary instead.
+fn bind_source(path: &Path) -> Result<std::path::PathBuf> {
+    path.canonicalize().map_err(|error| {
         Error::new(
             codes::ROOT_012,
-            format!("cannot run the assembly container: {error}"),
+            format!(
+                "cannot resolve container bind source {}: {error}",
+                path.display()
+            ),
         )
     })
 }
@@ -283,6 +310,7 @@ pub(crate) fn query_root(
     image: &str,
     target: rpmx_base::arch::Arch,
 ) -> Result<std::process::Output> {
+    let root = bind_source(root)?;
     Command::new("podman")
         .args([
             "run",
@@ -319,6 +347,55 @@ pub(crate) fn query_root(
 mod tests {
     use super::podman_run;
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn assembly_mounts_relative_host_directories_without_named_volume_semantics() {
+        let temporary = tempfile::Builder::new()
+            .prefix("relative-root-")
+            .tempdir_in(std::env::current_dir().unwrap())
+            .unwrap();
+        let relative = temporary
+            .path()
+            .strip_prefix(std::env::current_dir().unwrap())
+            .unwrap()
+            .to_path_buf();
+        let work = relative.join("work");
+        let root = relative.join("saved-environments/root");
+        std::fs::create_dir_all(&work).unwrap();
+        std::fs::create_dir_all(&root).unwrap();
+        let command = super::assembly_command(
+            "image",
+            &work,
+            &root,
+            rpmx_base::arch::Arch::current().unwrap(),
+            &[],
+        )
+        .unwrap();
+        let arguments: Vec<_> = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        for (source, guest) in [(&work, "/work"), (&root, "/root")] {
+            let expected = format!("{}:{guest}:Z", source.canonicalize().unwrap().display());
+            assert!(
+                arguments.windows(2).any(|pair| pair == ["-v", &expected]),
+                "{arguments:?}"
+            );
+        }
+        let missing = relative.join("missing");
+        let error = super::assembly_command(
+            "image",
+            &work,
+            &missing,
+            rpmx_base::arch::Arch::current().unwrap(),
+            &[],
+        )
+        .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("cannot resolve container bind source"));
+        assert!(error.to_string().contains("missing"));
+    }
 
     #[test]
     fn platform_descriptors_select_linux_architecture_and_reject_ambiguity() {

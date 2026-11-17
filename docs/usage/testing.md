@@ -188,6 +188,8 @@ rpmx test package.yaml --install-dir packages/x86_64 \
   --replay saved-environments --offline
 ```
 
+Saved-environment and replay paths resolve against the current directory.
+
 `--replay` accepts saved roots and their private binding, not arbitrary bare
 locks or root directories. It validates the recipe, subjects and execution
 policy. Do not combine it with `--test-profile`. Offline acceptance requires a
