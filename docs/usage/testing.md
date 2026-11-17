@@ -5,8 +5,9 @@ Recipes declare named cases with the same syntax in two places:
 - `build.tests` checks the source workspace, such as an upstream test suite.
 - Output or recipe `tests` accepts existing binary RPMs through their installed interfaces.
 
-`rpmx build` and `rpmx rebuild` run source cases before packaging. They never
-run package acceptance. `rpmx test` requires `--install-dir`; it never builds.
+`rpmx build` and `rpmx rebuild` seal candidate RPMs before source cases run.
+They publish those exact RPMs only after the source cases pass. They never run
+package acceptance. `rpmx test` requires `--install-dir`; it never builds.
 A release script should build, accept the resulting RPMs, then publish only
 when both reports pass.
 
