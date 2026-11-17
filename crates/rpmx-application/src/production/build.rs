@@ -222,6 +222,7 @@ fn one(
                 arch: Some(target.to_string()),
                 cell: Some(cell.id.clone()),
                 build_tests: input.build_tests,
+                include_optional_tests: input.include_optional_tests,
                 lint: input.lint,
                 index: false,
                 sbom: input.sbom.clone(),

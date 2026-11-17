@@ -170,6 +170,7 @@ pub struct PlannedOutput {
 #[derive(Debug, Clone, Serialize)]
 pub struct PlannedTest {
     pub name: String,
+    pub optional: bool,
     /// Canonical matrix identity; empty for a recipe without a matrix.
     pub cell_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]

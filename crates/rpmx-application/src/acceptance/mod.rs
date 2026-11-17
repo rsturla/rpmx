@@ -29,6 +29,7 @@ pub struct AcceptInput {
     pub subjects: RpmInputs,
     pub arch: Option<String>,
     pub selection: Vec<String>,
+    pub include_optional_tests: bool,
     pub environment: AcceptanceEnvironment,
     pub save_environment: Option<PathBuf>,
 }
@@ -138,11 +139,7 @@ pub(crate) fn execute(
         .iter()
         .flat_map(|cell| &cell.tests)
         .filter(|test| {
-            input.selection.is_empty()
-                || input
-                    .selection
-                    .iter()
-                    .any(|selector| test.matches_selector(selector))
+            crate::selection::includes(test, &input.selection, input.include_optional_tests)
         })
         .collect::<Vec<_>>();
     if tests.is_empty() {

@@ -649,6 +649,7 @@ mod artifact_tests {
 
     fn test(artifact: &str) -> rpmx_language::PlannedTest {
         rpmx_language::PlannedTest {
+            optional: false,
             name: "evidence".into(),
             cell_id: String::new(),
             files: None,
@@ -835,6 +836,7 @@ mod execution_tests {
     }
     fn case(script: &str) -> rpmx_language::PlannedTest {
         rpmx_language::PlannedTest {
+            optional: false,
             name: "probe".into(),
             cell_id: "native".into(),
             files: None,

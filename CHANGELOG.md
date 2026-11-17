@@ -5,6 +5,12 @@ does not promise a stable schema or CLI yet.
 
 ## Unreleased
 
+- Named source and installed-package cases can declare `optional: true`.
+  Mandatory cases still run by default. Build, rebuild and test accept
+  `--include-optional-tests`; an explicit installed-case name also selects an
+  optional case. Selected optional failures remain fatal. Unselected optional
+  cases do not prepare environments or count as passed coverage.
+
 - Profiles can override the library directory per target architecture. The
   selected path is recorded in each root lock and used by build steps.
 

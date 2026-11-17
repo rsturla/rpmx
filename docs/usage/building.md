@@ -27,9 +27,9 @@ architectures.
 `--stage DIR` packages a staged tree; it does not run source assembly, SRPM
 creation or builds. It verifies the lock when `--locked` is given.
 
-A build runs `build.tests` source cases after the build pipeline and before
-packaging. `--no-tests` skips those cases. Package acceptance is a separate
-operation against existing artifacts:
+A build runs mandatory `build.tests` source cases. Cases marked `optional: true`
+run with `--include-optional-tests`; `--no-tests` skips all source cases.
+Package acceptance is a separate operation against existing artifacts:
 
 ```console
 rpmx build package.yaml --output packages

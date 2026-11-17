@@ -24,9 +24,9 @@ struct PreparedCase {
     failed: bool,
 }
 
-pub(super) fn prepare(
+pub(super) fn prepare<'a>(
     config: &ApplicationConfig,
-    cell: &crate::domain::plan::PlannedCell,
+    tests: impl IntoIterator<Item = &'a rpmx_language::PlannedTest>,
     baseline: Option<&RootLock>,
     target: Option<&RootLock>,
     template: SandboxConfig<'_>,
@@ -40,7 +40,7 @@ pub(super) fn prepare(
         target: template.target,
         exec: template.exec,
     };
-    for test in &cell.build_tests {
+    for test in tests {
         if test.skip.is_some() {
             if prepared.first.is_none() {
                 prepared.first = Some(Error::new(codes::TEST_005, format!("build test {} is skipped; requested build tests must all pass before publishing", test.qualified_name())));
@@ -59,7 +59,7 @@ pub(super) fn prepare(
                 "{}:{}:{}:{}",
                 template.target,
                 template.exec,
-                cell.id,
+                test.cell_id,
                 test.qualified_name()
             )
             .as_bytes(),

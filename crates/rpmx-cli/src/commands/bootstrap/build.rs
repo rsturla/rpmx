@@ -407,6 +407,7 @@ fn build_recipes(
             cell: None,
             stage: None,
             build_tests: !args.no_tests,
+            include_optional_tests: false,
             locked: false,
             lint: true,
             index: false,
