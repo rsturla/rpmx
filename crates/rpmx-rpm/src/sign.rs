@@ -11,12 +11,14 @@ use pgp::composed::{
     Deserializable, DetachedSignature, KeyType, SecretKeyParamsBuilder, SignedPublicKey,
     SignedSecretKey,
 };
-use pgp::types::KeyDetails;
+use pgp::types::{KeyDetails, PlainSecretParams, SecretParams};
 use rpm::signature::pgp::Signer;
 use rpm::signature::Signing;
 use rpm::Timestamp;
 use rpmx_core::error::codes;
 use rpmx_core::Error;
+use rsa::traits::PublicKeyParts;
+use zeroize::Zeroizing;
 
 /// A secret key loaded for signing, with the identity reported to callers.
 #[derive(Clone)]
@@ -111,7 +113,6 @@ pub fn generate_key(options: KeygenOptions<'_>) -> Result<GeneratedKey, Error> {
         .can_certify(true)
         .can_sign(true)
         .primary_user_id(options.user_id.to_string())
-        .passphrase(options.passphrase.map(str::to_string))
         .build()
         .map_err(|error| {
             Error::new(
@@ -120,12 +121,24 @@ pub fn generate_key(options: KeygenOptions<'_>) -> Result<GeneratedKey, Error> {
             )
         })?;
 
-    let secret = params.generate(rand::thread_rng()).map_err(|error| {
+    let mut secret = params.generate(rand::thread_rng()).map_err(|error| {
         Error::new(
             codes::SIGN_003,
             format!("cannot generate signing key: {error}"),
         )
     })?;
+    secret.primary_key = canonical_rsa_primary(&secret.primary_key)?;
+    if let Some(passphrase) = options.passphrase {
+        secret
+            .primary_key
+            .set_password(rand::thread_rng(), &passphrase.into())
+            .map_err(|error| {
+                Error::new(
+                    codes::SIGN_003,
+                    format!("cannot protect signing key: {error}"),
+                )
+            })?;
+    }
     let public = SignedPublicKey::from(secret.clone());
     let secret_armored = secret.to_armored_string(None.into()).map_err(|error| {
         Error::new(
@@ -144,6 +157,48 @@ pub fn generate_key(options: KeygenOptions<'_>) -> Result<GeneratedKey, Error> {
         secret_armored,
         public_armored,
         fingerprint: format!("{:X}", secret.fingerprint()),
+    })
+}
+
+/// RFC 9580 section 5.5.5.1 requires p < q. rPGP preserves the RSA generator's
+/// prime order, which can make GnuPG's CRT signer produce invalid signatures.
+/// Rebuild only the private representation; the public packet and self-signature stay intact.
+fn canonical_rsa_primary(key: &pgp::packet::SecretKey) -> Result<pgp::packet::SecretKey, Error> {
+    let SecretParams::Plain(PlainSecretParams::RSA(secret)) = key.secret_params() else {
+        return Err(Error::new(
+            codes::SIGN_003,
+            "generated key is not an unencrypted RSA primary",
+        ));
+    };
+    let material = Zeroizing::new(secret.to_bytes());
+    let mut primes = vec![
+        rsa::BigUint::from_bytes_be(&material.1),
+        rsa::BigUint::from_bytes_be(&material.2),
+    ];
+    primes.sort();
+    let public: pgp::types::RsaPublicParams = secret.into();
+    let normalized = rsa::RsaPrivateKey::from_components(
+        public.key.n().clone(),
+        public.key.e().clone(),
+        rsa::BigUint::from_bytes_be(&material.0),
+        primes,
+    )
+    .map_err(|error| {
+        Error::new(
+            codes::SIGN_003,
+            format!("cannot order RSA secret primes: {error}"),
+        )
+    })?;
+    // rPGP computes OpenPGP u = p^-1 mod q from this ordered private key.
+    pgp::packet::SecretKey::new(
+        key.public_key().clone(),
+        SecretParams::Plain(PlainSecretParams::RSA(normalized.into())),
+    )
+    .map_err(|error| {
+        Error::new(
+            codes::SIGN_003,
+            format!("cannot encode RSA secret key: {error}"),
+        )
     })
 }
 
@@ -348,20 +403,111 @@ pub fn signing_passphrase(variable: Option<&str>) -> Result<Option<String>, Erro
 mod tests {
     use super::*;
 
-    #[test]
-    fn generated_key_roundtrips_through_the_loader() {
-        let directory = tempfile::tempdir().expect("tempdir");
-        let path = directory.path().join("test.asc");
-        let key = generate_key(KeygenOptions {
-            user_id: "rpmx test <rpmx@example.invalid>",
-            bits: 2048,
-            passphrase: None,
-        })
-        .expect("generate");
-        std::fs::write(&path, &key.secret_armored).expect("write key");
+    fn assert_canonical_rsa(key: &pgp::packet::SecretKey) {
+        let SecretParams::Plain(PlainSecretParams::RSA(secret)) = key.secret_params() else {
+            panic!("expected unencrypted RSA material");
+        };
+        let (_, p, q, u) = secret.to_bytes();
+        let p = rsa::BigUint::from_bytes_be(&p);
+        let q = rsa::BigUint::from_bytes_be(&q);
+        let u = rsa::BigUint::from_bytes_be(&u);
+        let public: pgp::types::RsaPublicParams = secret.into();
+        assert!(p < q, "OpenPGP requires p < q");
+        assert_eq!(&p * &q, *public.key.n());
+        assert_eq!((p * u) % q, rsa::BigUint::from(1u8));
+    }
 
-        let loaded = load_key(&path, None).expect("load key");
-        assert_eq!(loaded.fingerprint(), key.fingerprint);
-        assert!(key.public_armored.contains("BEGIN PGP PUBLIC KEY BLOCK"));
+    #[test]
+    fn reversed_rsa_primes_are_ordered_without_changing_the_certificate() {
+        use rand::SeedableRng;
+        let params = SecretKeyParamsBuilder::default()
+            .key_type(KeyType::Rsa(2048))
+            .can_certify(true)
+            .can_sign(true)
+            .primary_user_id("deterministic test <test@example.invalid>".into())
+            .build()
+            .expect("parameters");
+        let mut key = params
+            .generate(rand::rngs::StdRng::seed_from_u64(42))
+            .expect("key");
+        let SecretParams::Plain(PlainSecretParams::RSA(secret)) = key.primary_key.secret_params()
+        else {
+            panic!("RSA key");
+        };
+        let (d, p, q, _) = secret.to_bytes();
+        let mut primes = vec![
+            rsa::BigUint::from_bytes_be(&p),
+            rsa::BigUint::from_bytes_be(&q),
+        ];
+        primes.sort_by(|a, b| b.cmp(a));
+        assert!(
+            primes[0] > primes[1],
+            "force the formerly broken prime order"
+        );
+        let public: pgp::types::RsaPublicParams = secret.into();
+        let reversed = rsa::RsaPrivateKey::from_components(
+            public.key.n().clone(),
+            public.key.e().clone(),
+            rsa::BigUint::from_bytes_be(&d),
+            primes,
+        )
+        .expect("valid reversed-prime RSA");
+        key.primary_key = pgp::packet::SecretKey::new(
+            key.primary_key.public_key().clone(),
+            SecretParams::Plain(PlainSecretParams::RSA(reversed.into())),
+        )
+        .expect("reversed packet");
+        let fingerprint = key.fingerprint();
+        let public_before = SignedPublicKey::from(key.clone());
+        key.primary_key = canonical_rsa_primary(&key.primary_key).expect("canonical RSA");
+        assert_canonical_rsa(&key.primary_key);
+        assert_eq!(key.fingerprint(), fingerprint);
+        assert_eq!(SignedPublicKey::from(key.clone()), public_before);
+        key.verify_bindings()
+            .expect("original self-signature remains valid");
+        let normalized = key.primary_key.clone();
+        key.primary_key = canonical_rsa_primary(&key.primary_key).expect("idempotent");
+        assert_eq!(key.primary_key, normalized);
+    }
+
+    #[test]
+    fn generated_keys_are_canonical_before_optional_passphrase_protection() {
+        for passphrase in [None, Some("test-only passphrase")] {
+            let directory = tempfile::tempdir().expect("tempdir");
+            let path = directory.path().join("test.asc");
+            let key = generate_key(KeygenOptions {
+                user_id: "rpmx test <rpmx@example.invalid>",
+                bits: 2048,
+                passphrase,
+            })
+            .expect("generate");
+            let (mut parsed, _) = SignedSecretKey::from_string(&key.secret_armored).expect("parse");
+            assert_eq!(
+                matches!(
+                    parsed.primary_key.secret_params(),
+                    SecretParams::Encrypted(_)
+                ),
+                passphrase.is_some()
+            );
+            if let Some(passphrase) = passphrase {
+                assert!(parsed
+                    .primary_key
+                    .remove_password(&"wrong password".into())
+                    .is_err());
+                parsed
+                    .primary_key
+                    .remove_password(&passphrase.into())
+                    .expect("decrypt");
+            }
+            assert_canonical_rsa(&parsed.primary_key);
+            parsed.verify_bindings().expect("self-signature");
+            std::fs::write(&path, &key.secret_armored).expect("write key");
+            let loaded = load_key(&path, passphrase).expect("load key");
+            assert_eq!(loaded.fingerprint(), key.fingerprint);
+            loaded
+                .sign_detached(b"canonical RSA signing control", None)
+                .expect("sign");
+            assert!(key.public_armored.contains("BEGIN PGP PUBLIC KEY BLOCK"));
+        }
     }
 }
