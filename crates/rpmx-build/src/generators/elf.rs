@@ -1,5 +1,3 @@
-use std::collections::BTreeSet;
-
 use crate::elf as parser;
 use crate::package_spec::BinaryPackageFile;
 
@@ -9,7 +7,6 @@ use super::Findings;
 #[derive(Default)]
 pub struct Scanner {
     findings: Findings,
-    sonames: BTreeSet<String>,
 }
 
 impl Scanner {
@@ -19,7 +16,6 @@ impl Scanner {
         };
         if let Some(soname) = &info.soname {
             let dependency = parser::soname_dependency(soname, info.is_64);
-            self.sonames.insert(dependency.clone());
             self.findings.provide(dependency);
             for version in &info.version_defs {
                 if version == soname {
@@ -39,10 +35,13 @@ impl Scanner {
         }
     }
 
-    /// Drop requires satisfied by a library in the same output.
+    /// Local libraries satisfy their SONAME and symbol-version requirements
+    /// even when the output does not export those capabilities publicly.
     pub fn finish(mut self) -> Findings {
+        let provided = &self.findings.provides;
         self.findings
-            .retain_requires(|dependency| !self.sonames.contains(dependency));
+            .requires
+            .retain(|dependency| !provided.contains(dependency));
         self.findings
     }
 }

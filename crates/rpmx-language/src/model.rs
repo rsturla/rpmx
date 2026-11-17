@@ -499,8 +499,8 @@ pub struct OutputLint {
 #[serde(deny_unknown_fields)]
 pub struct OutputGenerators {
     /// ELF sonames, versioned symbols, and `.so` symlink requirements.
-    #[serde(default = "enabled")]
-    pub elf: bool,
+    #[serde(default)]
+    pub elf: ElfGenerators,
     /// `pkgconfig(...)` provides and requires.
     #[serde(default = "enabled")]
     pub pkgconfig: bool,
@@ -533,7 +533,7 @@ pub struct OutputGenerators {
 impl Default for OutputGenerators {
     fn default() -> Self {
         Self {
-            elf: true,
+            elf: ElfGenerators::default(),
             pkgconfig: true,
             script: true,
             python: true,
@@ -543,6 +543,26 @@ impl Default for OutputGenerators {
             debuginfo: true,
             bundled: true,
             exclude: Vec::new(),
+        }
+    }
+}
+
+/// Private libraries can retain their runtime requirements without advertising
+/// their SONAMEs as providers for unrelated packages.
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ElfGenerators {
+    #[serde(default = "enabled")]
+    pub provides: bool,
+    #[serde(default = "enabled")]
+    pub requires: bool,
+}
+
+impl Default for ElfGenerators {
+    fn default() -> Self {
+        Self {
+            provides: true,
+            requires: true,
         }
     }
 }
