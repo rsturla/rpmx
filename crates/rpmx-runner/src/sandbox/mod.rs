@@ -55,7 +55,8 @@ pub struct SandboxConfig<'a> {
     pub prefix: &'a str,
     /// Library directory. The profile supplies it; the runner only exports it.
     pub libdir: &'a str,
-    pub source_date_epoch: u32,
+    /// A known source timestamp. Runtime-only commands need not have one.
+    pub source_date_epoch: Option<u32>,
     pub jobs: NonZeroU32,
     pub timeout: NonZeroU64,
 }
@@ -432,7 +433,6 @@ pub fn environment(config: &SandboxConfig<'_>) -> Vec<(&'static str, String)> {
         ("LANG", "C.UTF-8".to_string()),
         ("LC_ALL", "C.UTF-8".to_string()),
         ("TZ", "UTC".to_string()),
-        ("SOURCE_DATE_EPOCH", config.source_date_epoch.to_string()),
         ("SRC", rpmx_base::guest::BUILD.to_string()),
         ("BUILD", rpmx_base::guest::BUILD.to_string()),
         ("STAGE", rpmx_base::guest::STAGE.to_string()),
@@ -455,6 +455,9 @@ pub fn environment(config: &SandboxConfig<'_>) -> Vec<(&'static str, String)> {
             if config.sysroot.is_some() { "1" } else { "0" }.to_string(),
         ),
     ];
+    if let Some(epoch) = config.source_date_epoch {
+        env.push(("SOURCE_DATE_EPOCH", epoch.to_string()));
+    }
     let mut cflags = String::new();
     let mut cxxflags = String::new();
     if let (Some(toolchain), Some(_)) = (config.cross, config.sysroot) {
@@ -704,7 +707,7 @@ mod tests {
             image: None,
             prefix: "/usr",
             libdir: "/usr/lib64",
-            source_date_epoch: 1,
+            source_date_epoch: Some(1),
             jobs: NonZeroU32::new(1).expect("jobs"),
             timeout: NonZeroU64::new(1).expect("timeout"),
         };
@@ -758,7 +761,7 @@ mod tests {
             image: None,
             prefix: "/usr",
             libdir: "/usr/lib64",
-            source_date_epoch: 1,
+            source_date_epoch: Some(1),
             jobs: NonZeroU32::new(1).expect("jobs"),
             timeout: NonZeroU64::new(1).expect("timeout"),
         };
@@ -800,7 +803,7 @@ mod tests {
             image: Some("image"),
             prefix: "/usr",
             libdir: "/usr/lib64",
-            source_date_epoch: 1,
+            source_date_epoch: Some(1),
             jobs: NonZeroU32::new(1).expect("jobs"),
             timeout: NonZeroU64::new(3600).expect("timeout"),
         };

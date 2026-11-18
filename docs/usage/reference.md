@@ -126,7 +126,7 @@ diagnostics. `explain --json`, `test --install-dir --json`, `doctor --json` and
 | `<VAR>` named by `--signing-passphrase-env` / `--passphrase-env` | Signing key passphrase. |
 
 Steps see a fixed environment: `PATH`, `HOME`, `TMPDIR`, `LANG`, `LC_ALL`,
-`TZ`, `SOURCE_DATE_EPOCH`, `SRC`, `BUILD`, `STAGE`, `RPMX_BUNDLED_DIR`,
+`TZ`, `SRC`, `BUILD`, `STAGE`, `RPMX_BUNDLED_DIR`,
 `PREFIX`, `LIBDIR`, `JOBS`, `RPMX_HOST_ARCH`, `RPMX_EXEC_ARCH`,
 `RPMX_TARGET_ARCH`, `RPMX_CROSS` and `RPMX_EMULATED`. A cross profile also
 exports `CFLAGS`, `CXXFLAGS` and `LDFLAGS`; a recipe's values for those
@@ -134,6 +134,12 @@ variables extend the cross flags instead of replacing them. The host
 environment is not inherited. `SOURCE_DATE_EPOCH`, `SRC`, `BUILD`, `STAGE`,
 `RPMX_BUNDLED_DIR`, `PREFIX`, `LIBDIR` and `JOBS` are reserved and cannot be
 set by a step.
+
+`SOURCE_DATE_EPOCH` is exported when a source timestamp is known. Builds use
+the resolved source timestamp, including an explicitly declared zero. Installed
+package tests use a declared recipe or repository timestamp when present;
+otherwise the variable
+is absent. They do not invent a Unix-epoch timestamp for installed artifacts.
 
 `RPMX_CROSS=1` means the target is produced by a host-native cross toolchain.
 `RPMX_EMULATED=1` means the steps themselves are emulated (binfmt). A cross

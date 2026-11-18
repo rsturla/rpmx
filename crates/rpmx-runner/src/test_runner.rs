@@ -869,7 +869,7 @@ mod execution_tests {
             image: None,
             prefix: "/usr",
             libdir: "/usr/lib64",
-            source_date_epoch: 0,
+            source_date_epoch: None,
             jobs: NonZeroU32::new(1).unwrap(),
             timeout: NonZeroU64::new(10).unwrap(),
         }
