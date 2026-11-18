@@ -66,7 +66,7 @@ pub(crate) fn execute(config: &ApplicationConfig, input: &DebugInput) -> Result<
         image: None,
         prefix: env.prefix(),
         libdir: env.libdir(),
-        source_date_epoch: config.policy.source_date_epoch.unwrap_or(0),
+        source_date_epoch: config.policy.source_date_epoch,
         jobs: config.jobs,
         timeout: config.timeout,
     };

@@ -24,7 +24,7 @@ fn config<'a>(workspace: &'a std::path::Path, stage: &'a std::path::Path) -> San
         image: None,
         prefix: "/usr",
         libdir: "/usr/lib64",
-        source_date_epoch: 1_700_000_000,
+        source_date_epoch: Some(1_700_000_000),
         jobs: NonZeroU32::new(1).expect("jobs"),
         timeout: NonZeroU64::new(3600).expect("timeout"),
     }
@@ -279,6 +279,77 @@ fn host_environment_is_not_inherited() {
     // parallel and getenv is not thread-safe. USER is set by the host login.
     run(&step("sh", &["-c", "test -z \"${USER+x}\""]))
         .expect("the host environment must not reach the step");
+}
+
+#[test]
+fn source_epoch_is_exported_only_when_known() {
+    let work = tempfile::tempdir().expect("work");
+    let stage = tempfile::tempdir().expect("stage");
+    for epoch in [None, Some(0), Some(1_700_000_000)] {
+        let mut config = config(work.path(), stage.path());
+        config.source_date_epoch = epoch;
+        let environment: BTreeMap<_, _> = rpmx_core::sandbox::environment(&config)
+            .into_iter()
+            .collect();
+        assert_eq!(
+            environment.get("SOURCE_DATE_EPOCH"),
+            epoch.map(|v| v.to_string()).as_ref()
+        );
+    }
+}
+
+#[test]
+fn an_unknown_source_epoch_does_not_inherit_the_host_value() {
+    const CHILD: &str = "RPMX_EPOCH_ENVIRONMENT_CHILD";
+    if std::env::var_os(CHILD).is_some() {
+        let work = tempfile::tempdir().expect("work");
+        let stage = tempfile::tempdir().expect("stage");
+        let mut config = config(work.path(), stage.path());
+        config.source_date_epoch = None;
+        Sandbox::new(config)
+            .unwrap()
+            .run(&step("sh", &["-c", "test -z \"${SOURCE_DATE_EPOCH+x}\""]))
+            .expect("an unknown source epoch must not inherit the host value");
+        return;
+    }
+    if !bwrap_available() {
+        eprintln!("bwrap not installed; skipping sandbox test");
+        return;
+    }
+    let status = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "an_unknown_source_epoch_does_not_inherit_the_host_value",
+            "--nocapture",
+        ])
+        .env(CHILD, "1")
+        .env("SOURCE_DATE_EPOCH", "123")
+        .status()
+        .expect("start isolated host-environment control");
+    assert!(status.success());
+}
+
+/// Use the same Python3.14 ZIP creation that exposed an invented Unix epoch in
+/// installed-package tests. The supplied root is read-only; outputs are private.
+#[test]
+#[ignore = "requires RPMX_TEST_PYTHON_ROOT with native Python3.14 and configured bubblewrap namespaces"]
+fn python_zip_creation_without_a_source_epoch() {
+    let root = std::env::var_os("RPMX_TEST_PYTHON_ROOT").expect("RPMX_TEST_PYTHON_ROOT");
+    let work = tempfile::tempdir().expect("work");
+    let stage = tempfile::tempdir().expect("stage");
+    let mut config = config(work.path(), stage.path());
+    config.root = Some(std::path::Path::new(&root));
+    let probe = step("/usr/bin/python3.14", &["-I", "-c", "import io, zipfile; archive = zipfile.ZipFile(io.BytesIO(), 'w'); archive.writestr('fixture.txt', b'payload'); archive.close()"]);
+    config.source_date_epoch = Some(0);
+    Sandbox::new(config)
+        .unwrap()
+        .run(&probe)
+        .expect_err("a genuine pre-1980 epoch is outside the ZIP date range");
+    config.source_date_epoch = None;
+    Sandbox::new(config)
+        .unwrap()
+        .run(&probe)
+        .expect("runtime ZIP creation must not receive an invented source epoch");
 }
 
 #[test]

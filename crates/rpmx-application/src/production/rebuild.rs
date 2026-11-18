@@ -167,7 +167,7 @@ fn rebuild(request: RebuildContext<'_>, run_report: &mut crate::RunReport) -> Re
         image: None,
         prefix,
         libdir,
-        source_date_epoch: extracted.source_date_epoch,
+        source_date_epoch: Some(extracted.source_date_epoch),
         jobs,
         timeout: step_timeout,
     };

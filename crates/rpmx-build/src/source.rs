@@ -156,7 +156,7 @@ pub fn assemble_fetched(
         image: None,
         prefix: options.prefix,
         libdir: options.libdir,
-        source_date_epoch,
+        source_date_epoch: Some(source_date_epoch),
         jobs: options.jobs,
         timeout: options.step_timeout,
     })?

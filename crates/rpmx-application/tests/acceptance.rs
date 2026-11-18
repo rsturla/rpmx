@@ -211,6 +211,7 @@ fn package_tests_resolve_only_required_outputs_and_replay_exact_environments() {
         script: |
           read -r value < "$TEST_FILES/input"
           test "$value" = fixture
+          [[ ! -v SOURCE_DATE_EPOCH ]]
           test ! -e /unrelated-compiler
           test ! -e /published-only
           test ! -e "$TEST_PACKAGE_ROOT/usr/bin/bash"

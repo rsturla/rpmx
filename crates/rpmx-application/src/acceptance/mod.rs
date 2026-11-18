@@ -389,10 +389,11 @@ pub(crate) fn execute(
                 image: None,
                 prefix: &root.lock().prefix,
                 libdir: &root.lock().libdir,
-                source_date_epoch: crate::support::source_date_epoch(
-                    &bundle.recipe,
-                    config.policy.source_date_epoch,
-                ),
+                source_date_epoch: config
+                    .policy
+                    .source_date_epoch
+                    .or(bundle.recipe.package.source_date_epoch)
+                    .or(bundle.source_date_epoch_default),
                 jobs: config.jobs,
                 timeout: config.timeout,
             };
