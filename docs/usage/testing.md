@@ -215,8 +215,14 @@ Its target architecture, prefix and library directory must match the package.
 Its release version can differ. Relative repository paths resolve against the
 profile file. The profile may omit `packages`; its install/reinstall seed lists
 are ignored. Each root contains only baseline tools, explicit case tools and
-the selected outputs' actual runtime closure. Exact candidate RPMs win over
-identical published NEVRAs without disabling normal provenance checks.
+the selected outputs' actual runtime closure.
+
+Candidate RPM inputs own their package names during acceptance resolution.
+Published packages with those names are excluded, regardless of version, epoch
+or repository priority. Unselected siblings remain optional providers; unrelated
+names still come from the configured repositories. If a tool requires an older
+version of a candidate name, resolution fails instead of substituting published
+bytes. Required outputs and selected candidate checksums remain exact.
 
 Save complete recipe-bound environments for a later replay:
 

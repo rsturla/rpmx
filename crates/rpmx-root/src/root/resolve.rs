@@ -218,7 +218,9 @@ fn resolve_inner(
             ));
         }
         for repository in &mut effective.repositories {
-            repository.exclude.push(candidate.spec());
+            // The caller's cohort owns this name at every EVR. Excluding only
+            // its NEVRA lets a published sibling replace it during solving.
+            repository.exclude.push(candidate.metadata().name.clone());
         }
     }
     for candidate in &required {
@@ -2373,5 +2375,191 @@ mod extension_tests {
             .path()
             .join("usr/share/rpmx-unrelated-compiler")
             .exists());
+    }
+    #[test]
+    #[ignore = "requires rootless Podman, createrepo_c and the Fedora builder image"]
+    fn candidate_names_are_isolated_from_published_versions_epochs_and_payloads() {
+        // Candidates are a cohort, not just another repository priority. Even
+        // an equally preferred published provider must not replace a sibling.
+        for (label, version, epoch) in [
+            ("older", "1", 0),
+            ("newer", "3", 0),
+            ("higher-epoch", "1", 2),
+            ("same-nevra", "2", 0),
+        ] {
+            let work = tempfile::tempdir().unwrap();
+            let indexed = work.path().join("candidates");
+            let published = work.path().join("published");
+            std::fs::create_dir(&indexed).unwrap();
+            std::fs::create_dir(&published).unwrap();
+            let inputs = [
+                package(
+                    &indexed,
+                    "rpmx-subject",
+                    "2",
+                    Some(rpm::Dependency::any("rpmx-runtime-capability")),
+                    None,
+                    None,
+                ),
+                package(
+                    &indexed,
+                    "rpmx-runtime-sibling",
+                    "2",
+                    None,
+                    Some(rpm::Dependency::any("rpmx-runtime-capability")),
+                    None,
+                ),
+                package(&indexed, "rpmx-unrelated-compiler", "2", None, None, None),
+            ];
+            let mut replacement = rpm::PackageBuilder::new(
+                "rpmx-runtime-sibling",
+                version,
+                "MIT",
+                "noarch",
+                "published replacement",
+            );
+            replacement
+                .release("1")
+                .epoch(epoch)
+                .provides(rpm::Dependency::any("rpmx-runtime-capability"))
+                .with_file_contents(
+                    b"published bytes",
+                    rpm::FileOptions::new("/usr/share/rpmx-runtime-sibling/value"),
+                )
+                .unwrap();
+            replacement
+                .build()
+                .unwrap()
+                .write_file(published.join("replacement.rpm"))
+                .unwrap();
+            package(&published, "rpmx-independent-tool", "1", None, None, None);
+            index(&indexed);
+            index(&published);
+            let cache = work.path().join("cas");
+            let pool = super::super::CandidateSet::import(&cache, &inputs).unwrap();
+            let repository =
+                super::super::CandidateRepository::verify(&pool, &indexed, &cache).unwrap();
+            let mut settings = profile(Some(&published));
+            settings.repositories[0].priority = Some(1);
+            let policy = super::super::RootPolicy::from_profile(
+                &settings,
+                rpmx_base::arch::Arch::current().unwrap(),
+            )
+            .unwrap();
+            let lock = resolve(
+                &policy,
+                &repository,
+                &["rpmx-subject".into()],
+                &["rpmx-independent-tool".into()],
+                &work.path().join("resolve"),
+                &cache,
+            )
+            .unwrap_or_else(|error| panic!("{label}: {error}"));
+            let packages = lock.packages.values().flatten().collect::<Vec<_>>();
+            assert_eq!(
+                packages.len(),
+                3,
+                "{label}: unrelated candidates stay uninstalled"
+            );
+            for candidate in pool
+                .packages()
+                .iter()
+                .filter(|candidate| candidate.metadata().name != "rpmx-unrelated-compiler")
+            {
+                let resolved = packages
+                    .iter()
+                    .find(|package| package.name == candidate.metadata().name)
+                    .unwrap();
+                assert_eq!(resolved.origin, PackageOrigin::Candidate, "{label}");
+                assert_eq!(resolved.evr, candidate.metadata().evr(), "{label}");
+                assert_eq!(resolved.checksum, candidate.checksum(), "{label}");
+            }
+            assert!(
+                packages
+                    .iter()
+                    .any(|package| package.name == "rpmx-independent-tool"
+                        && matches!(package.origin, PackageOrigin::Repository { .. })),
+                "{label}: other names remain available"
+            );
+            let selected =
+                super::super::RootSelection::temporary(lock, &cache, &work.path().join("assemble"))
+                    .unwrap();
+            assert_eq!(
+                std::fs::read(selected.path().join("usr/share/rpmx-runtime-sibling/value"))
+                    .unwrap(),
+                b"2",
+                "{label}"
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "requires rootless Podman, createrepo_c and the Fedora builder image"]
+    fn published_consumers_cannot_force_fallback_to_an_old_candidate_name() {
+        let work = tempfile::tempdir().unwrap();
+        let indexed = work.path().join("candidates");
+        let published = work.path().join("published");
+        std::fs::create_dir(&indexed).unwrap();
+        std::fs::create_dir(&published).unwrap();
+        let inputs = [
+            package(
+                &indexed,
+                "rpmx-subject",
+                "2",
+                Some(rpm::Dependency::any("rpmx-runtime-capability")),
+                None,
+                None,
+            ),
+            package(
+                &indexed,
+                "rpmx-runtime-sibling",
+                "2",
+                None,
+                Some(rpm::Dependency::any("rpmx-runtime-capability")),
+                None,
+            ),
+        ];
+        package(
+            &published,
+            "rpmx-runtime-sibling",
+            "1",
+            None,
+            Some(rpm::Dependency::any("rpmx-runtime-capability")),
+            None,
+        );
+        package(
+            &published,
+            "rpmx-incompatible-tool",
+            "1",
+            Some(rpm::Dependency::eq("rpmx-runtime-sibling", "1-1")),
+            None,
+            None,
+        );
+        index(&indexed);
+        index(&published);
+        let cache = work.path().join("cas");
+        let pool = super::super::CandidateSet::import(&cache, &inputs).unwrap();
+        let repository =
+            super::super::CandidateRepository::verify(&pool, &indexed, &cache).unwrap();
+        let policy = super::super::RootPolicy::from_profile(
+            &profile(Some(&published)),
+            rpmx_base::arch::Arch::current().unwrap(),
+        )
+        .unwrap();
+        let error = resolve(
+            &policy,
+            &repository,
+            &["rpmx-subject".into()],
+            &["rpmx-incompatible-tool".into()],
+            &work.path().join("resolve"),
+            &cache,
+        )
+        .unwrap_err();
+        assert_eq!(error.code, codes::ROOT_007, "{error}");
+        assert!(error.message.contains("rpmx-runtime-sibling"), "{error}");
+        assert!(
+            !error.message.contains("substituted candidate"),
+            "reject the incompatible solve before accepting a published fallback: {error}"
+        );
     }
 }
