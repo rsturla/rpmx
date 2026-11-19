@@ -114,6 +114,9 @@ pub struct BuildArgs {
 
 #[derive(Debug, clap::Args)]
 pub struct RebuildArgs {
+    /// Complete prepared dependency inputs for this target.
+    #[arg(long = "inputs")]
+    pub prepared_inputs: Option<PathBuf>,
     /// Source RPM to rebuild.
     pub file: PathBuf,
     #[command(flatten)]
@@ -492,6 +495,9 @@ pub struct SourceArgs {
 
 #[derive(Debug, clap::Args)]
 pub struct SrpmArgs {
+    /// Also prepare dependencies for optional source tests.
+    #[arg(long)]
+    pub include_optional_tests: bool,
     /// Recipe to package. (default: ./package.yaml).
     #[arg(default_value = "package.yaml")]
     pub file: PathBuf,

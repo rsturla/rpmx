@@ -139,6 +139,7 @@ pub struct SrpmInput {
     pub recipe: PathBuf,
     pub arch: Option<String>,
     pub sources: Option<PathBuf>,
+    pub include_optional_tests: bool,
     pub cell: Option<String>,
 }
 
@@ -166,6 +167,7 @@ pub struct BuildInput {
 
 #[derive(Debug, Clone)]
 pub struct RebuildInput {
+    pub prepared_inputs: Option<PathBuf>,
     pub srpm: PathBuf,
     pub arch: Option<String>,
     pub cell: Option<String>,
@@ -217,6 +219,7 @@ impl ApplicationRequest {
     pub fn rebuild(srpm: impl Into<PathBuf>, output: impl Into<PathBuf>) -> Self {
         Self {
             operation: Operation::Rebuild(RebuildInput {
+                prepared_inputs: None,
                 srpm: srpm.into(),
                 arch: None,
                 cell: None,

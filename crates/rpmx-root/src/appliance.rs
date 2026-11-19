@@ -236,6 +236,7 @@ pub fn ensure_cached(lock: &ApplianceLock, cache: &Path, offline: bool) -> Resul
     assemble_root(
         lock,
         AssembleOptions {
+            offline: false,
             cache,
             work: work.path(),
             root: &root,

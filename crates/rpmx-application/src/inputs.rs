@@ -1,23 +1,31 @@
 //! Resolve build inputs without assembling or executing them.
+mod record;
+mod source_tests;
+
 use crate::domain::{error::codes, root::RootLock, Arch, Error, Plan, RecipeBundle};
 use crate::{environment::Environment, ApplicationConfig, BootstrapEnvironment, BuildRoot};
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 /// Exact dependency inputs. Root directories and runner assets are execution state.
-#[derive(Default)]
+#[derive(Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct PreparedInputs {
     pub root: Option<RootLock>,
+    #[serde(default)]
+    pub tests: Option<BTreeMap<String, RootLock>>,
     pub sysroot: Option<RootLock>,
     pub cross: Option<crate::domain::guest::CrossToolchain>,
 }
 
 impl PreparedInputs {
-    pub fn resolve(
+    pub fn for_source(
         bundle: &RecipeBundle,
         plan: &Plan,
         target: Arch,
         config: &ApplicationConfig,
     ) -> Result<Self, Error> {
-        let inputs = match &config.root {
+        let mut inputs = match &config.root {
             BuildRoot::UnsafeHost => Self::default(),
             BuildRoot::Locked { lock, .. } => Self {
                 root: Some(crate::domain::root::load_lock(lock)?),
@@ -38,6 +46,7 @@ impl PreparedInputs {
                         .map(|root| crate::domain::root::load_lock(&root.lock))
                         .transpose()?,
                     cross,
+                    ..Self::default()
                 }
             }
             BuildRoot::Automatic { profile } => {
@@ -81,9 +90,18 @@ impl PreparedInputs {
                         })
                         .transpose()?,
                     cross: requirement.cross,
+                    ..Self::default()
                 }
             }
         };
+        // Automatic cache receipts must not turn package resolution into a tree pin.
+        // Explicit roots retain their caller-supplied filesystem verification.
+        if matches!(config.root, BuildRoot::Automatic { .. }) {
+            for root in inputs.root.iter_mut().chain(inputs.sysroot.iter_mut()) {
+                root.root_digest = None;
+                root.rpmdb_digest = None;
+            }
+        }
         if let Some(root) = &inputs.root {
             root.require_target(inputs.exec(target)?.as_str())?;
         }
@@ -91,6 +109,37 @@ impl PreparedInputs {
             root.require_target(target.as_str())?;
         }
         Ok(inputs)
+    }
+
+    /// Every build caller selects its test scope before any environment executes.
+    pub fn resolve(
+        bundle: &RecipeBundle,
+        plan: &Plan,
+        target: Arch,
+        config: &ApplicationConfig,
+        selection: TestSelection,
+    ) -> Result<Self, PreparationFailure> {
+        let mut inputs =
+            Self::for_source(bundle, plan, target, config).map_err(PreparationFailure::Root)?;
+        inputs.complete(plan, selection, config)?;
+        Ok(inputs)
+    }
+
+    pub fn complete(
+        &mut self,
+        plan: &Plan,
+        selection: TestSelection,
+        config: &ApplicationConfig,
+    ) -> Result<(), PreparationFailure> {
+        match selection {
+            TestSelection::Disabled => Ok(()),
+            TestSelection::Required => self
+                .prepare_tests(plan, false, config)
+                .map_err(PreparationFailure::Test),
+            TestSelection::All => self
+                .prepare_tests(plan, true, config)
+                .map_err(PreparationFailure::Test),
+        }
     }
 
     pub fn exec(&self, target: Arch) -> Result<Arch, Error> {
@@ -106,15 +155,44 @@ impl PreparedInputs {
         target: Arch,
         config: &ApplicationConfig,
     ) -> Result<Environment, Error> {
-        Environment::from_inputs(self, target, config)
+        Environment::from_inputs(self, target, config, true)
     }
+    /// Replay uses the same materializer, with explicit runner-asset authority.
+    pub fn replay(
+        &self,
+        target: Arch,
+        config: &ApplicationConfig,
+        allow_assets: bool,
+    ) -> Result<Environment, Error> {
+        Environment::from_inputs(self, target, config, allow_assets)
+    }
+}
 
-    pub fn from_environment(environment: Option<&Environment>) -> Self {
-        Self {
-            root: environment.and_then(|env| env.lock().cloned()),
-            sysroot: environment
-                .and_then(|env| env.sysroot.as_ref().map(|root| root.lock().clone())),
-            cross: environment.and_then(|env| env.cross.clone()),
+#[derive(Clone, Copy)]
+pub(crate) enum TestSelection {
+    Disabled,
+    Required,
+    All,
+}
+impl TestSelection {
+    pub fn new(enabled: bool, optional: bool) -> Self {
+        match (enabled, optional) {
+            (false, _) => Self::Disabled,
+            (true, false) => Self::Required,
+            (true, true) => Self::All,
+        }
+    }
+}
+
+pub(crate) enum PreparationFailure {
+    Root(Error),
+    Test(Box<source_tests::TestInputFailure>),
+}
+impl PreparationFailure {
+    pub fn report(self, report: &mut crate::RunReport, output: &std::path::Path) -> Error {
+        match self {
+            Self::Root(error) => error,
+            Self::Test(failure) => failure.report(report, output),
         }
     }
 }

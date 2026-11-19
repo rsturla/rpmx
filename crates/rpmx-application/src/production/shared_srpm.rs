@@ -50,7 +50,14 @@ pub(super) fn execute(
         if plan.cells.is_empty() {
             return Err(Error::new(codes::BUILD_002, "no selected cells"));
         }
-        let inputs = crate::inputs::PreparedInputs::resolve(&bundle, &plan, arch, config)?;
+        let inputs = crate::inputs::PreparedInputs::resolve(
+            &bundle,
+            &plan,
+            arch,
+            config,
+            crate::inputs::TestSelection::new(true, input.include_optional_tests),
+        )
+        .map_err(|failure| failure.report(report, output))?;
         if inputs.cross.is_some() {
             return Err(Error::new(
                 codes::SRPM_006,
@@ -63,6 +70,9 @@ pub(super) fn execute(
     let locks = output.join("locks");
     std::fs::create_dir_all(&locks).map_err(file_error)?;
     for (plan, provenance) in &prepared {
+        report
+            .evidence
+            .push(provenance.export(output, bundle.digest(), &plan.arch)?);
         let path = locks.join(format!("root-{}.lock.json", plan.arch));
         rpmx_root::root::write_lock(
             &path,

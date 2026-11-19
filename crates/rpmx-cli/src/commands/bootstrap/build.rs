@@ -1037,6 +1037,7 @@ fn resolve_one_root(
     lock.requirement = Some(requirement.to_string());
 
     let options = AssembleOptions {
+        offline: false,
         cache,
         work: assemble_work.path(),
         root: &temp_root,

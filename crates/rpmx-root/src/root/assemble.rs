@@ -8,6 +8,8 @@ use rpmx_base::error::{codes, Error, Result};
 use rpmx_store::cas;
 
 pub struct AssembleOptions<'a> {
+    /// Require the pinned installer image locally and forbid image pulls.
+    pub offline: bool,
     pub cache: &'a Path,
     pub work: &'a Path,
     pub root: &'a Path,
@@ -37,11 +39,19 @@ pub fn assemble(lock: &RootLock, options: AssembleOptions<'_>) -> Result<std::pa
             "installer image platform differs from root target",
         ));
     }
-    let image = ensure_locked_image(
-        builder.installer.reference(),
-        builder.installer.digest(),
-        lock_arch,
-    )?;
+    let image = if options.offline {
+        super::container::require_local_locked_image(
+            builder.installer.reference(),
+            builder.installer.digest(),
+            lock_arch,
+        )?
+    } else {
+        ensure_locked_image(
+            builder.installer.reference(),
+            builder.installer.digest(),
+            lock_arch,
+        )?
+    };
     let arch = lock
         .archs
         .first()
@@ -123,7 +133,14 @@ pub fn assemble(lock: &RootLock, options: AssembleOptions<'_>) -> Result<std::pa
     args.push(format!("--setopt=tsflags={}", tsflags.join(",")));
     args.push("install".to_string());
     args.extend(files);
-    let output = podman_run_assembly(&image, options.work, options.root, target, &args)?;
+    let output = podman_run_assembly(
+        &image,
+        options.work,
+        options.root,
+        target,
+        &args,
+        options.offline,
+    )?;
     if !output.status.success() {
         return Err(offline_failure(&output));
     }

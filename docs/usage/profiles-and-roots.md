@@ -256,3 +256,9 @@ Execution materializes the locked inputs through the common root cache.
 Resolution records and assembly receipts have separate cache identities.
 Existing verified roots remain usable. A cached resolution alone does not imply
 that its filesystem or runner assets are available for offline execution.
+
+Complete target records also include isolated source-test extensions. Ordinary
+SRPMs embed their record; shared SRPMs keep one external record per target.
+Assembly receipts stay local and do not constrain portable dependency inputs.
+Offline materialization requires the exact RPM payloads and pinned installer
+image locally, rather than a previously assembled filesystem.

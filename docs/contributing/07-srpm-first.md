@@ -55,6 +55,23 @@ patches/ files/ tests/
 
 `rpmx build` runs the whole chain. `rpmx rebuild` starts at "SRPM verification". There is no separate source bundle and no separate "source input" path.
 
+### Prepared dependency inputs
+
+Dependency resolution and root materialization are separate operations. The
+application input module resolves complete target inputs for local builds and
+source preparation. Build callers select required, optional or disabled source
+tests through that operation. Execution materializes exact locks from CAS.
+
+A target record contains the compilation root, sysroot, source-test extensions,
+cross commands and a complete payload inventory. It binds the recipe and target.
+Filesystem and RPM database digests belong to local assembly receipts and never
+enter the portable record.
+
+Single-target SRPMs with a selected root embed `build-inputs.json`. The package
+lock references its digest. Shared SRPMs retain source identity independently
+of target dependencies and export one `inputs/<arch>.json` record per target.
+Legacy SRPMs without complete inputs retain explicit compatibility preparation.
+
 ## 3. Native SRPM layout
 
 A native `rpmx` SRPM is still a valid RPM source package. It contains:
@@ -110,6 +127,7 @@ A native `rpmx` SRPM must contain exactly these classes of files. Anything else 
 | `RPMX-MANIFEST.json` | yes | Digests, source-date-epoch, generator version. |
 | `RPMX-STEPS.json` | if local steps | Map of step name to step definition, so the rebuild is offline. |
 | `RPMX-BUNDLED.json` | yes | Component inventory, including explicit C/C++ declarations. Empty when nothing is bundled. |
+| `build-inputs.json` | if a root is selected | Complete target dependency inputs, referenced by the package lock. |
 
 Source files with a reserved name (`package.yaml`, `package.lock.json`,
 `RPMX-MANIFEST.json`, `RPMX-STEPS.json`, `RPMX-BUNDLED.json`) are rejected. The payload is flat

@@ -162,6 +162,10 @@ build:
     - uses: go/build
       with:
         output: /usr/bin/demo
+  tests:
+    - name: upstream
+      pipeline:
+        - uses: make/build
 outputs:
   - name: demo
     files:
@@ -197,6 +201,7 @@ outputs:
         .expect("lock");
     let text = String::from_utf8(lock.data.clone()).expect("utf8");
     assert!(text.contains("\"name\": \"go/build\""));
+    assert!(text.contains("\"name\": \"make/build\""));
 
     let steps = packages[0]
         .files
@@ -205,6 +210,7 @@ outputs:
         .expect("embedded steps");
     let steps = String::from_utf8(steps.data.clone()).expect("utf8");
     assert!(steps.contains("\"go/build\""));
+    assert!(steps.contains("\"make/build\""));
 }
 
 #[test]

@@ -270,3 +270,39 @@ or `||` retain normal Bash behavior. Include useful assertion messages in extern
 fixtures, and keep outputs locale-independent. For a source failure, retain its
 workspace with `--keep-workdir` and use `rpmx shell` to inspect the pinned build
 environment. A debug shell uses the same sandbox policy, not the host root.
+
+## Prepared build inputs
+
+Source preparation resolves one complete input record for each target. The
+record covers the compilation root, target sysroot and selected source-test
+extensions. Its `payloads` field lists every required CAS digest, regardless
+of which environment uses it.
+
+`rpmx srpm --arch all --output prepared` writes `prepared/inputs/<arch>.json`
+beside the shared SRPM. Transfer that record, the SRPM and its CAS payloads.
+Rebuild selects the complete record with one flag:
+
+```console
+rpmx rebuild example.src.rpm --arch x86_64 \
+  --inputs prepared/inputs/x86_64.json --cache ./cas --offline
+```
+
+With a selected root, an ordinary `rpmx build` or single-target `rpmx srpm`
+embeds the complete record in the SRPM. Rebuild loads it automatically. Both paths use the same input
+preparation and root materialization. Source-test execution never resolves tools.
+
+Records bind the recipe digest and target architecture. Test extensions cannot
+replace pinned build packages or change the installer and execution policy.
+Missing records for selected tools, inconsistent inventories and missing payloads
+fail before the production build starts. Test tools remain outside compilation.
+
+Filesystem digests belong to local assembly receipts. Portable records contain
+exact dependency inputs instead. Offline materialization can create fresh roots
+from cached RPMs when the pinned installer image is already local. It neither
+consults registry manifests nor pulls images. Runner appliances retain their
+separate cache and acquisition policy.
+
+Use `srpm --include-optional-tests` to prepare optional source-test tools and the
+same selection on rebuild to execute them. To add tools to an existing prepared
+record, prepare the inputs again. Legacy SRPMs without a complete record retain
+a compatibility preparation step before execution.

@@ -86,6 +86,7 @@ pub fn assemble(args: RootAssembleArgs) -> Result<(), Error> {
     let result = RootSelection::assemble(
         lock,
         AssembleOptions {
+            offline: false,
             cache: &cache,
             work: &work,
             root: &root,

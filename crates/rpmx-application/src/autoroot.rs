@@ -217,16 +217,6 @@ fn ensure_with(
         let appliance = appliance_path(needs_appliance)?;
         return Ok(AssembledRoots { root, appliance });
     }
-    if offline {
-        return Err(Error::new(
-            codes::ROOT_016,
-            format!(
-                "the root recorded in this SRPM is not cached at {}; run without --offline to assemble it",
-                directory.display()
-            ),
-        ));
-    }
-
     std::fs::create_dir_all(&roots).map_err(|error| {
         Error::new(
             codes::ROOT_004,
@@ -278,6 +268,7 @@ fn ensure_with(
         Assembly::Install => assemble(
             lock,
             AssembleOptions {
+                offline,
                 cache: &cas,
                 work: work.path(),
                 root: &root_path,
@@ -286,6 +277,7 @@ fn ensure_with(
         Assembly::Extract => crate::domain::root::assemble_sysroot(
             lock,
             AssembleOptions {
+                offline,
                 cache: &cas,
                 work: work.path(),
                 root: &root_path,

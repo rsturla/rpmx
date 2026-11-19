@@ -25,7 +25,7 @@ impl Environment {
         target: Arch,
         config: &ApplicationConfig,
     ) -> Result<Self, Error> {
-        crate::inputs::PreparedInputs::resolve(bundle, plan, target, config)?
+        crate::inputs::PreparedInputs::for_source(bundle, plan, target, config)?
             .materialize(target, config)
     }
 
@@ -51,6 +51,7 @@ impl Environment {
         inputs: &crate::inputs::PreparedInputs,
         target: Arch,
         config: &ApplicationConfig,
+        allow_assets: bool,
     ) -> Result<Self, Error> {
         let exec = inputs.exec(target)?;
         let (build_path, sysroot_path, supplied_lock) = match &config.root {
@@ -80,14 +81,25 @@ impl Environment {
                             exec.as_str(),
                             false,
                             config.runner_assets.as_deref(),
-                            true,
+                            allow_assets,
                             inputs.cross.is_some(),
                         )?;
                         appliance = roots.appliance;
                         roots.root
                     }
                 };
-                RootSelection::verify_inputs(lock, &path, exec.as_str())
+                if let Some(supplied) = supplied_lock {
+                    let explicit = crate::domain::root::load_lock(supplied)?;
+                    if explicit.assembly_identity() != lock.assembly_identity() {
+                        return Err(Error::new(
+                            crate::domain::error::codes::ROOT_016,
+                            "explicit root lock differs from the prepared build inputs",
+                        ));
+                    }
+                    RootSelection::verify_inputs(&explicit, &path, exec.as_str())
+                } else {
+                    RootSelection::verify_inputs(lock, &path, exec.as_str())
+                }
             })
             .transpose()?;
         let sysroot = inputs
@@ -115,14 +127,21 @@ impl Environment {
             })
         });
         if appliance.is_none() {
-            appliance = autoroot::appliance_for_lock(
-                lock_path.as_deref(),
-                config.cache.as_deref(),
-                config.offline,
-                config.runner.parse()?,
-                exec.as_str(),
-                config.runner_assets.as_deref(),
-            )?;
+            appliance = selected
+                .as_ref()
+                .map(|root| {
+                    autoroot::appliance_for(
+                        root.lock(),
+                        config.cache.as_deref(),
+                        config.offline,
+                        config.runner.parse()?,
+                        exec.as_str(),
+                        config.runner_assets.as_deref(),
+                        allow_assets,
+                    )
+                })
+                .transpose()?
+                .flatten();
         }
         Ok(Self {
             target,

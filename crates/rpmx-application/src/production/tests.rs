@@ -9,7 +9,6 @@ use crate::domain::{
 use crate::{ApplicationConfig, CaseOutcome, CaseStatus, EnvironmentRecord, RunOutcome, RunReport};
 use rpmx_language::PlannedTest;
 use rpmx_runner::test_runner::{execute_test, TestEnvironment, WorkspaceSource};
-use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 pub(super) struct PreparedTests {
@@ -27,8 +26,7 @@ struct PreparedCase {
 pub(super) fn prepare<'a>(
     config: &ApplicationConfig,
     tests: impl IntoIterator<Item = &'a rpmx_language::PlannedTest>,
-    baseline: Option<&RootLock>,
-    target: Option<&RootLock>,
+    inputs: &crate::inputs::PreparedInputs,
     template: SandboxConfig<'_>,
     output: &Path,
     report: &mut RunReport,
@@ -80,28 +78,8 @@ pub(super) fn prepare<'a>(
         });
         let result = (|| -> Result<Option<RootSelection>, Error> {
             std::fs::create_dir_all(&case_evidence).map_err(file_error)?;
-            let baseline = baseline.ok_or_else(|| Error::new(codes::TEST_005, "build tests require an exact pinned build closure; the host root cannot supply one"))?;
-            verify_target_requirements(test, target.unwrap_or(baseline))?;
-            let mut additions = additions(test);
-            // A bare package already present needs no new solve. Constraints
-            // and virtual capabilities still go through the real solver.
-            additions.retain(|name| {
-                name.split_whitespace().count() != 1
-                    || !baseline
-                        .packages
-                        .values()
-                        .flatten()
-                        .any(|package| package.name == *name)
-            });
-            let root = if additions.is_empty() {
-                None
-            } else {
-                Some(extension(
-                    config,
-                    baseline,
-                    &additions.into_iter().collect::<Vec<_>>(),
-                )?)
-            };
+            let baseline = inputs.root.as_ref().ok_or_else(|| Error::new(codes::TEST_005, "build tests require an exact pinned build closure; the host root cannot supply one"))?;
+            let root = inputs.test_root(test, config)?;
             let lock = root.as_ref().map(|root| root.lock()).unwrap_or(baseline);
             write_public_lock(&lock_path, lock)?;
             report.environments[position].assembly_identity = lock.assembly_identity();
@@ -240,131 +218,6 @@ pub(super) fn execute(
     }
 }
 
-fn additions(test: &PlannedTest) -> BTreeSet<String> {
-    test.packages
-        .iter()
-        .cloned()
-        .chain(test.pipeline.iter().flat_map(|step| {
-            if step.needs_packages.is_empty() && step.needs_sysroot.is_empty() {
-                step.needs.clone()
-            } else {
-                step.needs_packages.clone()
-            }
-        }))
-        .collect()
-}
-fn verify_target_requirements(test: &PlannedTest, target: &RootLock) -> Result<(), Error> {
-    for required in test.pipeline.iter().flat_map(|step| &step.needs_sysroot) {
-        if required.split_whitespace().count() != 1
-            || !target
-                .packages
-                .values()
-                .flatten()
-                .any(|package| package.name == *required)
-        {
-            return Err(Error::new(codes::TEST_005, format!("target requirement '{required}' cannot be verified against the pinned sysroot; declare it in build.sysroot and resolve that closure before testing")));
-        }
-    }
-    Ok(())
-}
-fn extension(
-    config: &ApplicationConfig,
-    baseline: &RootLock,
-    additions: &[String],
-) -> Result<RootSelection, Error> {
-    let cache = config
-        .cache
-        .clone()
-        .map(Ok)
-        .unwrap_or_else(crate::support::default_cache)?;
-    let material = serde_json::to_vec(&(
-        1,
-        baseline.assembly_identity(),
-        &baseline.root_digest,
-        additions,
-    ))
-    .map_err(|error| Error::new(codes::TEST_004, error.to_string()))?;
-    let key = crate::domain::hash::sha512_hex(&material);
-    let base = cache
-        .parent()
-        .unwrap_or(&cache)
-        .join("build-test-environments");
-    std::fs::create_dir_all(&base).map_err(file_error)?;
-    let directory = base.join(key.trim_start_matches("sha512:"));
-    let load = || -> Result<RootSelection, Error> {
-        let root = RootSelection::load(
-            &directory.join("root.lock.yaml"),
-            &directory.join("root"),
-            &baseline.archs[0],
-        )?;
-        let identity = |lock: &RootLock| {
-            serde_json::to_value((
-                &lock.archs,
-                &lock.releasever,
-                &lock.prefix,
-                &lock.libdir,
-                &lock.options,
-                lock.builder.as_ref().map(|builder| &builder.installer),
-            ))
-        };
-        if identity(root.lock()).map_err(|error| Error::new(codes::TEST_004, error.to_string()))?
-            != identity(baseline).map_err(|error| Error::new(codes::TEST_004, error.to_string()))?
-        {
-            return Err(Error::new(
-                codes::TEST_005,
-                "cached build-test environment changed pinned execution policy",
-            ));
-        }
-        for (arch, packages) in &baseline.packages {
-            for package in packages {
-                if !root.lock().packages.get(arch).is_some_and(|resolved| {
-                    resolved.iter().any(|entry| {
-                        entry.name == package.name
-                            && entry.evr == package.evr
-                            && entry.checksum == package.checksum
-                    })
-                }) {
-                    return Err(Error::new(
-                        codes::TEST_005,
-                        "cached build-test environment changed the pinned build closure",
-                    ));
-                }
-            }
-        }
-        Ok(root)
-    };
-    if directory.exists() {
-        return load();
-    }
-    if config.offline {
-        return Err(Error::new(codes::TEST_005, format!("build-test environment {} is not cached; prepare it online before an offline rebuild", directory.display())));
-    }
-    let _publishing =
-        crate::domain::cache_lock::CacheLock::acquire(&base, key.trim_start_matches("sha512:"))?;
-    if directory.exists() {
-        return load();
-    }
-    let temporary = tempfile::tempdir_in(&base).map_err(file_error)?;
-    let work = temporary.path().join("prepare");
-    std::fs::create_dir_all(&work).map_err(file_error)?;
-    let lock = crate::domain::root::extend(baseline, additions, &work, &cache)?;
-    let selected = RootSelection::assemble(
-        lock,
-        crate::domain::root::AssembleOptions {
-            cache: &cache,
-            work: &work,
-            root: &temporary.path().join("root"),
-        },
-    )?;
-    write_public_lock(&temporary.path().join("root.lock.yaml"), selected.lock())?;
-    drop(selected);
-    // Resolver scratch files may contain repository credentials. Only the
-    // verified root and redacted binding enter the reusable cache.
-    crate::domain::root::remove_tree(&work)?;
-    let staged = temporary.keep();
-    std::fs::rename(&staged, &directory).map_err(file_error)?;
-    load()
-}
 fn write_public_lock(path: &Path, lock: &RootLock) -> Result<(), Error> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(file_error)?;

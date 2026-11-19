@@ -391,7 +391,7 @@ fn collect_local_steps(
     }
     for cell in &plan.cells {
         refs.extend(cell.pipeline.iter());
-        for test in &cell.tests {
+        for test in cell.tests.iter().chain(&cell.build_tests) {
             refs.extend(test.pipeline.iter());
         }
     }

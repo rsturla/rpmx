@@ -184,6 +184,41 @@ pub(crate) fn ensure_locked_image(image: &str, digest: &str, arch: &str) -> Resu
     Ok(pinned)
 }
 
+/// Verify the pinned local address without consulting registry manifests.
+pub(crate) fn require_local_locked_image(image: &str, digest: &str, arch: &str) -> Result<String> {
+    let pinned = locked_image_reference(image, digest);
+    let output = Command::new("podman")
+        .args(["image", "inspect", "--format", "{{json .}}", &pinned])
+        .output()
+        .map_err(|error| Error::new(codes::ROOT_001, error.to_string()))?;
+    if !output.status.success() {
+        return Err(Error::new(
+            codes::ROOT_002,
+            format!(
+                "pinned builder image {pinned} is not cached; acquire it before offline assembly"
+            ),
+        ));
+    }
+    let data: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .map_err(|error| Error::new(codes::ROOT_002, error.to_string()))?;
+    let architecture = rpmx_base::arch::Arch::parse(arch)?;
+    if data["Architecture"].as_str() != Some(architecture.oci_arch())
+        || !data["RepoDigests"].as_array().is_some_and(|entries| {
+            entries.iter().any(|entry| {
+                entry
+                    .as_str()
+                    .is_some_and(|entry| entry.ends_with(&format!("@{digest}")))
+            })
+        })
+    {
+        return Err(Error::new(
+            codes::ROOT_002,
+            "cached builder image differs from the pinned platform",
+        ));
+    }
+    Ok(pinned)
+}
+
 #[cfg(test)]
 fn ensure_image(image: &str) -> Result<String> {
     match inspect_image(image, "{{.Digest}}") {
@@ -244,8 +279,9 @@ pub(crate) fn podman_run_assembly(
     root: &Path,
     target: rpmx_base::arch::Arch,
     args: &[String],
+    offline: bool,
 ) -> Result<std::process::Output> {
-    let mut process = assembly_command(image, work, root, target, args)?;
+    let mut process = assembly_command(image, work, root, target, args, offline)?;
     process.output().map_err(|error| {
         Error::new(
             codes::ROOT_012,
@@ -260,6 +296,7 @@ fn assembly_command(
     root: &Path,
     target: rpmx_base::arch::Arch,
     args: &[String],
+    offline: bool,
 ) -> Result<Command> {
     let work = bind_source(work)?;
     let root = bind_source(root)?;
@@ -267,7 +304,11 @@ fn assembly_command(
     process
         .arg("run")
         .arg("--rm")
-        .arg("--pull=missing")
+        .arg(if offline {
+            "--pull=never"
+        } else {
+            "--pull=missing"
+        })
         .arg("--arch")
         .arg(target.to_string());
     process
@@ -369,12 +410,14 @@ mod tests {
             &root,
             rpmx_base::arch::Arch::current().unwrap(),
             &[],
+            true,
         )
         .unwrap();
         let arguments: Vec<_> = command
             .get_args()
             .map(|arg| arg.to_string_lossy().into_owned())
             .collect();
+        assert!(arguments.iter().any(|arg| arg == "--pull=never"));
         for (source, guest) in [(&work, "/work"), (&root, "/root")] {
             let expected = format!("{}:{guest}:Z", source.canonicalize().unwrap().display());
             assert!(
@@ -389,6 +432,7 @@ mod tests {
             &missing,
             rpmx_base::arch::Arch::current().unwrap(),
             &[],
+            true,
         )
         .unwrap_err();
         assert!(error

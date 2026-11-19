@@ -81,7 +81,7 @@ fn rebuild(request: RebuildContext<'_>, run_report: &mut crate::RunReport) -> Re
         request.config.signing.signing_key.as_deref(),
         request.config.signing.signing_passphrase_env.as_deref(),
     )?;
-    let state = prepare(&request, signing.as_ref())?;
+    let state = prepare(&request, signing.as_ref(), run_report)?;
     let RebuildState {
         work,
         extracted,
@@ -91,6 +91,7 @@ fn rebuild(request: RebuildContext<'_>, run_report: &mut crate::RunReport) -> Re
         cell,
         build,
         stage,
+        inputs,
         active_lock,
         locked_packages,
         assembled_root,
@@ -221,8 +222,7 @@ fn rebuild(request: RebuildContext<'_>, run_report: &mut crate::RunReport) -> Re
             cell.build_tests.iter().filter(|test| {
                 crate::selection::includes(test, &[], request.input.include_optional_tests)
             }),
-            active_lock.as_ref(),
-            sysroot_lock.as_ref(),
+            &inputs,
             sandbox_config,
             &output,
             run_report,

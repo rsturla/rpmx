@@ -293,6 +293,7 @@ impl RootSelection {
         let mut selection = Self::assemble(
             lock,
             super::AssembleOptions {
+                offline: false,
                 cache,
                 work,
                 root: &root,
