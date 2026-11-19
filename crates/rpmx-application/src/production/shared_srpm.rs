@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use crate::domain::{error::codes, source_package, Arch, Error};
-use crate::{environment, support, ApplicationConfig, BuildRoot, RunReport, SrpmInput};
+use crate::{environment, support, ApplicationConfig, RunReport, SrpmInput};
 
 /// Resolve target inputs separately, then package one shared source snapshot.
 pub(super) fn execute(
@@ -39,11 +39,6 @@ pub(super) fn execute(
             "source preparation requires the native architecture in the profile",
         ));
     }
-    let cache = config
-        .cache
-        .clone()
-        .map(Ok)
-        .unwrap_or_else(support::default_cache)?;
     let policy = environment::policy(config)?;
     let mut prepared = Vec::new();
     for arch in &arches {
@@ -55,43 +50,14 @@ pub(super) fn execute(
         if plan.cells.is_empty() {
             return Err(Error::new(codes::BUILD_002, "no selected cells"));
         }
-        let requirement = rpmx_root::recipe::requirement(
-            &bundle.recipe,
-            &plan,
-            &bundle.root,
-            config.root.profile(),
-            arch.as_str(),
-        )?
-        .ok_or_else(|| Error::new(codes::ROOT_016, "shared SRPM requires a build root"))?;
-        if requirement.cross.is_some() {
+        let inputs = crate::inputs::PreparedInputs::resolve(&bundle, &plan, arch, config)?;
+        if inputs.cross.is_some() {
             return Err(Error::new(
                 codes::SRPM_006,
                 "--arch all prepares native target builds; use a single target for cross SRPMs",
             ));
         }
-        let work = support::WorkDir::new("resolve-source-target")?;
-        let root = rpmx_root::root::resolve_profile(
-            &requirement.profile,
-            &requirement.name,
-            work.path(),
-            &cache,
-        )?;
-        let sysroot = requirement
-            .sysroot
-            .as_ref()
-            .map(|target| {
-                let work = support::WorkDir::new("resolve-source-sysroot")?;
-                rpmx_root::root::resolve_profile(&target.profile, &target.name, work.path(), &cache)
-            })
-            .transpose()?;
-        prepared.push((
-            plan,
-            super::srpm::SourceBuildProvenance {
-                root: Some(root),
-                sysroot,
-                cross: requirement.cross,
-            },
-        ));
+        prepared.push((plan, inputs));
     }
     std::fs::create_dir_all(output).map_err(file_error)?;
     let locks = output.join("locks");
@@ -131,17 +97,7 @@ pub(super) fn execute(
                 .as_ref()
                 .is_some_and(|source| !source.steps.is_empty());
         let env = if commands {
-            let lock_path = output.join("source-environment.lock.json");
-            rpmx_root::root::write_lock(
-                &lock_path,
-                provenance.root.as_ref().expect("resolved root"),
-            )?;
-            let mut source_config = config.clone();
-            source_config.root = BuildRoot::Locked {
-                lock: lock_path,
-                root: None,
-            };
-            environment::Environment::prepare(&bundle, plan, native, &source_config)?
+            provenance.materialize(native, config)?
         } else {
             // Extraction and context copies do not execute recipe commands.
             environment::Environment {

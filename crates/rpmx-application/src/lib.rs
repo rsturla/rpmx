@@ -10,6 +10,7 @@ use rpmx_build::package_lock;
 mod acceptance;
 mod debug;
 mod environment;
+mod inputs;
 mod production;
 mod report;
 mod request;

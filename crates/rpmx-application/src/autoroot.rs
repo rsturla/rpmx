@@ -11,8 +11,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use crate::domain::appliance;
 use crate::domain::cache_lock::CacheLock;
 use crate::domain::error::codes;
-use crate::domain::model::Recipe;
-use crate::domain::plan::Plan;
 use crate::domain::profile::Profile;
 use crate::domain::root::{
     assemble, load_lock, remove_tree, resolve_profile, write_lock, AssembleOptions, RootLock,
@@ -28,23 +26,6 @@ use crate::support::default_cache;
 
 static APPLIANCE_TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-/// A selected build environment and its optional target environment.
-/// The verified root is retained, never projected into a constructible tuple.
-pub struct AutomaticRoot {
-    pub(crate) lock: PathBuf,
-    pub(crate) selection: RootSelection,
-    pub(crate) sysroot: Option<Box<AutomaticRoot>>,
-    pub(crate) cross: Option<crate::domain::guest::CrossToolchain>,
-}
-impl std::fmt::Debug for AutomaticRoot {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("AutomaticRoot")
-            .field("lock", &self.lock)
-            .field("root", &self.selection.path())
-            .finish()
-    }
-}
-
 /// A build root and its optional runner appliance, both assembled.
 #[derive(Debug)]
 pub struct AssembledRoots {
@@ -52,190 +33,55 @@ pub struct AssembledRoots {
     pub appliance: Option<PathBuf>,
 }
 
-/// Resolve the automatic root for a recipe, if it declares one.
-///
-/// Returns `None` when the caller supplied explicit root flags or asked for
-/// the host root; the existing explicit-root path handles those.
-#[allow(clippy::too_many_arguments)]
-pub fn ensure(
-    recipe: &Recipe,
-    plan: &Plan,
-    recipe_path: &Path,
-    profile: Option<&Path>,
-    cache: Option<&Path>,
+/// Resolve a requirement independently of its assembled root cache.
+pub(crate) fn resolve_root(
+    profile: &Profile,
+    name: &str,
+    digest: &str,
+    cache: &Path,
     offline: bool,
-    refresh: bool,
-    arch: &str,
-) -> Result<Option<AutomaticRoot>, Error> {
-    let Some(requirement) = requirement(recipe, plan, recipe_path, profile, arch)? else {
-        return Ok(None);
-    };
-    let mount_sysroot = requirement.sysroot.is_some();
-    let mut root = ensure_root(
-        &requirement.profile,
-        &requirement.name,
-        &requirement.digest,
-        cache,
-        offline,
-        refresh,
-        Assembly::Install,
-        mount_sysroot,
-    )?;
-    if let Some(sysroot) = &requirement.sysroot {
-        let assembled = ensure_root(
-            &sysroot.profile,
-            &sysroot.name,
-            &sysroot.digest,
-            cache,
-            offline,
-            refresh,
-            Assembly::Extract,
-            false,
-        )?;
-        root.sysroot = Some(Box::new(assembled));
+) -> Result<RootLock, Error> {
+    if let Some(lock) = rpmx_root::recipe::cached_lock_for_requirement(cache, digest) {
+        return Ok(lock);
     }
-    root.cross = requirement.cross;
-    Ok(Some(root))
+    let base = cache.parent().unwrap_or(cache).join("resolved-roots");
+    let key = digest.trim_start_matches("sha512:");
+    let path = base.join(format!("{key}.yaml"));
+    if path.is_file() {
+        let lock = load_lock(&path)?;
+        lock.require_target(profile.arch())?;
+        return Ok(lock);
+    }
+    if offline {
+        return Err(Error::new(
+            codes::ROOT_016,
+            format!("root for '{name}' is not cached; prepare it online first"),
+        ));
+    }
+    std::fs::create_dir_all(&base)
+        .map_err(|error| Error::new(codes::ROOT_004, error.to_string()))?;
+    let _publishing = CacheLock::acquire(&base, key)?;
+    if path.is_file() {
+        let lock = load_lock(&path)?;
+        lock.require_target(profile.arch())?;
+        return Ok(lock);
+    }
+    let work = crate::support::WorkDir::new("resolve-root")?;
+    let lock = resolve_profile(profile, name, work.path(), cache)?;
+    let temporary = tempfile::NamedTempFile::new_in(&base)
+        .map_err(|error| Error::new(codes::ROOT_004, error.to_string()))?;
+    write_lock(temporary.path(), &lock)?;
+    temporary
+        .persist(&path)
+        .map_err(|error| Error::new(codes::ROOT_004, error.to_string()))?;
+    Ok(lock)
 }
 
 /// How a resolved closure becomes a directory.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Assembly {
-    /// Run the package scripts and record a package database (a build root).
     Install,
-    /// Unpack the payload only (a cross sysroot).
     Extract,
-}
-
-#[allow(clippy::too_many_arguments)]
-fn ensure_root(
-    profile: &Profile,
-    name: &str,
-    digest: &str,
-    cache: Option<&Path>,
-    offline: bool,
-    refresh: bool,
-    assembly: Assembly,
-    mount_sysroot: bool,
-) -> Result<AutomaticRoot, Error> {
-    // Verify the root against its own profile, never the caller's target: a
-    // cross build root is host-arch and would otherwise never cache-hit.
-    let arch = profile.arch();
-    let profile = profile.clone();
-    let name = name.to_string();
-    let digest = digest.to_string();
-    let cas = match cache {
-        Some(path) => path.to_path_buf(),
-        None => default_cache()?,
-    };
-    let roots = cas.parent().unwrap_or(&cas).join("roots");
-    let key = digest.strip_prefix("sha512:").unwrap_or(&digest);
-    let directory = roots.join(key);
-    let lock_path = directory.join("root.lock.yaml");
-    let root_path = directory.join("root");
-
-    if !refresh {
-        match load_cached(&lock_path, &root_path, arch) {
-            Ok(Some(mut root)) => {
-                root.sysroot = None;
-                return Ok(root);
-            }
-            Ok(None) => {}
-            Err(error) if offline => {
-                return Err(Error::new(
-                    codes::ROOT_016,
-                    format!(
-                        "cached root {} does not verify ({error}); run without --offline to rebuild it",
-                        directory.display()
-                    ),
-                ));
-            }
-            Err(_) => {}
-        }
-    }
-
-    if offline {
-        return Err(Error::new(
-            codes::ROOT_016,
-            format!(
-                "root for '{}' is not cached at {}; run without --offline to resolve it",
-                name,
-                directory.display()
-            ),
-        ));
-    }
-
-    std::fs::create_dir_all(&roots).map_err(|error| {
-        Error::new(
-            codes::ROOT_004,
-            format!("cannot create {}: {error}", roots.display()),
-        )
-    })?;
-    // Serialize publishers per requirement. Without this, two cold starts
-    // delete each other's half-built root.
-    let _publishing = CacheLock::acquire(&roots, key)?;
-    if !refresh {
-        if let Ok(Some(mut root)) = load_cached(&lock_path, &root_path, arch) {
-            root.sysroot = None;
-            return Ok(root);
-        }
-    }
-    if directory.exists() {
-        remove_tree(&directory)?;
-    }
-    std::fs::create_dir_all(&directory).map_err(|error| {
-        Error::new(
-            codes::ROOT_004,
-            format!("cannot create {}: {error}", directory.display()),
-        )
-    })?;
-    let work = tempfile::Builder::new()
-        .prefix("rpmx-root-")
-        .tempdir_in(&roots)
-        .map_err(|error| {
-            Error::new(
-                codes::ROOT_004,
-                format!(
-                    "cannot create a work directory in {}: {error}",
-                    roots.display()
-                ),
-            )
-        })?;
-    let mut document = resolve_profile(&profile, &name, work.path(), &cas)?;
-    // The final root is a sibling of the scratch directory: assembly refuses
-    // a root inside its own work tree.
-    let assembled = match assembly {
-        Assembly::Install => assemble(
-            &document,
-            AssembleOptions {
-                cache: &cas,
-                work: work.path(),
-                root: &root_path,
-            },
-        )?,
-        Assembly::Extract => crate::domain::root::assemble_sysroot(
-            &document,
-            AssembleOptions {
-                cache: &cas,
-                work: work.path(),
-                root: &root_path,
-            },
-        )?,
-    };
-    if mount_sysroot {
-        create_sysroot_mount(&assembled)?;
-    }
-    document.root_digest = Some(digest_root(&assembled)?);
-    document.rpmdb_digest = Some(rpmx_store::tree::rpmdb_digest(&assembled)?);
-    // The lock is written last: a concurrent reader sees either a complete
-    // root and lock, or no lock and rebuilds.
-    write_lock(&lock_path, &document)?;
-    Ok(AutomaticRoot {
-        lock: lock_path,
-        selection: RootSelection::verify(&document, &root_path, arch)?,
-        sysroot: None,
-        cross: None,
-    })
 }
 
 /// Create the guest sysroot mount point before a root digest is computed.
@@ -339,7 +185,12 @@ fn ensure_with(
         .transpose()?;
     let identity = lock.assembly_identity();
     let key = identity.strip_prefix("sha512:").unwrap_or(&identity);
-    let directory = roots.join(format!("lock-{key}"));
+    let prefix = if assembly == Assembly::Extract {
+        "sysroot"
+    } else {
+        "lock"
+    };
+    let directory = roots.join(format!("{prefix}-{key}"));
     let appliance_path = |needs: bool| -> Result<Option<PathBuf>, Error> {
         if !needs {
             return Ok(None);
@@ -355,7 +206,7 @@ fn ensure_with(
     if let Ok(Some(root)) = load_cached(&lock_path, &root_path, arch) {
         let appliance = appliance_path(needs_appliance)?;
         return Ok(AssembledRoots {
-            root: root.selection.path().to_path_buf(),
+            root: root.path().to_path_buf(),
             appliance,
         });
     }
@@ -382,11 +233,11 @@ fn ensure_with(
             format!("cannot create {}: {error}", roots.display()),
         )
     })?;
-    let _publishing = CacheLock::acquire(&roots, &format!("lock-{key}"))?;
+    let _publishing = CacheLock::acquire(&roots, &format!("{prefix}-{key}"))?;
     if let Ok(Some(root)) = load_cached(&lock_path, &root_path, arch) {
         let appliance = appliance_path(needs_appliance)?;
         return Ok(AssembledRoots {
-            root: root.selection.path().to_path_buf(),
+            root: root.path().to_path_buf(),
             appliance,
         });
     }
@@ -650,18 +501,13 @@ fn load_cached(
     lock_path: &Path,
     root_path: &Path,
     arch: &str,
-) -> Result<Option<AutomaticRoot>, Error> {
+) -> Result<Option<RootSelection>, Error> {
     if !lock_path.is_file() || !root_path.is_dir() {
         return Ok(None);
     }
     let document = load_lock(lock_path)?;
     let selection = RootSelection::verify(&document, root_path, arch)?;
-    Ok(Some(AutomaticRoot {
-        lock: lock_path.to_path_buf(),
-        selection,
-        sysroot: None,
-        cross: None,
-    }))
+    Ok(Some(selection))
 }
 
 /// Report a resolved root on stderr and, with `--verbose`, every package.
@@ -815,7 +661,8 @@ mod tests {
             "the positive control must hit"
         );
         let error = super::load_cached(&lock_path, &root, "aarch64")
-            .expect_err("a cache entry for another architecture must not hit");
+            .err()
+            .expect("a cache entry for another architecture must not hit");
         assert_eq!(error.code, crate::domain::error::codes::ROOT_016);
     }
 
