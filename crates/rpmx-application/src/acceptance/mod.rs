@@ -300,6 +300,7 @@ pub(crate) fn execute(
                     let selected = RootSelection::assemble(
                         lock,
                         root::AssembleOptions {
+                            offline: config.offline,
                             cache: &cache,
                             work: &work.path().join("assemble"),
                             root: &base.join("root"),

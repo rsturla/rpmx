@@ -24,6 +24,7 @@ pub(super) struct RebuildState {
     pub(super) pipelines: PathBuf,
     pub(super) build: PathBuf,
     pub(super) stage: PathBuf,
+    pub(super) inputs: crate::inputs::PreparedInputs,
     pub(super) active_lock: Option<crate::domain::root::RootLock>,
     pub(super) locked_packages: BTreeSet<String>,
     pub(super) assembled_root: Option<RootSelection>,
@@ -46,12 +47,26 @@ pub(super) struct RebuildState {
 pub(super) fn prepare(
     request: &RebuildContext<'_>,
     signing: Option<&rpmx_rpm::sign::SigningKey>,
+    report: &mut crate::RunReport,
 ) -> Result<RebuildState, Error> {
     let work = crate::support::WorkDir::new("rebuild")?;
     let mut extracted = extract_srpm(request.input.srpm.as_path(), work.path())?;
     // Read the authoritative lock before unpacking the snapshot. The snapshot
     // is user-controlled recipe data and must not be able to replace it.
     let package_lock = load_target_lock(work.path(), request.arch)?;
+    // Capture authoritative input metadata before unpacking recipe-controlled sources.
+    let embedded_inputs = package_lock
+        .inputs
+        .as_ref()
+        .map(|reference| read_reference(work.path(), reference))
+        .transpose()?;
+    let input_text = match &request.input.prepared_inputs {
+        Some(path) => Some(
+            std::fs::read_to_string(path)
+                .map_err(|error| Error::new(codes::SRPM_006, error.to_string()))?,
+        ),
+        None => embedded_inputs.clone(),
+    };
     extracted.lock_steps = package_lock
         .steps
         .iter()
@@ -224,6 +239,10 @@ pub(super) fn prepare(
     })?;
 
     let mut locked_packages: BTreeSet<String> = BTreeSet::new();
+    let prepared_inputs = input_text
+        .as_ref()
+        .map(|text| crate::inputs::PreparedInputs::read_record(text, bundle.digest(), &target_arch))
+        .transpose()?;
     let embedded_lock = package_lock
         .root_lock
         .as_ref()
@@ -232,7 +251,62 @@ pub(super) fn prepare(
             load_lock(&work.path().join(&reference.path))
         })
         .transpose()?;
-    let automatic_environment = if embedded_lock.is_none()
+    if !request.input.replace_root_lock {
+        if let Some(inputs) = &prepared_inputs {
+            if inputs.cross.is_some() != embedded_cross.is_some() {
+                return Err(Error::new(
+                    codes::ROOT_016,
+                    "prepared inputs change the recorded native or cross build mode",
+                ));
+            }
+            if let (Some(root), Some(embedded)) = (&inputs.root, &embedded_lock) {
+                if root.assembly_identity() != embedded.assembly_identity() {
+                    return Err(Error::new(
+                        codes::ROOT_016,
+                        "prepared inputs differ from the compilation root embedded in the SRPM",
+                    ));
+                }
+            }
+            if request.input.prepared_inputs.is_some() {
+                if let Some(text) = &embedded_inputs {
+                    let original = crate::inputs::PreparedInputs::read_record(
+                        text,
+                        bundle.digest(),
+                        &target_arch,
+                    )?;
+                    if original.cross != inputs.cross
+                        || original
+                            .sysroot
+                            .as_ref()
+                            .map(|root| root.assembly_identity())
+                            != inputs.sysroot.as_ref().map(|root| root.assembly_identity())
+                    {
+                        return Err(Error::new(
+                            codes::ROOT_016,
+                            "prepared inputs differ from the cross inputs embedded in the SRPM",
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    let embedded_lock = prepared_inputs
+        .as_ref()
+        .and_then(|inputs| inputs.root.clone())
+        .or(embedded_lock);
+    let automatic_environment = if let Some(inputs) = prepared_inputs
+        .as_ref()
+        .filter(|_| request.prepared.is_none() && !request.input.replace_root_lock)
+    {
+        let allow_assets = request.input.prepared_inputs.is_some()
+            || request.config.root.lock().is_some()
+            || request.config.root.profile().is_some();
+        Some(inputs.replay(
+            crate::domain::Arch::parse(&target_arch)?,
+            request.config,
+            allow_assets,
+        )?)
+    } else if embedded_lock.is_none()
         && request.config.root.lock().is_none()
         && request.config.root.profile().is_some()
     {
@@ -258,10 +332,23 @@ pub(super) fn prepare(
             .as_ref()
             .and_then(|env| env.lock().cloned()),
     };
+    if let (Some(requested), Some(inputs)) = (&requested_lock, &prepared_inputs) {
+        if !request.input.replace_root_lock
+            && inputs
+                .root
+                .as_ref()
+                .is_some_and(|root| root.assembly_identity() != requested.assembly_identity())
+        {
+            return Err(Error::new(
+                codes::ROOT_016,
+                "explicit root lock differs from the prepared build inputs",
+            ));
+        }
+    }
     let root_differs = match (&requested_lock, &embedded_lock) {
         (Some(requested), Some(embedded)) => {
             requested.closure_digest != embedded.closure_digest
-                || requested.root_digest != embedded.root_digest
+                || (input_text.is_none() && requested.root_digest != embedded.root_digest)
         }
         _ => false,
     };
@@ -289,7 +376,8 @@ pub(super) fn prepare(
     } else {
         None
     };
-    let allow_appliance_resolve = requested_lock.is_some();
+    let allow_appliance_resolve =
+        requested_lock.is_some() || request.input.prepared_inputs.is_some();
     let mut active_lock = requested_lock.or(embedded_lock);
     if let Some(lock) = &active_lock {
         crate::support::autoroot::report_root(lock, &lock.profile, "from lock");
@@ -431,6 +519,31 @@ pub(super) fn prepare(
         None
     };
 
+    let replacing = replaced.is_some();
+    let mut inputs =
+        prepared_inputs
+            .filter(|_| !replacing)
+            .unwrap_or_else(|| crate::inputs::PreparedInputs {
+                root: active_lock.clone(),
+                sysroot: sysroot_lock.clone(),
+                cross: cross.clone(),
+                ..Default::default()
+            });
+    // Legacy SRPMs acquire missing inputs here, before build or test execution.
+    if (input_text.is_none() || replacing) && request.input.build_tests {
+        inputs
+            .complete(
+                &plan,
+                crate::inputs::TestSelection::new(true, request.input.include_optional_tests),
+                request.config,
+            )
+            .map_err(|failure| failure.report(report, request.output))?;
+    }
+    let cross = if !replacing {
+        inputs.cross.clone().or(cross)
+    } else {
+        cross
+    };
     let recipe = bundle.recipe.clone();
     Ok(RebuildState {
         work,
@@ -444,6 +557,7 @@ pub(super) fn prepare(
         pipelines,
         build,
         stage,
+        inputs,
         active_lock,
         locked_packages,
         assembled_root,

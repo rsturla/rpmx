@@ -22,7 +22,8 @@ pub const SYSROOT: &str = "/sysroot";
 /// The default names follow the GNU convention, `<triple>-gcc`. A distribution
 /// that names its toolchain differently overrides them in the profile, so this
 /// type never guesses a package layout.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CrossToolchain {
     pub triple: String,
     pub cc: String,

@@ -34,6 +34,7 @@ pub fn run_with(
         .output
         .unwrap_or_else(|| crate::commands::default_output(&arch));
     let input = RebuildInput {
+        prepared_inputs: args.prepared_inputs,
         srpm: args.file,
         arch: args.arch,
         cell: args.cell,

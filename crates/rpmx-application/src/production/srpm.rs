@@ -4,10 +4,7 @@ use crate::domain::{
     Error, Plan, RecipeBundle,
 };
 use crate::inputs::PreparedInputs;
-use crate::{
-    environment::{self, Environment},
-    support,
-};
+use crate::{environment, support};
 use crate::{ApplicationConfig, RunReport, SrpmInput};
 use std::path::{Path, PathBuf};
 
@@ -39,8 +36,20 @@ pub(crate) fn execute(
         {
             PreparedInputs::default()
         } else {
-            PreparedInputs::resolve(&bundle, &plan, target, config)?
+            PreparedInputs::resolve(
+                &bundle,
+                &plan,
+                target,
+                config,
+                crate::inputs::TestSelection::new(true, input.include_optional_tests),
+            )
+            .map_err(|failure| failure.report(report, output))?
         };
+        if provenance.root.is_some() {
+            report
+                .evidence
+                .push(provenance.export(output, bundle.digest(), &plan.arch)?);
+        }
         let epoch = config
             .policy
             .source_date_epoch
@@ -58,7 +67,20 @@ pub(crate) fn execute(
             report,
         )?;
     } else {
-        let environment = Environment::prepare(&bundle, &plan, target, config)?;
+        let provenance = PreparedInputs::resolve(
+            &bundle,
+            &plan,
+            target,
+            config,
+            crate::inputs::TestSelection::new(true, input.include_optional_tests),
+        )
+        .map_err(|failure| failure.report(report, output))?;
+        let environment = provenance.materialize(target, config)?;
+        if provenance.root.is_some() {
+            report
+                .evidence
+                .push(provenance.export(output, bundle.digest(), &plan.arch)?);
+        }
         let sources = output.join("source");
         let epoch = super::source::assemble_sources(
             config,
@@ -73,7 +95,7 @@ pub(crate) fn execute(
             config,
             &bundle,
             &plan,
-            &PreparedInputs::from_environment(Some(&environment)),
+            &provenance,
             &sources,
             output,
             epoch,
@@ -110,6 +132,7 @@ pub(crate) fn package(
         })
         .collect();
     let steps = support::step_root(config.pipelines.as_deref(), &bundle.root);
+    let portable = provenance.portable();
     let packages = prepare_source_packages(SourcePackageOptions {
         recipe: &bundle.recipe,
         plan,
@@ -120,8 +143,8 @@ pub(crate) fn package(
         step_root: steps.as_deref(),
         sources,
         source_date_epoch: epoch,
-        root_lock: provenance.root.as_ref(),
-        sysroot_lock: provenance.sysroot.as_ref(),
+        root_lock: portable.root.as_ref(),
+        sysroot_lock: portable.sysroot.as_ref(),
         cross: provenance.cross.as_ref(),
         sbom: provenance
             .root
@@ -137,7 +160,10 @@ pub(crate) fn package(
         )
     })?;
     let mut written = Vec::new();
-    for package in packages {
+    for mut package in packages {
+        if provenance.root.is_some() {
+            provenance.embed(&mut package, bundle.digest(), &plan.arch)?;
+        }
         let path = crate::emit::source(&package, output, key.as_ref(), timestamp)?;
         report.artifacts.srpms.push(path.clone());
         written.push(path);

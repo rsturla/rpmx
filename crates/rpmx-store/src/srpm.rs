@@ -312,6 +312,8 @@ pub struct ReplacedLock {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PackageLock {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inputs: Option<LockRoot>,
     pub schema: u32,
     pub recipe_digest: String,
     pub version: String,
@@ -435,6 +437,7 @@ pub fn lock_json(
     context: LockBuildRef<'_>,
 ) -> Result<String> {
     let value = PackageLock {
+        inputs: None,
         schema: 1,
         recipe_digest: recipe_digest.to_string(),
         version: version.to_string(),

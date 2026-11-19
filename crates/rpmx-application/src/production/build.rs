@@ -1,8 +1,5 @@
 use crate::domain::{error::codes, Arch, Error};
-use crate::{
-    environment::{self, Environment},
-    support,
-};
+use crate::{environment, support};
 use crate::{ApplicationConfig, BuildInput, BuildRoot, RebuildInput, RunReport};
 use std::path::Path;
 
@@ -169,7 +166,15 @@ fn one(
     if let Some(stage) = &input.stage {
         return super::package_stage(config, input, &bundle, &plan, target, stage, output, report);
     }
-    let environment = Environment::prepare(&bundle, &plan, target, config)?;
+    let inputs = crate::inputs::PreparedInputs::resolve(
+        &bundle,
+        &plan,
+        target,
+        config,
+        crate::inputs::TestSelection::new(input.build_tests, input.include_optional_tests),
+    )
+    .map_err(|failure| failure.report(report, output))?;
+    let environment = inputs.materialize(target, config)?;
     if input.locked {
         support::lock::verify(
             &bundle,
@@ -210,7 +215,7 @@ fn one(
             config,
             &bundle,
             &single,
-            &crate::inputs::PreparedInputs::from_environment(Some(&environment)),
+            &inputs,
             &sources,
             &output.join("src"),
             epoch,
@@ -218,6 +223,7 @@ fn one(
         )?;
         for srpm in srpms {
             let rebuild = RebuildInput {
+                prepared_inputs: None,
                 srpm,
                 arch: Some(target.to_string()),
                 cell: Some(cell.id.clone()),

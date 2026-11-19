@@ -97,6 +97,7 @@ pub fn assemble(args: ApplianceAssembleArgs) -> Result<(), Error> {
             appliance::assemble_root(
                 &lock,
                 AssembleOptions {
+                    offline: false,
                     cache: &cache,
                     work: work.path(),
                     root: &path,

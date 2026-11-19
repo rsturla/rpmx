@@ -22,6 +22,7 @@ pub fn run(args: SrpmArgs, pipelines: Option<&Path>) -> Result<rpmx_application:
             recipe: args.file,
             arch: args.arch,
             sources: args.sources,
+            include_optional_tests: args.include_optional_tests,
             cell: args.cell,
         }),
         output: args.output,

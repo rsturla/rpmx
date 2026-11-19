@@ -1954,6 +1954,7 @@ mod candidate_transaction_tests {
         let selection = super::super::RootSelection::assemble(
             lock.clone(),
             super::super::AssembleOptions {
+                offline: false,
                 cache: &cache,
                 work: &work.path().join("assemble"),
                 root: &root,
@@ -1976,6 +1977,7 @@ mod candidate_transaction_tests {
         super::super::RootSelection::assemble(
             lock,
             super::super::AssembleOptions {
+                offline: false,
                 cache: &cache,
                 work: &work.path().join("assemble-replay"),
                 root: &replay,
@@ -2079,6 +2081,7 @@ mod candidate_transaction_tests {
         let error = super::super::RootSelection::assemble(
             conflict_lock,
             super::super::AssembleOptions {
+                offline: false,
                 cache: &cache,
                 work: &work.path().join("conflict-assemble"),
                 root: &work.path().join("conflict-root"),
