@@ -3,6 +3,7 @@ use crate::domain::{
     source_package::{prepare_source_packages, SourcePackageOptions},
     Error, Plan, RecipeBundle,
 };
+use crate::inputs::PreparedInputs;
 use crate::{
     environment::{self, Environment},
     support,
@@ -32,15 +33,14 @@ pub(crate) fn execute(
     if let Some(sources) = &input.sources {
         // Packaging an existing source snapshot does not execute commands and
         // does not invent a build environment for a recipe that declares none.
-        let environment = if bundle.recipe.build.root.is_none()
+        let provenance = if bundle.recipe.build.root.is_none()
             && config.root.profile().is_none()
             && config.root.lock().is_none()
         {
-            None
+            PreparedInputs::default()
         } else {
-            Some(Environment::prepare(&bundle, &plan, target, config)?)
+            PreparedInputs::resolve(&bundle, &plan, target, config)?
         };
-        let provenance = SourceBuildProvenance::from_environment(environment.as_ref());
         let epoch = config
             .policy
             .source_date_epoch
@@ -73,7 +73,7 @@ pub(crate) fn execute(
             config,
             &bundle,
             &plan,
-            &SourceBuildProvenance::from_environment(Some(&environment)),
+            &PreparedInputs::from_environment(Some(&environment)),
             &sources,
             output,
             epoch,
@@ -83,29 +83,12 @@ pub(crate) fn execute(
     Ok(())
 }
 
-/// Persisted source-package provenance, not an execution root handle.
-pub(crate) struct SourceBuildProvenance {
-    pub(super) root: Option<crate::domain::root::RootLock>,
-    pub(super) sysroot: Option<crate::domain::root::RootLock>,
-    pub(super) cross: Option<crate::domain::guest::CrossToolchain>,
-}
-impl SourceBuildProvenance {
-    pub fn from_environment(environment: Option<&Environment>) -> Self {
-        Self {
-            root: environment.and_then(|env| env.lock().cloned()),
-            sysroot: environment
-                .and_then(|env| env.sysroot.as_ref().map(|root| root.lock().clone())),
-            cross: environment.and_then(|env| env.cross.clone()),
-        }
-    }
-}
-
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn package(
     config: &ApplicationConfig,
     bundle: &RecipeBundle,
     plan: &Plan,
-    provenance: &SourceBuildProvenance,
+    provenance: &PreparedInputs,
     sources: &Path,
     output: &Path,
     epoch: u32,

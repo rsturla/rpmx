@@ -1,7 +1,6 @@
 //! Derive execution context once from the recipe policy. Callers choose a
 //! target and a root policy, never an independent execution architecture.
 use crate::domain::{
-    error::codes,
     root::{RootLock, RootSelection},
     Arch, Error, Plan, RecipeBundle,
 };
@@ -26,129 +25,112 @@ impl Environment {
         target: Arch,
         config: &ApplicationConfig,
     ) -> Result<Self, Error> {
-        if let BuildRoot::Bootstrap(bootstrap) = &config.root {
-            let (build, target_root, cross) = match bootstrap {
-                BootstrapEnvironment::Native { build } => (build, None, None),
-                BootstrapEnvironment::Cross {
-                    build,
-                    target,
-                    toolchain,
-                } => (build, Some(target), Some(toolchain.as_ref().clone())),
-            };
-            let exec = if target_root.is_some() {
-                Arch::current()?
-            } else {
-                target
-            };
-            let selected = RootSelection::load(&build.lock, &build.path, exec.as_str())?;
-            let sysroot = target_root
-                .map(|root| RootSelection::load(&root.lock, &root.path, target.as_str()))
-                .transpose()?;
-            let appliance = autoroot::appliance_for_lock(
-                Some(&build.lock),
-                config.cache.as_deref(),
-                config.offline,
-                config.runner.parse()?,
-                exec.as_str(),
-                config.runner_assets.as_deref(),
-            )?;
-            return Ok(Self {
-                target,
-                exec,
-                selected: Some(selected),
-                lock_path: Some(build.lock.clone()),
-                sysroot,
-                cross,
-                appliance,
-            });
-        }
-        let automatic = match &config.root {
-            BuildRoot::Automatic { .. } => autoroot::ensure(
-                &bundle.recipe,
-                plan,
-                &bundle.root,
-                config.root.profile(),
-                config.cache.as_deref(),
-                config.offline,
-                false,
-                target.as_str(),
-            )?,
-            _ => None,
-        };
-        if let Some(automatic) = automatic {
-            let selected = automatic.selection;
-            let sysroot = automatic.sysroot.map(|root| root.selection);
-            let exec = if sysroot.is_some() {
-                Arch::current()?
-            } else {
-                target
-            };
-            let appliance = autoroot::appliance_for_lock(
-                Some(&automatic.lock),
-                config.cache.as_deref(),
-                config.offline,
-                config.runner.parse()?,
-                exec.as_str(),
-                config.runner_assets.as_deref(),
-            )?;
-            return Ok(Self {
-                target,
-                exec,
-                selected: Some(selected),
-                lock_path: Some(automatic.lock),
-                sysroot,
-                cross: automatic.cross,
-                appliance,
-            });
-        }
-        Self::explicit(target, config)
+        crate::inputs::PreparedInputs::resolve(bundle, plan, target, config)?
+            .materialize(target, config)
     }
+
     pub fn explicit(target: Arch, config: &ApplicationConfig) -> Result<Self, Error> {
-        let selected = match &config.root {
-            BuildRoot::Locked { lock, root } => {
-                let document = crate::domain::root::load_lock(lock)?;
-                let path = match root {
-                    Some(path) => path.clone(),
-                    None => {
-                        autoroot::ensure_from_lock(
-                            &document,
-                            config.cache.as_deref(),
-                            config.offline,
-                            target.as_str(),
-                            false,
-                            config.runner_assets.as_deref(),
-                            true,
-                            false,
-                        )?
-                        .root
-                    }
-                };
-                Some(RootSelection::load(lock, &path, target.as_str())?)
-            }
-            BuildRoot::UnsafeHost => None,
+        let inputs = match &config.root {
+            BuildRoot::Locked { lock, .. } => crate::inputs::PreparedInputs {
+                root: Some(crate::domain::root::load_lock(lock)?),
+                ..Default::default()
+            },
+            BuildRoot::UnsafeHost => crate::inputs::PreparedInputs::default(),
             _ => {
                 return Err(Error::new(
-                    codes::ROOT_016,
+                    crate::domain::error::codes::ROOT_016,
                     "no build root: declare build.root or select a build profile",
                 ))
             }
         };
-        let lock_path = config.root.lock().map(Path::to_path_buf);
-        let appliance = autoroot::appliance_for_lock(
-            lock_path.as_deref(),
-            config.cache.as_deref(),
-            config.offline,
-            config.runner.parse()?,
-            target.as_str(),
-            config.runner_assets.as_deref(),
-        )?;
+        inputs.materialize(target, config)
+    }
+
+    /// Assemble and verify exact inputs. This operation never solves packages.
+    pub fn from_inputs(
+        inputs: &crate::inputs::PreparedInputs,
+        target: Arch,
+        config: &ApplicationConfig,
+    ) -> Result<Self, Error> {
+        let exec = inputs.exec(target)?;
+        let (build_path, sysroot_path, supplied_lock) = match &config.root {
+            BuildRoot::Locked { lock, root } => (root.as_deref(), None, Some(lock.as_path())),
+            BuildRoot::Bootstrap(BootstrapEnvironment::Native { build }) => {
+                (Some(build.path.as_path()), None, Some(build.lock.as_path()))
+            }
+            BuildRoot::Bootstrap(BootstrapEnvironment::Cross { build, target, .. }) => (
+                Some(build.path.as_path()),
+                Some(target.path.as_path()),
+                Some(build.lock.as_path()),
+            ),
+            _ => (None, None, None),
+        };
+        let mut appliance = None;
+        let selected = inputs
+            .root
+            .as_ref()
+            .map(|lock| {
+                let path = match build_path {
+                    Some(path) => path.to_path_buf(),
+                    None => {
+                        let roots = autoroot::ensure_from_lock(
+                            lock,
+                            config.cache.as_deref(),
+                            config.offline,
+                            exec.as_str(),
+                            false,
+                            config.runner_assets.as_deref(),
+                            true,
+                            inputs.cross.is_some(),
+                        )?;
+                        appliance = roots.appliance;
+                        roots.root
+                    }
+                };
+                RootSelection::verify_inputs(lock, &path, exec.as_str())
+            })
+            .transpose()?;
+        let sysroot = inputs
+            .sysroot
+            .as_ref()
+            .map(|lock| {
+                let path = match sysroot_path {
+                    Some(path) => path.to_path_buf(),
+                    None => autoroot::ensure_sysroot_from_lock(
+                        lock,
+                        config.cache.as_deref(),
+                        config.offline,
+                        target.as_str(),
+                    )?,
+                };
+                RootSelection::verify_inputs(lock, &path, target.as_str())
+            })
+            .transpose()?;
+        let lock_path = supplied_lock.map(Path::to_path_buf).or_else(|| {
+            selected.as_ref().map(|root| {
+                root.path()
+                    .parent()
+                    .expect("cached root parent")
+                    .join("root.lock.yaml")
+            })
+        });
+        if appliance.is_none() {
+            appliance = autoroot::appliance_for_lock(
+                lock_path.as_deref(),
+                config.cache.as_deref(),
+                config.offline,
+                config.runner.parse()?,
+                exec.as_str(),
+                config.runner_assets.as_deref(),
+            )?;
+        }
         Ok(Self {
             target,
-            exec: target,
+            exec,
             selected,
             lock_path,
-            sysroot: None,
-            cross: None,
+            sysroot,
+            cross: inputs.cross.clone(),
             appliance,
         })
     }

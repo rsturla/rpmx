@@ -43,9 +43,34 @@ pub fn cached_lock_for_requirement(cache: &Path, digest: &str) -> Option<crate::
         return None;
     }
     let entry = roots.join(key);
-    let lock = crate::root::load_lock(&entry.join("root.lock.yaml")).ok()?;
-    crate::root::RootSelection::verify(&lock, &entry.join("root"), lock.archs.first()?).ok()?;
-    Some(lock)
+    if let Ok(lock) = crate::root::load_lock(&entry.join("root.lock.yaml")) {
+        if crate::root::RootSelection::verify(&lock, &entry.join("root"), lock.archs.first()?)
+            .is_ok()
+        {
+            return Some(lock);
+        }
+    }
+    // New resolutions name inputs independently of any assembled directory.
+    let lock = crate::root::load_lock(
+        &cache
+            .parent()
+            .unwrap_or(cache)
+            .join("resolved-roots")
+            .join(format!("{key}.yaml")),
+    )
+    .ok()?;
+    let identity = lock.assembly_identity();
+    for mode in ["lock", "sysroot"] {
+        let entry = roots.join(format!("{mode}-{}", identity.trim_start_matches("sha512:")));
+        if let Ok(selected) = crate::root::RootSelection::verify_inputs(
+            &lock,
+            &entry.join("root"),
+            lock.archs.first()?,
+        ) {
+            return Some(selected.lock().clone());
+        }
+    }
+    None
 }
 
 /// The distribution tag declared by a recipe's named root profile.
@@ -422,6 +447,43 @@ mod tests {
 
     fn plan(recipe: &Recipe) -> rpmx_language::Plan {
         plan_for(recipe, "x86_64")
+    }
+
+    #[test]
+    fn resolved_inputs_find_their_verified_assembly() {
+        use crate::root::*;
+        let work = tempfile::tempdir().unwrap();
+        let cache = work.path().join("cas");
+        let digest = format!("sha512:{}", "1".repeat(128));
+        let mut lock: RootLock = serde_json::from_value(serde_json::json!({
+            "document": DOCUMENT, "version": VERSION, "profile": "probe",
+            "archs": ["x86_64"], "releasever": "44", "repositories": [], "closure_digest": "",
+            "packages": {"noarch": [{"name": "base", "evr": "1-1", "origin": {"kind": "candidate"},
+                "checksum": format!("sha512:{}", "0".repeat(128)), "size": 0}]}
+        }))
+        .unwrap();
+        lock.closure_digest = closure_digest(
+            &lock.releasever,
+            &lock.archs,
+            &lock.repositories,
+            &lock.packages,
+        );
+        let resolved = work.path().join("resolved-roots");
+        std::fs::create_dir(&resolved).unwrap();
+        write_lock(&resolved.join(format!("{}.yaml", "1".repeat(128))), &lock).unwrap();
+        assert!(super::cached_lock_for_requirement(&cache, &digest).is_none());
+        let assembled = work.path().join("roots").join(format!(
+            "lock-{}",
+            lock.assembly_identity().trim_start_matches("sha512:")
+        ));
+        let root = assembled.join("root");
+        std::fs::create_dir_all(&root).unwrap();
+        lock.root_digest = Some(rpmx_store::tree::digest_root(&root).unwrap());
+        lock.rpmdb_digest = Some(rpmx_store::tree::rpmdb_digest(&root).unwrap());
+        write_lock(&assembled.join("root.lock.yaml"), &lock).unwrap();
+        assert!(super::cached_lock_for_requirement(&cache, &digest).is_some());
+        std::fs::write(root.join("changed"), "drift").unwrap();
+        assert!(super::cached_lock_for_requirement(&cache, &digest).is_none());
     }
 
     #[test]

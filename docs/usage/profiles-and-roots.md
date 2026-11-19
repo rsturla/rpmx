@@ -245,3 +245,14 @@ and `rebuild`; the directory must already contain a bootable appliance.
 `rpm-package-manifest`.
 
 ---
+
+## Resolved inputs and assembled roots
+
+Dependency resolution produces exact build and sysroot locks without an
+assembled filesystem. Source preparation for all targets uses the same resolver
+as a local build. Packaging an existing source snapshot needs only those inputs.
+
+Execution materializes the locked inputs through the common root cache.
+Resolution records and assembly receipts have separate cache identities.
+Existing verified roots remain usable. A cached resolution alone does not imply
+that its filesystem or runner assets are available for offline execution.

@@ -210,7 +210,7 @@ fn one(
             config,
             &bundle,
             &single,
-            &super::srpm::SourceBuildProvenance::from_environment(Some(&environment)),
+            &crate::inputs::PreparedInputs::from_environment(Some(&environment)),
             &sources,
             &output.join("src"),
             epoch,
