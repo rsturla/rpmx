@@ -21,8 +21,8 @@ pub struct AssembleOptions<'a> {
 /// The root is left in `options.work/root`; the caller computes its digest and
 /// records it in the lock.
 pub fn assemble(lock: &RootLock, options: AssembleOptions<'_>) -> Result<std::path::PathBuf> {
-    lock.validate()?;
-    verify_payloads(lock, options.cache)?;
+    let inputs = super::VerifiedInputs::load(lock, options.cache)?;
+    inputs.require_complete()?;
     let lock_arch = lock
         .archs
         .first()
@@ -73,35 +73,32 @@ pub fn assemble(lock: &RootLock, options: AssembleOptions<'_>) -> Result<std::pa
     let rpms = options.work.join("rpms");
 
     let mut files = Vec::new();
-    for (package_arch, entries) in &lock.packages {
-        for package in entries {
-            if !safe_staging_component(package_arch)
-                || !safe_staging_component(&package.name)
-                || !safe_staging_component(&package.evr)
-            {
-                return Err(Error::new(
+    for input in inputs.packages() {
+        let package_arch = input.arch();
+        let package = input.locked();
+        if !safe_staging_component(package_arch)
+            || !safe_staging_component(&package.name)
+            || !safe_staging_component(&package.evr)
+        {
+            return Err(Error::new(
                     codes::ROOT_012,
                     "the lock contains a package name, EVR, or architecture that cannot be staged safely",
                 ));
-            }
-            let filename = format!(
-                "{}-{}.{package_arch}.rpm",
-                package.name,
-                package.evr.replace(':', "_")
-            );
-            let bytes = cas::load(options.cache, &package.checksum)?;
-            std::fs::write(rpms.join(&filename), &bytes).map_err(|error| {
-                Error::new(
-                    codes::ROOT_012,
-                    format!("cannot stage {}: {error}", filename),
-                )
-            })?;
-            rpmx_base::output::installing(format!(
-                "{}-{}.{package_arch}",
-                package.name, package.evr
-            ));
-            files.push(format!("/work/rpms/{filename}"));
         }
+        let filename = format!(
+            "{}-{}.{package_arch}.rpm",
+            package.name,
+            package.evr.replace(':', "_")
+        );
+        let bytes = cas::load(options.cache, &package.checksum)?;
+        std::fs::write(rpms.join(&filename), &bytes).map_err(|error| {
+            Error::new(
+                codes::ROOT_012,
+                format!("cannot stage {}: {error}", filename),
+            )
+        })?;
+        rpmx_base::output::installing(format!("{}-{}.{package_arch}", package.name, package.evr));
+        files.push(format!("/work/rpms/{filename}"));
     }
     if files.is_empty() {
         return Err(Error::new(
@@ -148,29 +145,6 @@ pub fn assemble(lock: &RootLock, options: AssembleOptions<'_>) -> Result<std::pa
     Ok(options.root.to_path_buf())
 }
 
-fn verify_payloads(lock: &RootLock, cache: &Path) -> Result<()> {
-    for (arch, packages) in &lock.packages {
-        for package in packages {
-            cas::load(cache, &package.checksum)?;
-            let metadata =
-                rpmx_payload::metadata::package_metadata(&cas::path(cache, &package.checksum)?)?;
-            if metadata.name != package.name
-                || metadata.evr() != package.evr
-                || metadata.arch != *arch
-            {
-                return Err(Error::new(
-                    codes::ROOT_012,
-                    format!(
-                        "locked identity does not match RPM payload {}",
-                        package.checksum
-                    ),
-                ));
-            }
-        }
-    }
-    Ok(())
-}
-
 /// Unpack a locked closure into a link-time sysroot.
 ///
 /// Unlike [`assemble`], nothing in the payload is executed: no scriptlets, no
@@ -182,8 +156,8 @@ pub fn assemble_sysroot(
     lock: &RootLock,
     options: AssembleOptions<'_>,
 ) -> Result<std::path::PathBuf> {
-    lock.validate()?;
-    verify_payloads(lock, options.cache)?;
+    let inputs = super::VerifiedInputs::load(lock, options.cache)?;
+    inputs.require_complete()?;
     prepare_assembly(options.work, options.root)?;
     let rpms = options.work.join("rpms");
     std::fs::create_dir_all(options.root).map_err(|error| {
@@ -194,48 +168,45 @@ pub fn assemble_sysroot(
     })?;
 
     let mut extracted = 0usize;
-    for (package_arch, entries) in &lock.packages {
-        for package in entries {
-            if !safe_staging_component(package_arch)
-                || !safe_staging_component(&package.name)
-                || !safe_staging_component(&package.evr)
-            {
-                return Err(Error::new(
+    for input in inputs.packages() {
+        let package_arch = input.arch();
+        let package = input.locked();
+        if !safe_staging_component(package_arch)
+            || !safe_staging_component(&package.name)
+            || !safe_staging_component(&package.evr)
+        {
+            return Err(Error::new(
                     codes::ROOT_012,
                     "the lock contains a package name, EVR, or architecture that cannot be staged safely",
                 ));
-            }
-            let filename = format!(
-                "{}-{}.{package_arch}.rpm",
-                package.name,
-                package.evr.replace(':', "_")
-            );
-            let path = rpms.join(&filename);
-            let bytes = cas::load(options.cache, &package.checksum)?;
-            std::fs::write(&path, &bytes).map_err(|error| {
-                Error::new(
-                    codes::ROOT_012,
-                    format!("cannot stage {}: {error}", filename),
-                )
-            })?;
-            let payload = rpm::Package::open(&path).map_err(|error| {
-                Error::new(
-                    codes::ROOT_012,
-                    format!("cannot read {}: {error}", filename),
-                )
-            })?;
-            rpmx_payload::extract_payload(&payload, options.root).map_err(|error| {
-                Error::new(
-                    codes::ROOT_012,
-                    format!("cannot unpack {}: {error}", filename),
-                )
-            })?;
-            rpmx_base::output::installing(format!(
-                "{}-{}.{package_arch}",
-                package.name, package.evr
-            ));
-            extracted += 1;
         }
+        let filename = format!(
+            "{}-{}.{package_arch}.rpm",
+            package.name,
+            package.evr.replace(':', "_")
+        );
+        let path = rpms.join(&filename);
+        let bytes = cas::load(options.cache, &package.checksum)?;
+        std::fs::write(&path, &bytes).map_err(|error| {
+            Error::new(
+                codes::ROOT_012,
+                format!("cannot stage {}: {error}", filename),
+            )
+        })?;
+        let payload = rpm::Package::open(&path).map_err(|error| {
+            Error::new(
+                codes::ROOT_012,
+                format!("cannot read {}: {error}", filename),
+            )
+        })?;
+        rpmx_payload::extract_payload(&payload, options.root).map_err(|error| {
+            Error::new(
+                codes::ROOT_012,
+                format!("cannot unpack {}: {error}", filename),
+            )
+        })?;
+        rpmx_base::output::installing(format!("{}-{}.{package_arch}", package.name, package.evr));
+        extracted += 1;
     }
     if extracted == 0 {
         return Err(Error::new(
@@ -506,37 +477,4 @@ fn prepare_root_dir(root: &Path) -> Result<()> {
             format!("cannot create the sysroot mount point: {error}"),
         )
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn missing_corrupt_and_substituted_payloads_fail_before_container_startup() {
-        let work = tempfile::tempdir().unwrap();
-        let cache = work.path().join("cas");
-        let original =
-            super::super::candidate::tests::rpm(work.path(), "fixture", "1", "noarch", None);
-        let candidates = super::super::CandidateSet::import(&cache, &[original]).unwrap();
-        let mut lock = super::super::lock::model_tests::candidate_lock(&candidates.packages()[0]);
-        let payload = cas::path(&cache, candidates.packages()[0].checksum()).unwrap();
-        let original = std::fs::read(&payload).unwrap();
-        std::fs::remove_file(&payload).unwrap();
-        assert!(verify_payloads(&lock, &cache)
-            .unwrap_err()
-            .message
-            .contains("not in the cache"));
-        std::fs::write(&payload, b"corrupt").unwrap();
-        assert!(verify_payloads(&lock, &cache)
-            .unwrap_err()
-            .message
-            .contains("corrupt"));
-        std::fs::write(&payload, original).unwrap();
-        lock.packages.get_mut("noarch").unwrap()[0].name = "substituted".to_string();
-        assert!(verify_payloads(&lock, &cache)
-            .unwrap_err()
-            .message
-            .contains("identity does not match"));
-    }
 }

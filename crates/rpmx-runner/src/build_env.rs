@@ -7,46 +7,22 @@ use rpmx_base::error::{codes, Error, Result};
 use rpmx_language::plan::PlannedStep;
 
 /// The package name part of a dependency string such as `gcc >= 12`.
-pub fn dependency_name(value: &str) -> &str {
+fn dependency_name(value: &str) -> &str {
     value.split_whitespace().next().unwrap_or(value)
 }
 
-/// Fail before the first step if a declared build tool is neither a package in
-/// the locked root nor an executable inside it. Version constraints are parsed
-/// off the name and are not checked yet.
-pub fn check_build_tools(
+/// Probe executable names only for explicit unsafe-host execution.
+/// RPM-managed roots validate capabilities from their pinned package inputs.
+pub fn check_host_tools(
     sandbox: &Sandbox<'_>,
     workspace: &Path,
     packages: &[String],
-    sysroot: &[String],
-    locked_packages: &BTreeSet<String>,
 ) -> Result<()> {
-    let mut missing_packages = BTreeSet::new();
-    for dependency in sysroot {
-        let name = dependency_name(dependency);
-        if !name.is_empty() && !locked_packages.contains(name) {
-            missing_packages.insert(name.to_string());
-        }
-    }
-    if !missing_packages.is_empty() && !locked_packages.is_empty() {
-        return Err(Error::new(
-            codes::ROOT_018,
-            format!(
-                "sysroot packages missing from the selected root: {}; \
-                 add them to the profile's packages.install",
-                missing_packages.into_iter().collect::<Vec<_>>().join(", ")
-            ),
-        ));
-    }
-
-    let mut candidates = BTreeSet::new();
-    for tool in packages {
-        let name = dependency_name(tool);
-        if name.is_empty() || locked_packages.contains(name) {
-            continue;
-        }
-        candidates.insert(name.to_string());
-    }
+    let candidates = packages
+        .iter()
+        .map(|tool| dependency_name(tool))
+        .filter(|name| !name.is_empty())
+        .collect::<BTreeSet<_>>();
     if candidates.is_empty() {
         return Ok(());
     }
@@ -61,7 +37,7 @@ pub fn check_build_tools(
         ),
         "sh".to_string(),
     ];
-    args.extend(candidates.iter().cloned());
+    args.extend(candidates.into_iter().map(str::to_string));
     let step = PlannedStep {
         label: "tool-probe".to_string(),
         uses: "tool-probe".to_string(),
@@ -98,7 +74,7 @@ pub fn check_build_tools(
         Err(Error::new(
             codes::ROOT_018,
             format!(
-                "build tools missing from the selected root: {}; add them to the profile's packages.install",
+                "build tools missing from the unsafe host: {}",
                 missing.join(", ")
             ),
         ))

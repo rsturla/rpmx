@@ -246,6 +246,32 @@ and `rebuild`; the directory must already contain a bootable appliance.
 
 ---
 
+## Build requirement capabilities
+
+Build requirements name RPM capabilities. They do not have to match package
+names or executable names. For example, a package named `gcc-16-default` can
+provide `gcc-c++ = 16.2-1`. A recipe can require `gcc-c++ >= 16`.
+
+Assembly, requirement checks, and provenance share a verified input inventory.
+It validates the lock and checks each available RPM checksum, name, EVR, and
+architecture. Header metadata comes from those verified bytes. Before execution,
+rpmx checks names, versioned provides, and file capabilities from this inventory. The same check applies to local
+builds, embedded source RPM inputs, and shared source RPM input records. Native
+builds check both tool and target requirements in the build root. Cross builds
+check tools in the host root and target requirements in the target sysroot.
+Explicit external SDKs retain their link-input checks. Unsafe host builds retain
+executable probing.
+
+Keep the cached input RPMs when reusing an assembled root. Without their headers,
+rpmx can verify package names and versions from the verified root lock, but cannot
+prove virtual capabilities. Each requirement is satisfied, unsatisfied, or unknown.
+Unknown means no known provider and incomplete header coverage. Both unsatisfied
+and unknown requirements stop the build, with separate diagnostics. Adding an
+assembly receipt never changes these results. Assembly requires all RPMs;
+provenance records incomplete coverage when headers are unavailable.
+Simple RPM dependency operators are supported. Rich dependency expressions remain
+unsupported, as they are for package declarations.
+
 ## Resolved inputs and assembled roots
 
 Dependency resolution produces exact build and sysroot locks without an

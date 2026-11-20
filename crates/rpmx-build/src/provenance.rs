@@ -61,40 +61,18 @@ pub struct Collected {
     pub complete: bool,
 }
 
-/// Read verified CAS headers, independently of recipe package names.
-/// An assembled root can outlive its cached RPMs. Preserve locked identities
-/// in that case, but do not claim complete capability coverage.
-pub fn collect(lock: &rpmx_root::root::RootLock, cache: &Path, root: &str) -> Result<Collected> {
+/// Project portable capabilities from the same inventory used for validation.
+pub fn collect(inventory: &rpmx_root::root::VerifiedInputs, root: &str) -> Result<Collected> {
     let mut inputs = Vec::new();
-    let mut complete = true;
-    for (arch, packages) in &lock.packages {
-        for package in packages {
-            let path = rpmx_store::cas::path(cache, &package.checksum)?;
-            if !path.exists() {
-                complete = false;
-                inputs.push(Input {
-                    root: root.into(),
-                    name: package.name.clone(),
-                    evr: package.evr.clone(),
-                    arch: arch.clone(),
-                    checksum: package.checksum.clone(),
-                    source: package.srpm.clone(),
-                    provides: BTreeMap::new(),
-                });
-                continue;
-            }
-            rpmx_store::cas::load(cache, &package.checksum)?;
-            let header = rpmx_payload::metadata::package_metadata(&path)?;
-            if header.name != package.name || header.evr() != package.evr {
-                return Err(invalid("provenance input does not match its root lock"));
-            }
-            let mut provides = BTreeMap::new();
+    for input in inventory.packages() {
+        let package = input.locked();
+        let mut provides = BTreeMap::new();
+        if let Some(header) = input.metadata() {
             for capability in &header.provides {
                 if !capability.name.starts_with("rpmx(") {
                     continue;
                 }
-                if capability.name.starts_with("rpmx(")
-                    && !capability.version.is_empty()
+                if !capability.version.is_empty()
                     && capability.flags.intersection(
                         rpm::DependencyFlags::LESS
                             | rpm::DependencyFlags::GREATER
@@ -113,19 +91,22 @@ pub fn collect(lock: &rpmx_root::root::RootLock, cache: &Path, root: &str) -> Re
                     }
                 }
             }
-            inputs.push(Input {
-                root: root.into(),
-                name: header.name.clone(),
-                evr: header.evr(),
-                arch: header.arch,
-                checksum: package.checksum.clone(),
-                source: package.srpm.clone(),
-                provides,
-            });
         }
+        inputs.push(Input {
+            root: root.into(),
+            name: package.name.clone(),
+            evr: package.evr.clone(),
+            arch: input.arch().into(),
+            checksum: package.checksum.clone(),
+            source: package.srpm.clone(),
+            provides,
+        });
     }
     inputs.sort_by(|a, b| (&a.root, &a.name, &a.checksum).cmp(&(&b.root, &b.name, &b.checksum)));
-    Ok(Collected { inputs, complete })
+    Ok(Collected {
+        inputs,
+        complete: inventory.complete(),
+    })
 }
 
 /// Remove source-carried reports before the first writable build step.
@@ -370,6 +351,56 @@ pub fn inspect(path: &Path) -> Result<Option<Receipt>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn provenance_and_requirements_share_verified_metadata_and_coverage() {
+        use rpmx_root::root::{closure_digest, RequirementStatus, RootLock, VerifiedInputs};
+        let cache = tempfile::tempdir().unwrap();
+        let mut builder = rpm::PackageBuilder::new("provider", "2", "MIT", "noarch", "fixture");
+        builder
+            .release("1")
+            .provides(rpm::Dependency::eq("gcc-c++", "16"))
+            .provides(rpm::Dependency::eq("rpmx(component:fixture)", "2"));
+        let path = cache.path().join("provider.rpm");
+        builder.build().unwrap().write_file(&path).unwrap();
+        let checksum = rpmx_store::cas::store(cache.path(), &std::fs::read(path).unwrap()).unwrap();
+        let mut lock: RootLock = serde_json::from_value(serde_json::json!({
+            "document": "rpmx-root-lock", "version": 2, "profile": "fixture",
+            "archs": ["x86_64"], "releasever": "44", "repositories": [],
+            "packages": {"noarch": [{"name": "provider", "evr": "2-1", "checksum": checksum,
+                "origin": {"kind": "candidate"}, "size": 0}]}, "closure_digest": ""
+        }))
+        .unwrap();
+        lock.closure_digest = closure_digest(
+            &lock.releasever,
+            &lock.archs,
+            &lock.repositories,
+            &lock.packages,
+        );
+        let inventory = VerifiedInputs::load(&lock, cache.path()).unwrap();
+        // Both consumers use the snapshot even if the cache is removed later.
+        std::fs::remove_file(rpmx_store::cas::path(cache.path(), &checksum).unwrap()).unwrap();
+        assert_eq!(
+            inventory.requirement("gcc-c++ >= 16").unwrap(),
+            RequirementStatus::Satisfied
+        );
+        let collected = collect(&inventory, "build").unwrap();
+        assert!(collected.complete);
+        assert_eq!(
+            collected.inputs[0].provides,
+            BTreeMap::from([("rpmx(component:fixture)".into(), "2".into())])
+        );
+        assert_eq!(collected.inputs[0].checksum, checksum);
+        let incomplete = VerifiedInputs::load(&lock, cache.path()).unwrap();
+        assert_eq!(
+            incomplete.requirement("gcc-c++").unwrap(),
+            RequirementStatus::Unknown
+        );
+        let collected = collect(&incomplete, "build").unwrap();
+        assert!(!collected.complete);
+        assert!(collected.inputs[0].provides.is_empty());
+        assert_eq!(collected.inputs[0].name, "provider");
+    }
+
     fn input() -> Input {
         Input {
             root: "build".into(),

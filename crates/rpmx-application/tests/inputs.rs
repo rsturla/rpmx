@@ -129,6 +129,8 @@ fn shared_srpm_replays_source_tests_on_a_fresh_offline_worker() {
         .unwrap();
     rpm::PackageBuilder::new("coreutils", "1", "MIT", "noarch", "test tools")
         .release("1")
+        .provides(rpm::Dependency::eq("probe-build-tools", "16.2-1"))
+        .provides(rpm::Dependency::eq("probe-target-devel", "1:2.0-1"))
         .build()
         .unwrap()
         .write_file(repo.join("coreutils.rpm"))
@@ -181,7 +183,8 @@ package:
   summary: source-test transport probe
   license: MIT
 build:
-  packages: [bash, coreutils]
+  packages: [bash, coreutils, "probe-build-tools >= 16"]
+  sysroot: ["probe-target-devel >= 1:2"]
   pipeline:
     - runs: test ! -e /usr/share/probe-tool/value
   tests:

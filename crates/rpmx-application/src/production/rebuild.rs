@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::domain::binary_package::{prepare_binary_packages, BinaryPackageOptions};
-use crate::domain::build_env::check_build_tools;
+use crate::domain::build_env::check_host_tools;
 use crate::domain::error::codes;
 use crate::domain::runner::RunnerKind;
 use crate::domain::sandbox::{Sandbox, SandboxConfig};
@@ -93,7 +93,6 @@ fn rebuild(request: RebuildContext<'_>, run_report: &mut crate::RunReport) -> Re
         stage,
         inputs,
         active_lock,
-        locked_packages,
         assembled_root,
         assembled_appliance,
         signature_timestamp,
@@ -198,15 +197,23 @@ fn rebuild(request: RebuildContext<'_>, run_report: &mut crate::RunReport) -> Re
         .clone()
         .map(Ok)
         .unwrap_or_else(crate::support::default_cache)?;
+    let build_inventory = active_lock
+        .as_ref()
+        .map(|lock| rpmx_root::root::VerifiedInputs::load(lock, &cache))
+        .transpose()?;
+    let sysroot_inventory = sysroot_lock
+        .as_ref()
+        .map(|lock| rpmx_root::root::VerifiedInputs::load(lock, &cache))
+        .transpose()?;
     let mut provenance_inputs = Vec::new();
     let mut provenance_complete =
         active_lock.is_some() && (effective_sysroot.is_none() || sysroot_lock.is_some());
-    for (root, lock) in [
-        ("build", active_lock.as_ref()),
-        ("sysroot", sysroot_lock.as_ref()),
+    for (root, inventory) in [
+        ("build", build_inventory.as_ref()),
+        ("sysroot", sysroot_inventory.as_ref()),
     ] {
-        if let Some(lock) = lock {
-            let collected = rpmx_build::provenance::collect(lock, &cache, root)?;
+        if let Some(inventory) = inventory {
+            let collected = rpmx_build::provenance::collect(inventory, root)?;
             provenance_complete &= collected.complete;
             provenance_inputs.extend(collected.inputs);
         }
@@ -248,38 +255,22 @@ fn rebuild(request: RebuildContext<'_>, run_report: &mut crate::RunReport) -> Re
     run_report.evidence.push(pipeline_evidence);
     let pipeline = (|| -> Result<(), Error> {
         let _phase = crate::domain::output::enter_phase("build");
-        // A host dependency is satisfied by either root: the build root holds
-        // native packages, the sysroot holds target ones.
-        let mut available = locked_packages.clone();
-        // An automatic root was resolved from a profile that already included
-        // these dependencies, and resolution may have substituted a virtual
-        // provide (`zlib-devel` -> `zlib-ng-compat-devel`) that the lock
-        // records under the provider's name. Only an explicit root needs the
-        // names checked literally.
-        let trusted = request.prepared.is_some()
-            || (package_lock.root_lock.is_some()
-                && package_lock.build.packages == cell.packages
-                && package_lock.build.sysroot == cell.sysroot);
-        include_resolved_build_requirements(&mut available, &cell.packages, trusted);
-        if effective_sysroot.is_some() {
-            if let Some(lock) = &sysroot_lock {
-                available.extend(
-                    lock.packages
-                        .values()
-                        .flatten()
-                        .map(|package| package.name.clone()),
-                );
-            }
-            // The sysroot lock records resolved package names, not virtual
-            // provides, so a name such as `zlib-devel` may resolve to
-            // `zlib-ng-compat-devel`. Resolution already proved the declared
-            // dependency exists; the link-closure check proves the library
-            // does, which is the stronger claim.
-            available.extend(cell.sysroot.iter().cloned());
-        } else if trusted {
-            available.extend(cell.sysroot.iter().cloned());
+        if let Some(inventory) = &build_inventory {
+            rpmx_root::root::check_build_requirements(
+                inventory,
+                sysroot_inventory.as_ref(),
+                &cell.packages,
+                // An external SDK has no RPM lock. Its link inputs are checked below.
+                if effective_sysroot.is_some() && sysroot_lock.is_none() {
+                    &[]
+                } else {
+                    &cell.sysroot
+                },
+            )?;
+        } else {
+            // Only explicit unsafe-host execution may probe executable names.
+            check_host_tools(&sandbox, &build, &cell.packages)?;
         }
-        check_build_tools(&sandbox, &build, &cell.packages, &cell.sysroot, &available)?;
         crate::domain::output::phase("build", format!("{arch} · {} steps", cell.pipeline.len()));
         let total_steps = cell.pipeline.len();
         for (index, step) in cell.pipeline.iter().enumerate() {
@@ -671,22 +662,6 @@ fn write_replacement_srpm(
     Ok(written)
 }
 
-// Automatic resolution already proved these requirements, including virtual
-// capabilities whose names are not executable or installed package names.
-fn include_resolved_build_requirements(
-    available: &mut std::collections::BTreeSet<String>,
-    requirements: &[String],
-    automatic: bool,
-) {
-    if automatic {
-        available.extend(
-            requirements.iter().map(|requirement| {
-                crate::domain::build_env::dependency_name(requirement).to_string()
-            }),
-        );
-    }
-}
-
 fn index_repository(
     output: &Path,
     key: Option<&rpmx_rpm::sign::SigningKey>,
@@ -717,22 +692,4 @@ fn publish_file(source: &Path, destination: &Path) -> Result<(), Error> {
         )
     })?;
     Ok(())
-}
-
-#[cfg(test)]
-mod automatic_root_tests {
-    use super::include_resolved_build_requirements;
-    use std::collections::BTreeSet;
-
-    #[test]
-    fn automatic_roots_trust_resolved_virtual_build_capabilities() {
-        let requested = vec!["gcc-c++ >= 16".to_string()];
-        let mut automatic = BTreeSet::from(["gcc-16-default".to_string()]);
-        include_resolved_build_requirements(&mut automatic, &requested, true);
-        assert!(automatic.contains("gcc-c++"));
-
-        let mut explicit = BTreeSet::from(["gcc-16-default".to_string()]);
-        include_resolved_build_requirements(&mut explicit, &requested, false);
-        assert!(!explicit.contains("gcc-c++"));
-    }
 }
