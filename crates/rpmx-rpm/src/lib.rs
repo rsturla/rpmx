@@ -4,6 +4,8 @@ pub mod sign;
 
 use std::path::Path;
 
+use rpmx_payload::capabilities::parse_dependency;
+
 use rpm::{BuildConfig, CompressionType, FileMode, FileOptions, PackageBuilder, Scriptlet};
 use rpmx_core::package_spec::{BinaryPackageSpec, SourcePackageSpec};
 use rpmx_core::{error::codes, Error};
@@ -293,27 +295,4 @@ pub fn write_binary_rpm(spec: &BinaryPackageSpec, out: &Path) -> Result<(), Erro
             format!("cannot write {}: {error}", out.display()),
         )
     })
-}
-
-fn parse_dependency(text: &str) -> Result<rpm::Dependency, Error> {
-    let text = text.trim();
-    if text.starts_with('(') {
-        return Err(Error::new(
-            codes::RPM_012,
-            format!("rich dependency '{text}' is not supported yet"),
-        ));
-    }
-    let parts: Vec<&str> = text.split_whitespace().collect();
-    match parts.as_slice() {
-        [name] => Ok(rpm::Dependency::any(*name)),
-        [name, "=", version] => Ok(rpm::Dependency::eq(*name, *version)),
-        [name, ">=", version] => Ok(rpm::Dependency::greater_eq(*name, *version)),
-        [name, ">", version] => Ok(rpm::Dependency::greater(*name, *version)),
-        [name, "<=", version] => Ok(rpm::Dependency::less_eq(*name, *version)),
-        [name, "<", version] => Ok(rpm::Dependency::less(*name, *version)),
-        _ => Err(Error::new(
-            codes::RPM_013,
-            format!("cannot parse dependency '{text}'"),
-        )),
-    }
 }
