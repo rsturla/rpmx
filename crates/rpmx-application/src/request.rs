@@ -119,12 +119,21 @@ pub struct ApplicationRequest {
 }
 
 pub enum Operation {
+    ResolveInputs(ResolveInputsInput),
     Source(SourceInput),
     Srpm(SrpmInput),
     Build(BuildInput),
     Rebuild(RebuildInput),
     Accept(crate::acceptance::AcceptInput),
     Debug(DebugInput),
+}
+
+/// Resolve the same build, sysroot and source-test inputs used by execution.
+#[derive(Debug, Clone)]
+pub struct ResolveInputsInput {
+    pub recipe: PathBuf,
+    pub arch: Option<String>,
+    pub include_optional_tests: bool,
 }
 
 #[derive(Debug, Clone)]

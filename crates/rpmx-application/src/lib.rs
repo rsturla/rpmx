@@ -43,6 +43,7 @@ impl Application {
             )
         })?;
         let operation = match &request.operation {
+            Operation::ResolveInputs(_) => "inputs",
             Operation::Source(_) => "source",
             Operation::Srpm(_) => "srpm",
             Operation::Build(_) => "build",
@@ -53,6 +54,9 @@ impl Application {
         let mut report = RunReport::new(operation);
         report.write(&request.output)?;
         let result = match &request.operation {
+            Operation::ResolveInputs(input) => {
+                inputs::execute(&self.config, input, &request.output, &mut report)
+            }
             Operation::Source(input) => {
                 production::source::execute(&self.config, input, &request.output, &mut report)
             }
