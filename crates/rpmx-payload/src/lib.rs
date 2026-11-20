@@ -14,6 +14,7 @@ use std::path::Path;
 
 use rpmx_base::error::{codes, Error, Result};
 
+pub mod capabilities;
 pub mod metadata;
 
 /// CPIO names are short in practice; cap them so a hostile header cannot make
