@@ -71,6 +71,14 @@ pub fn run(cli: Cli) -> Result<CommandOutcome, Error> {
                 }
             });
         }
+        Command::Inputs(args) => {
+            return commands::inputs::run(args, pipeline_dir.as_deref()).map(|report| {
+                CommandOutcome::Application {
+                    report: Box::new(report),
+                    quiet: false,
+                }
+            });
+        }
         Command::Srpm(args) => {
             let quiet = args.quiet;
             return commands::srpm::run(args, pipeline_dir.as_deref()).map(|report| {

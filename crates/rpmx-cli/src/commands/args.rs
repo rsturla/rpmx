@@ -784,3 +784,26 @@ mod optional_test_arguments {
         assert!(!args.include_optional_tests);
     }
 }
+
+#[derive(Debug, clap::Args)]
+pub struct InputsArgs {
+    /// Recipe whose complete dependency inputs to resolve.
+    #[arg(default_value = "package.yaml")]
+    pub file: PathBuf,
+    #[command(flatten)]
+    pub policy: crate::cli::PolicyArgs,
+    /// Target architecture, defaulting to the profile target or host.
+    #[arg(long)]
+    pub arch: Option<String>,
+    /// Also resolve dependencies for optional source tests.
+    #[arg(long)]
+    pub include_optional_tests: bool,
+    /// Write the portable input record and resolution evidence here.
+    #[arg(long, default_value = ".")]
+    pub output: PathBuf,
+    #[arg(long)]
+    pub cache: Option<PathBuf>,
+    /// Require the exact dependency inputs in the local cache.
+    #[arg(long)]
+    pub offline: bool,
+}

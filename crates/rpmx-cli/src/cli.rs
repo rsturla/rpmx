@@ -51,6 +51,7 @@ impl Cli {
             Command::Runner { .. } => "runner",
             Command::Fetch(_) => "fetch",
             Command::Source(_) => "source",
+            Command::Inputs(_) => "inputs",
             Command::Srpm(_) => "srpm",
             Command::Rebuild(_) => "rebuild",
             Command::Repo(_) => "repo",
@@ -127,6 +128,8 @@ pub struct PolicyArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
+    /// Resolve complete recipe inputs without fetching sources or running steps.
+    Inputs(crate::commands::InputsArgs),
     /// Read the durable build-input receipt from a binary RPM (null for legacy RPMs).
     Provenance { file: std::path::PathBuf },
     /// Explain a resolved policy, root, step list, matrix or dependency set.

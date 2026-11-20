@@ -26,6 +26,33 @@ fn packaging_prebuilt_sources_needs_resolved_inputs_but_no_assembled_root() {
     std::fs::write(&recipe, "schema: 2\npackage:\n  name: probe\n  version: '1'\n  release: 1\n  summary: unassembled inputs\n  license: MIT\noutputs:\n  - name: probe\n    metapackage: true\n").unwrap();
     let sources = directory.join("sources");
     std::fs::create_dir(&sources).unwrap();
+    // Resolution needs no source snapshot and must not assemble or execute a root.
+    let resolved = Application::new(ApplicationConfig {
+        offline: true,
+        cache: Some(directory.join("cas")),
+        root: BuildRoot::Locked {
+            lock: path.clone(),
+            root: None,
+        },
+        ..Default::default()
+    })
+    .execute(ApplicationRequest {
+        operation: Operation::ResolveInputs(ResolveInputsInput {
+            recipe: recipe.clone(),
+            arch: Some(arch.into()),
+            include_optional_tests: false,
+        }),
+        output: directory.join("resolved"),
+    })
+    .unwrap();
+    assert!(resolved.success(), "{resolved:?}");
+    assert!(resolved.artifacts.srpms.is_empty());
+    assert!(resolved.artifacts.rpms.is_empty());
+    assert!(directory
+        .join("resolved/inputs")
+        .join(format!("{arch}.json"))
+        .is_file());
+    assert!(!directory.join("roots").exists());
     let report = Application::new(ApplicationConfig {
         offline: true,
         cache: Some(directory.join("cas")),

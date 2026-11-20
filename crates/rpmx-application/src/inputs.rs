@@ -196,3 +196,28 @@ impl PreparationFailure {
         }
     }
 }
+
+/// Resolve and export portable inputs without source acquisition or execution.
+pub(crate) fn execute(
+    config: &crate::ApplicationConfig,
+    input: &crate::ResolveInputsInput,
+    output: &std::path::Path,
+    report: &mut crate::RunReport,
+) -> Result<(), rpmx_base::Error> {
+    let target = crate::environment::target(&input.recipe, input.arch.as_deref(), config)?;
+    let policy = crate::environment::policy(config)?;
+    let (bundle, plan) =
+        crate::environment::plan(&input.recipe, target, config, policy.plan_policy())?;
+    let inputs = PreparedInputs::resolve(
+        &bundle,
+        &plan,
+        target,
+        config,
+        TestSelection::new(true, input.include_optional_tests),
+    )
+    .map_err(|failure| failure.report(report, output))?;
+    report
+        .evidence
+        .push(inputs.export(output, bundle.digest(), &plan.arch)?);
+    Ok(())
+}

@@ -288,3 +288,14 @@ SRPMs embed their record; shared SRPMs keep one external record per target.
 Assembly receipts stay local and do not constrain portable dependency inputs.
 Offline materialization requires the exact RPM payloads and pinned installer
 image locally, rather than a previously assembled filesystem.
+
+## Resolve recipe inputs without execution
+
+`rpmx inputs package.yaml --arch x86_64 --output resolved --json` resolves the
+same build, sysroot and enabled source-test dependencies as source preparation.
+It writes a portable record under `resolved/inputs/` and a run report. It does
+not fetch recipe sources, assemble roots, execute steps or write an SRPM.
+Use `--profile` to resolve against a repository snapshot and
+`--include-optional-tests` to include optional source-test inputs. Dependency
+payloads are cached normally. This command checks input resolution, not whether
+a source or binary build will succeed.

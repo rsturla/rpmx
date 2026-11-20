@@ -10,6 +10,7 @@ pub mod doctor;
 pub mod explain;
 pub mod fetch;
 pub mod init;
+pub mod inputs;
 pub mod lint;
 pub mod lock;
 pub mod plan;
