@@ -57,16 +57,27 @@ pub fn package_metadata(path: &Path) -> Result<PackageMetadata> {
             format!("cannot read {}: {error}", path.display()),
         )
     })?;
-    let metadata = &package.metadata;
+    read_metadata(&package.metadata, &path.display().to_string())
+}
+
+/// Read metadata from the exact bytes already verified by a content store.
+pub fn package_metadata_from_bytes(bytes: &[u8]) -> Result<PackageMetadata> {
+    let package = rpm::Package::parse(&mut std::io::Cursor::new(bytes)).map_err(|error| {
+        Error::new(
+            codes::EXTRACT_001,
+            format!("cannot read verified RPM: {error}"),
+        )
+    })?;
+    read_metadata(&package.metadata, "verified RPM")
+}
+
+fn read_metadata(metadata: &rpm::PackageMetadata, source: &str) -> Result<PackageMetadata> {
     let name = metadata
         .get_name()
         .map_err(|error| {
             Error::new(
                 codes::EXTRACT_001,
-                format!(
-                    "{} has no package name in its header: {error}",
-                    path.display()
-                ),
+                format!("{} has no package name in its header: {error}", source),
             )
         })?
         .to_string();
@@ -79,7 +90,7 @@ pub fn package_metadata(path: &Path) -> Result<PackageMetadata> {
         Err(error) => {
             return Err(Error::new(
                 codes::EXTRACT_001,
-                format!("cannot read epoch from {}: {error}", path.display()),
+                format!("cannot read epoch from {}: {error}", source),
             ));
         }
     };
@@ -88,7 +99,7 @@ pub fn package_metadata(path: &Path) -> Result<PackageMetadata> {
         .map_err(|error| {
             Error::new(
                 codes::EXTRACT_001,
-                format!("cannot read version from {}: {error}", path.display()),
+                format!("cannot read version from {}: {error}", source),
             )
         })?
         .to_string();
@@ -97,20 +108,20 @@ pub fn package_metadata(path: &Path) -> Result<PackageMetadata> {
         .map_err(|error| {
             Error::new(
                 codes::EXTRACT_001,
-                format!("cannot read release from {}: {error}", path.display()),
+                format!("cannot read release from {}: {error}", source),
             )
         })?
         .to_string();
     let provides = dependencies(metadata.get_provides().map_err(|error| {
         Error::new(
             codes::EXTRACT_001,
-            format!("cannot read provides from {}: {error}", path.display()),
+            format!("cannot read provides from {}: {error}", source),
         )
     })?);
     let requires = dependencies(metadata.get_requires().map_err(|error| {
         Error::new(
             codes::EXTRACT_001,
-            format!("cannot read requires from {}: {error}", path.display()),
+            format!("cannot read requires from {}: {error}", source),
         )
     })?);
     let files = metadata
@@ -118,7 +129,7 @@ pub fn package_metadata(path: &Path) -> Result<PackageMetadata> {
         .map_err(|error| {
             Error::new(
                 codes::EXTRACT_001,
-                format!("cannot read files from {}: {error}", path.display()),
+                format!("cannot read files from {}: {error}", source),
             )
         })?
         .into_iter()

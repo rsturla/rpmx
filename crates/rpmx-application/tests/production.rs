@@ -666,3 +666,35 @@ fn opted_in_optional_source_failure_blocks_rpm_promotion() {
     assert_eq!(report.build_tests[0].status, CaseStatus::Failed);
     assert!(report.artifacts.rpms.is_empty());
 }
+
+#[test]
+fn prepared_builds_reject_an_incompatible_virtual_capability_version() {
+    if !available() {
+        return;
+    }
+    let directory = tempfile::tempdir().unwrap();
+    let config = ApplicationConfig {
+        root: build_root(directory.path()),
+        cache: Some(directory.path().join("cas")),
+        runner: "bwrap".into(),
+        quiet: true,
+        ..Default::default()
+    };
+    let recipe = recipe(directory.path(), false);
+    let yaml = std::fs::read_to_string(&recipe).unwrap().replace(
+        "build:\n",
+        "build:\n  packages: ['rpmx(component:fixture) >= 2']\n",
+    );
+    std::fs::write(&recipe, yaml).unwrap();
+    let report = Application::new(config)
+        .execute(ApplicationRequest {
+            operation: Operation::Build(input(recipe)),
+            output: directory.path().join("rejected"),
+        })
+        .unwrap();
+    assert!(!report.success());
+    let error = report.primary.as_ref().unwrap();
+    assert_eq!(error.code, "RPMX-ROOT-018");
+    assert!(error.message.contains("rpmx(component:fixture) >= 2"));
+    assert!(report.artifacts.rpms.is_empty());
+}

@@ -1,4 +1,3 @@
-use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use crate::domain::error::codes;
@@ -26,7 +25,6 @@ pub(super) struct RebuildState {
     pub(super) stage: PathBuf,
     pub(super) inputs: crate::inputs::PreparedInputs,
     pub(super) active_lock: Option<crate::domain::root::RootLock>,
-    pub(super) locked_packages: BTreeSet<String>,
     pub(super) assembled_root: Option<RootSelection>,
     pub(super) assembled_appliance: Option<PathBuf>,
     pub(super) signature_timestamp: Option<u32>,
@@ -238,7 +236,6 @@ pub(super) fn prepare(
         )
     })?;
 
-    let mut locked_packages: BTreeSet<String> = BTreeSet::new();
     let prepared_inputs = input_text
         .as_ref()
         .map(|text| crate::inputs::PreparedInputs::read_record(text, bundle.digest(), &target_arch))
@@ -394,24 +391,6 @@ pub(super) fn prepare(
         .as_ref()
         .and_then(|env| env.appliance.clone());
     let assembled_root: Option<RootSelection> = if let Some(lock) = &active_lock {
-        for entries in lock.packages.values() {
-            for package in entries {
-                locked_packages.insert(package.name.clone());
-                if lock.root_digest.is_none() {
-                    let cache = request
-                        .config
-                        .cache
-                        .clone()
-                        .map(Ok)
-                        .unwrap_or_else(crate::support::default_cache)?;
-                    let path = rpmx_store::cas::path(&cache, &package.checksum)?;
-                    rpmx_store::cas::load(&cache, &package.checksum)?;
-                    locked_packages.extend(
-                        rpmx_payload::metadata::package_metadata(&path)?.provided_capabilities(),
-                    );
-                }
-            }
-        }
         let runner_kind = request
             .config
             .runner
@@ -559,7 +538,6 @@ pub(super) fn prepare(
         stage,
         inputs,
         active_lock,
-        locked_packages,
         assembled_root,
         assembled_appliance,
         signature_timestamp,
